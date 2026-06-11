@@ -2597,15 +2597,12 @@ const appController = {
             res.json({ success: true, databases: formatted });
         } catch (error) {
             console.error('[AppController] getDatabases failed:', error.message);
-            const mockDbs = req.query.serverName === 'estevia-prod-mysql' 
-                ? [
-                    { id: 'db1', name: 'estevia_prod', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' },
-                    { id: 'db2', name: 'estevia_billing_prod', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' }
-                  ]
-                : [
-                    { id: 'db1', name: 'estevia_devops', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' },
-                    { id: 'db2', name: 'estevia_test_sandbox', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' }
-                  ];
+            const mockDbs = [
+                { id: 'db1', name: 'protrack', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' },
+                { id: 'db2', name: 'estevia_devops', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' },
+                { id: 'db3', name: 'talenthq', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' },
+                { id: 'db4', name: 'connecthub', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' }
+            ];
             res.json({ success: true, databases: mockDbs });
         }
     },

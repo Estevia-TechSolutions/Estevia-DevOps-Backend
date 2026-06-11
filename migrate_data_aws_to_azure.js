@@ -23,7 +23,7 @@ async function main() {
     console.log('================================================================');
     console.log('       ESTEVIA DEVOPS DATABASE MIGRATION ENGINE (AWS -> AZURE)  ');
     console.log('================================================================');
-    
+
     let sourceConn, targetConn;
 
     try {
@@ -41,7 +41,11 @@ async function main() {
             host: targetConfig.host,
             user: targetConfig.user,
             password: targetConfig.password,
-            port: targetConfig.port
+            port: targetConfig.port,
+            ssl: {
+                require: true,
+                rejectUnauthorized: false, // This is needed for self-signed certs on internal Azure networks
+            }
         });
         console.log('Connected to target.');
     } catch (err) {
@@ -58,7 +62,7 @@ async function main() {
         await targetConn.query(`USE \`${targetConfig.database}\``);
 
         console.log('Initializing schema tables on target (if not present)...');
-        
+
         await targetConn.query(`
             CREATE TABLE IF NOT EXISTS organizations (
                 id VARCHAR(50) PRIMARY KEY,
@@ -170,7 +174,13 @@ async function main() {
             for (const row of rows) {
                 const values = columns.map(col => {
                     const val = row[col];
-                    // Handle JSON type columns correctly for mysql2 query parsing
+                    // Date objects must be formatted as MySQL DATETIME strings, NOT JSON.stringify'd
+                    // (JSON.stringify wraps them in quotes like '"2026-06-11T..."' which MySQL rejects)
+                    if (val instanceof Date) {
+                        const pad = n => String(n).padStart(2, '0');
+                        return `${val.getFullYear()}-${pad(val.getMonth()+1)}-${pad(val.getDate())} ${pad(val.getHours())}:${pad(val.getMinutes())}:${pad(val.getSeconds())}`;
+                    }
+                    // Handle other object/array types (JSON columns) correctly
                     if (val !== null && typeof val === 'object') {
                         return JSON.stringify(val);
                     }
@@ -201,7 +211,7 @@ async function main() {
     } catch (err) {
         console.error('\nCRITICAL ERROR during database migration:', err);
         if (targetConn) {
-            await targetConn.query('SET FOREIGN_KEY_CHECKS = 1').catch(() => {});
+            await targetConn.query('SET FOREIGN_KEY_CHECKS = 1').catch(() => { });
         }
         process.exit(1);
     } finally {

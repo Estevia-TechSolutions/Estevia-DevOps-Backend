@@ -9,14 +9,18 @@ async function main() {
     const port = process.env.DB_PORT || 3306;
 
     console.log(`Connecting to MySQL database server: ${host} as ${user}...`);
-    
+
     let connection;
     try {
         connection = await mysql.createConnection({
             host,
             user,
             password,
-            port
+            port,
+            ssl: {
+                require: true,
+                rejectUnauthorized: false, // This is needed for self-signed certs on internal Azure networks
+            }
         });
     } catch (err) {
         console.error('CRITICAL: Failed to connect to database server:', err.message);
