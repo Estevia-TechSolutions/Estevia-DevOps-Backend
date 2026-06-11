@@ -335,21 +335,49 @@ const appController = {
                                 });
 
                                 if (tlRes.data && Array.isArray(tlRes.data.records)) {
-                                    // Extract only top-level Stage records, ordered by their order field
-                                    const stageRecords = tlRes.data.records
+                                    const allRecords = tlRes.data.records;
+                                    
+                                    // Find stages
+                                    const stages = allRecords
                                         .filter(r => r.type === 'Stage')
-                                        .sort((a, b) => (a.order || 0) - (b.order || 0))
-                                        .map(r => ({
-                                            id: r.id,
-                                            name: r.name,
-                                            displayName: r.displayName || r.name,
-                                            state: r.state,       // waiting | inProgress | completed
-                                            result: r.result,     // succeeded | failed | canceled | skipped | null
-                                            startTime: r.startTime || null,
-                                            finishTime: r.finishTime || null
-                                        }));
+                                        .sort((a, b) => (a.order || 0) - (b.order || 0));
+                                    
+                                    // Find jobs and phases
+                                    const jobs = allRecords.filter(r => r.type === 'Job');
+                                    const phases = allRecords.filter(r => r.type === 'Phase');
+                                    
+                                    const stageRecords = stages.map(stage => {
+                                        // Find jobs belonging to this stage
+                                        const stageJobs = jobs.filter(job => {
+                                            if (job.parentId === stage.id) return true;
+                                            
+                                            // Check if parent is a phase belonging to this stage
+                                            const parentPhase = phases.find(p => p.id === job.parentId);
+                                            return parentPhase && parentPhase.parentId === stage.id;
+                                        }).sort((a, b) => (a.order || 0) - (b.order || 0))
+                                          .map(j => ({
+                                              id: j.id,
+                                              name: j.name,
+                                              displayName: j.displayName || j.name,
+                                              state: j.state,       // waiting | inProgress | completed
+                                              result: j.result,     // succeeded | failed | canceled | skipped | null
+                                              startTime: j.startTime || null,
+                                              finishTime: j.finishTime || null
+                                          }));
+
+                                        return {
+                                            id: stage.id,
+                                            name: stage.name,
+                                            displayName: stage.displayName || stage.name,
+                                            state: stage.state,
+                                            result: stage.result,
+                                            startTime: stage.startTime || null,
+                                            finishTime: stage.finishTime || null,
+                                            jobs: stageJobs
+                                        };
+                                    });
                                     app.pipelineRun.stages = stageRecords;
-                                    console.log(`[AppController] Fetched ${stageRecords.length} stages for build ${latestRun.id} of pipeline ${matchedPipelineId}`);
+                                    console.log(`[AppController] Fetched ${stageRecords.length} stages with nested jobs for build ${latestRun.id} of pipeline ${matchedPipelineId}`);
                                 }
                             } catch (tlErr) {
                                 console.warn(`[AppController] Failed to fetch timeline for build ${latestRun.id}:`, tlErr.message);
