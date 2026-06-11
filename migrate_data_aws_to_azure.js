@@ -13,7 +13,7 @@ async function main() {
 
     // Target DB Config (Azure - loaded from environment settings)
     const targetConfig = {
-        host: process.env.DB_HOST || 'estevia-prod-db-v2.estevia-prod-db.private.mysql.database.azure.com',
+        host: '10.0.0.4',
         user: process.env.DB_USER || 'estevia',
         password: process.env.DB_PASSWORD || 'Ewco26INCP',
         database: process.env.DB_NAME || 'estevia_devops',
