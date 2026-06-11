@@ -41,6 +41,12 @@ router.get('/github-repos', appController.getGithubRepos);
 // Fetch repository branches dynamically
 router.get('/github-branches', appController.getGithubBranches);
 
+// Expose Database management endpoints
+router.get('/db-servers', appController.getDbServers);
+router.get('/databases', appController.getDatabases);
+router.post('/databases', appController.provisionDatabase);
+router.get('/database-schema', appController.getDatabaseSchema);
+
 // Delete SWA/ACA app from Azure and database
 router.delete('/:name', appController.deleteApp);
 
