@@ -5,7 +5,7 @@ trigger:
 
 variables:
   azureServiceConnection: 'protrack-azure-sc'
-  containerRegistry: 'protrackacr.azurecr.io'
+  containerRegistry: 'esteviacoreregistry.azurecr.io'
   imageRepository: 'api-evaops'
   containerAppName: 'api-evaops'
   resourceGroup: 'Estevia-Prod-RG'
@@ -32,7 +32,7 @@ stages:
     - task: Docker@2
       displayName: 'Build and Push Image to ACR'
       inputs:
-        containerRegistry: '$(azureServiceConnection)'
+        containerRegistry: 'estevia-acr-sc'
         repository: '$(imageRepository)'
         command: 'buildAndPush'
         Dockerfile: 'Dockerfile'
