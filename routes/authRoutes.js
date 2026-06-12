@@ -7,5 +7,6 @@ router.post('/microsoft', authController.microsoftLogin);
 router.post('/bypass', authController.bypassLogin);
 router.get('/login-url', authController.getLoginUrl);
 router.get('/me', protect, authController.getMe);
+router.get('/diagnostic', authController.runDiagnostic);
 
 module.exports = router;

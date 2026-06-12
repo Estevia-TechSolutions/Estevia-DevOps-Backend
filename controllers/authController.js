@@ -230,6 +230,88 @@ const bypassLogin = async (req, res) => {
     }
 };
 
+const runDiagnostic = async (req, res) => {
+    const dnsPromises = require('dns').promises;
+    const net = require('net');
+    const results = {};
+    const domains = ['login.microsoftonline.com', 'www.google.com', 'api.godaddy.com', 'dev.azure.com'];
+
+    // 1. DNS lookups
+    results.dns = {};
+    for (const domain of domains) {
+        results.dns[domain] = {};
+        try {
+            results.dns[domain].ipv4 = await dnsPromises.resolve4(domain);
+        } catch (err) {
+            results.dns[domain].ipv4_error = err.message;
+        }
+        try {
+            results.dns[domain].ipv6 = await dnsPromises.resolve6(domain);
+        } catch (err) {
+            results.dns[domain].ipv6_error = err.message;
+        }
+    }
+
+    // 2. HTTP connectivity checks
+    results.http = {};
+    const endpoints = {
+        google: 'https://www.google.com',
+        microsoft: 'https://login.microsoftonline.com',
+        microsoft_token: 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
+    };
+
+    for (const [key, url] of Object.entries(endpoints)) {
+        try {
+            const start = Date.now();
+            const response = await axios.get(url, { timeout: 3000 });
+            results.http[key] = {
+                status: response.status,
+                timeMs: Date.now() - start
+            };
+        } catch (err) {
+            results.http[key] = {
+                error: err.message,
+                response: err.response?.data ? JSON.stringify(err.response.data).substring(0, 100) : null
+            };
+        }
+    }
+
+    // 3. TCP socket connections
+    results.tcp = {};
+    const tcpTargets = [
+        { host: 'login.microsoftonline.com', port: 443 },
+        { host: 'www.google.com', port: 443 }
+    ];
+
+    for (const target of tcpTargets) {
+        const key = `${target.host}:${target.port}`;
+        try {
+            await new Promise((resolve, reject) => {
+                const socket = new net.Socket();
+                socket.setTimeout(3000);
+                socket.on('connect', () => {
+                    socket.destroy();
+                    resolve();
+                });
+                socket.on('error', (err) => {
+                    socket.destroy();
+                    reject(err);
+                });
+                socket.on('timeout', () => {
+                    socket.destroy();
+                    reject(new Error('timeout'));
+                });
+                socket.connect(target.port, target.host);
+            });
+            results.tcp[key] = 'Connected successfully';
+        } catch (err) {
+            results.tcp[key] = `Failed: ${err.message}`;
+        }
+    }
+
+    return res.json(results);
+};
+
 const getLoginUrl = (req, res) => {
     const clientId = process.env.MICROSOFT_CLIENT_ID || 'dummy-client-id';
     const redirectUri = process.env.MICROSOFT_REDIRECT_URI || 'http://localhost:5173';
@@ -242,5 +324,6 @@ module.exports = {
     microsoftLogin,
     getMe,
     bypassLogin,
-    getLoginUrl
+    getLoginUrl,
+    runDiagnostic
 };
