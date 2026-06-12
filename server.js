@@ -2,6 +2,17 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const dns = require('dns');
+
+// Ensure homebrew and local paths are included in PATH for child processes like az CLI
+if (process.platform === 'darwin') {
+    process.env.PATH = `${process.env.PATH}:/opt/homebrew/bin:/usr/local/bin`;
+}
+
+// Prefer IPv4 DNS resolution to avoid intermittent ETIMEDOUT connections on IPv4-only networks
+if (typeof dns.setDefaultResultOrder === 'function') {
+    dns.setDefaultResultOrder('ipv4first');
+}
 
 // Choose which environment config file to load
 const envFile = process.env.ENV_FILE || (process.env.NODE_ENV ? `.env.${process.env.NODE_ENV}` : '.env');
