@@ -13,7 +13,7 @@ async function main() {
 
     // Target DB Config (Azure - loaded from environment settings)
     const targetConfig = {
-        host: '10.0.0.4',
+        host: process.env.DB_HOST || '10.0.0.6',
         user: process.env.DB_USER || 'estevia',
         password: process.env.DB_PASSWORD || 'Ewco26INCP',
         database: process.env.DB_NAME || 'estevia_devops',

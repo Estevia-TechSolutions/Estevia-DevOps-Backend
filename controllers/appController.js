@@ -64,6 +64,32 @@ const appController = {
         return `refs/heads/${branchName}`;
     },
     /**
+     * Resolve dynamic DB host based on server name
+     */
+    _resolveDbHost(serverName) {
+        if (!serverName) return process.env.DB_HOST || '10.0.0.4';
+        const sName = serverName.toLowerCase();
+
+        // If configured to connect directly (e.g. in deployment)
+        if (process.env.DB_CONNECT_DIRECT === 'true') {
+            if (sName.includes('dev')) {
+                return 'estevia-dev-db.mysql.database.azure.com';
+            }
+            if (sName.includes('qa')) {
+                return 'estevia-qa-dn.mysql.database.azure.com';
+            }
+            return 'estevia-prod-db-v2.estevia-prod-db.private.mysql.database.azure.com';
+        }
+
+        if (sName.includes('dev')) {
+            return '10.0.0.6';
+        }
+        if (sName.includes('qa')) {
+            return '10.0.0.7';
+        }
+        return '10.0.0.4';
+    },
+    /**
      * Scan Azure subscription for Static Web Apps and Container Apps,
      * sync them with the local applications DB table, and return the combined details.
      * Integrates real-time auto-discovery of GoDaddy domains and Azure DevOps pipelines.
@@ -2518,17 +2544,35 @@ const appController = {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
 
-            const servers = (response.data && response.data.value) || [];
-            const formatted = servers.map(s => ({
-                id: s.id,
-                name: s.name,
-                location: s.location,
-                version: s.properties?.version || '8.0',
-                state: s.properties?.state || 'Ready',
-                host: s.properties?.fullyQualifiedDomainName || `${s.name}.mysql.database.azure.com`,
-                sku: s.sku?.name || 'Standard_B1ms',
-                tier: s.sku?.tier || 'Burstable'
-            }));
+            const servers = response.data?.value || [];
+            const formatted = servers.map(s => {
+                const sName = s.name.toLowerCase();
+                let resolvedHost = s.properties?.fullyQualifiedDomainName || `${s.name}.mysql.database.azure.com`;
+                let privateNetwork = false;
+                
+                if (sName.includes('dev')) {
+                    resolvedHost = 'estevia-dev-db.mysql.database.azure.com';
+                } else if (sName.includes('qa')) {
+                    resolvedHost = 'estevia-qa-dn.mysql.database.azure.com';
+                } else if (sName.includes('prod') || sName.includes('db')) {
+                    resolvedHost = 'estevia-prod-db-v2.estevia-prod-db.private.mysql.database.azure.com';
+                    privateNetwork = true;
+                }
+
+                return {
+                    id: s.id,
+                    name: s.name,
+                    location: s.location,
+                    version: s.properties?.version || '8.0',
+                    state: s.properties?.state || 'Ready',
+                    host: resolvedHost,
+                    privateNetwork,
+                    sku: s.sku?.name || 'Standard_B1ms',
+                    tier: s.sku?.tier || 'Burstable',
+                    administratorLogin: s.properties?.administratorLogin || 'estevia',
+                    password: process.env.DB_PASSWORD || 'Ewco26INCP'
+                };
+            });
 
             res.json({ success: true, servers: formatted });
         } catch (error) {
@@ -2538,23 +2582,42 @@ const appController = {
                 servers: [
                     {
                         id: 'mock-db-server-id',
-                        name: 'estevia-dev-mysql',
-                        location: 'eastus',
+                        name: 'estevia-dev-db',
+                        location: 'Central US',
                         version: '8.0.21',
                         state: 'Ready',
-                        host: 'estevia-dev-mysql.mysql.database.azure.com',
+                        host: 'estevia-dev-db.mysql.database.azure.com',
+                        privateNetwork: false,
                         sku: 'Standard_B1ms',
-                        tier: 'Burstable'
+                        tier: 'Burstable',
+                        administratorLogin: 'estevia',
+                        password: process.env.DB_PASSWORD || 'Ewco26INCP'
+                    },
+                    {
+                        id: 'mock-db-server-qa',
+                        name: 'estevia-qa-dn',
+                        location: 'Central US',
+                        version: '8.0.21',
+                        state: 'Ready',
+                        host: 'estevia-qa-dn.mysql.database.azure.com',
+                        privateNetwork: false,
+                        sku: 'Standard_B1ms',
+                        tier: 'Burstable',
+                        administratorLogin: 'estevia',
+                        password: process.env.DB_PASSWORD || 'Ewco26INCP'
                     },
                     {
                         id: 'mock-db-server-prod',
-                        name: 'estevia-prod-mysql',
-                        location: 'eastus',
+                        name: 'estevia-prod-db-v2',
+                        location: 'Central US',
                         version: '8.0.21',
                         state: 'Ready',
-                        host: 'estevia-prod-mysql.mysql.database.azure.com',
+                        host: 'estevia-prod-db-v2.estevia-prod-db.private.mysql.database.azure.com',
+                        privateNetwork: true,
                         sku: 'Standard_D2ads_v5',
-                        tier: 'GeneralPurpose'
+                        tier: 'GeneralPurpose',
+                        administratorLogin: 'estevia',
+                        password: process.env.DB_PASSWORD || 'Ewco26INCP'
                     }
                 ]
             });
@@ -2587,23 +2650,50 @@ const appController = {
             });
 
             const dbs = (response.data && response.data.value) || [];
-            const formatted = dbs.map(d => ({
-                id: d.id,
-                name: d.name,
-                charset: d.properties?.charset || 'utf8',
-                collation: d.properties?.collation || 'utf8_general_ci'
-            }));
+            const systemDbs = ['information_schema', 'performance_schema', 'mysql', 'sys'];
+            const formatted = dbs
+                .filter(d => d.name && !systemDbs.includes(d.name.toLowerCase()))
+                .map(d => ({
+                    id: d.id,
+                    name: d.name,
+                    charset: d.properties?.charset || 'utf8',
+                    collation: d.properties?.collation || 'utf8_general_ci'
+                }));
 
             res.json({ success: true, databases: formatted });
         } catch (error) {
-            console.error('[AppController] getDatabases failed:', error.message);
-            const mockDbs = [
-                { id: 'db1', name: 'protrack', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' },
-                { id: 'db2', name: 'estevia_devops', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' },
-                { id: 'db3', name: 'talenthq', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' },
-                { id: 'db4', name: 'connecthub', charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' }
-            ];
-            res.json({ success: true, databases: mockDbs });
+            console.warn('[AppController] getDatabases via Azure failed, falling back to direct SQL query:', error.message);
+            try {
+                const { serverName } = req.query;
+                const resolvedHost = appController._resolveDbHost(serverName);
+                const mysql = require('mysql2/promise');
+                const conn = await mysql.createConnection({
+                    host: resolvedHost,
+                    user: process.env.DB_USER || 'estevia',
+                    password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                    ssl: { require: true, rejectUnauthorized: false },
+                    connectTimeout: 5000
+                });
+                
+                const [rows] = await conn.query('SHOW DATABASES');
+                await conn.end();
+
+                const systemDbs = ['information_schema', 'performance_schema', 'mysql', 'sys'];
+                const formatted = rows
+                    .map(r => r.Database || r.database)
+                    .filter(name => name && !systemDbs.includes(name.toLowerCase()))
+                    .map((name, idx) => ({
+                        id: `db-${idx}`,
+                        name,
+                        charset: 'utf8mb4',
+                        collation: 'utf8mb4_unicode_ci'
+                    }));
+
+                res.json({ success: true, databases: formatted });
+            } catch (fallbackError) {
+                console.error('[AppController] getDatabases fallback query failed:', fallbackError.message);
+                res.json({ success: true, databases: [] });
+            }
         }
     },
 
@@ -2663,134 +2753,110 @@ const appController = {
                 return res.status(400).json({ message: 'Missing serverName or dbName parameters.' });
             }
 
-            const MOCK_SCHEMAS = {
-                estevia_devops: [
-                    {
-                        table: 'users',
-                        columns: [
-                            { name: 'id', type: 'int(11)', key: 'PRI', extra: 'auto_increment', nullable: 'NO' },
-                            { name: 'name', type: 'varchar(255)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'email', type: 'varchar(255)', key: 'UNI', extra: '', nullable: 'NO' },
-                            { name: 'password_hash', type: 'varchar(255)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'role', type: 'varchar(50)', key: '', extra: '', nullable: 'YES' },
-                            { name: 'created_at', type: 'timestamp', key: '', extra: 'DEFAULT_GENERATED', nullable: 'NO' }
-                        ]
-                    },
-                    {
-                        table: 'organizations',
-                        columns: [
-                            { name: 'id', type: 'varchar(50)', key: 'PRI', extra: '', nullable: 'NO' },
-                            { name: 'name', type: 'varchar(255)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'azure_subscription_id', type: 'varchar(255)', key: '', extra: '', nullable: 'YES' },
-                            { name: 'azure_resource_group', type: 'varchar(255)', key: '', extra: '', nullable: 'YES' },
-                            { name: 'default_dns_domain', type: 'varchar(255)', key: '', extra: '', nullable: 'YES' },
-                            { name: 'created_at', type: 'timestamp', key: '', extra: 'DEFAULT_GENERATED', nullable: 'NO' }
-                        ]
-                    },
-                    {
-                        table: 'applications',
-                        columns: [
-                            { name: 'id', type: 'int(11)', key: 'PRI', extra: 'auto_increment', nullable: 'NO' },
-                            { name: 'organization_id', type: 'varchar(50)', key: 'MUL', extra: '', nullable: 'NO' },
-                            { name: 'name', type: 'varchar(255)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'app_type', type: 'varchar(50)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'status', type: 'varchar(50)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'azure_resource_details', type: 'json', key: '', extra: '', nullable: 'YES' },
-                            { name: 'godaddy_dns_details', type: 'json', key: '', extra: '', nullable: 'YES' },
-                            { name: 'repo_url', type: 'varchar(255)', key: '', extra: '', nullable: 'YES' },
-                            { name: 'pipeline_id', type: 'varchar(50)', key: '', extra: '', nullable: 'YES' },
-                            { name: 'created_at', type: 'timestamp', key: '', extra: 'DEFAULT_GENERATED', nullable: 'NO' }
-                        ]
-                    },
-                    {
-                        table: 'integration_credentials',
-                        columns: [
-                            { name: 'id', type: 'int(11)', key: 'PRI', extra: 'auto_increment', nullable: 'NO' },
-                            { name: 'organization_id', type: 'varchar(50)', key: 'MUL', extra: '', nullable: 'NO' },
-                            { name: 'provider', type: 'varchar(50)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'credential_name', type: 'varchar(255)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'encrypted_secrets', type: 'text', key: '', extra: '', nullable: 'NO' },
-                            { name: 'iv', type: 'varchar(255)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'auth_tag', type: 'varchar(255)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'created_at', type: 'timestamp', key: '', extra: 'DEFAULT_GENERATED', nullable: 'NO' }
-                        ]
-                    },
-                    {
-                        table: 'ai_usage_logs',
-                        columns: [
-                            { name: 'id', type: 'int(11)', key: 'PRI', extra: 'auto_increment', nullable: 'NO' },
-                            { name: 'prompt', type: 'text', key: '', extra: '', nullable: 'YES' },
-                            { name: 'response', type: 'text', key: '', extra: '', nullable: 'YES' },
-                            { name: 'token_count', type: 'int(11)', key: '', extra: '', nullable: 'YES' },
-                            { name: 'duration_ms', type: 'int(11)', key: '', extra: '', nullable: 'YES' },
-                            { name: 'created_at', type: 'timestamp', key: '', extra: 'DEFAULT_GENERATED', nullable: 'NO' }
-                        ]
-                    }
-                ],
-                estevia_prod: [
-                    {
-                        table: 'customers',
-                        columns: [
-                            { name: 'customer_id', type: 'int(11)', key: 'PRI', extra: 'auto_increment', nullable: 'NO' },
-                            { name: 'first_name', type: 'varchar(100)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'last_name', type: 'varchar(100)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'email', type: 'varchar(150)', key: 'UNI', extra: '', nullable: 'NO' },
-                            { name: 'phone', type: 'varchar(20)', key: '', extra: '', nullable: 'YES' }
-                        ]
-                    },
-                    {
-                        table: 'orders',
-                        columns: [
-                            { name: 'order_id', type: 'int(11)', key: 'PRI', extra: 'auto_increment', nullable: 'NO' },
-                            { name: 'customer_id', type: 'int(11)', key: 'MUL', extra: '', nullable: 'NO' },
-                            { name: 'order_date', type: 'datetime', key: '', extra: '', nullable: 'NO' },
-                            { name: 'status', type: 'varchar(50)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'total_amount', type: 'decimal(10,2)', key: '', extra: '', nullable: 'NO' }
-                        ]
-                    },
-                    {
-                        table: 'products',
-                        columns: [
-                            { name: 'product_id', type: 'int(11)', key: 'PRI', extra: 'auto_increment', nullable: 'NO' },
-                            { name: 'product_name', type: 'varchar(200)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'sku', type: 'varchar(100)', key: 'UNI', extra: '', nullable: 'NO' },
-                            { name: 'price', type: 'decimal(10,2)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'inventory_count', type: 'int(11)', key: '', extra: '', nullable: 'NO' }
-                        ]
-                    }
-                ]
-            };
+            // Query the actual Azure MySQL server via dynamic host connection
+            const resolvedHost = appController._resolveDbHost(serverName);
+            const mysql = require('mysql2/promise');
+            const conn = await mysql.createConnection({
+                host: resolvedHost,
+                user: process.env.DB_USER || 'estevia',
+                password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                database: dbName,
+                port: process.env.DB_PORT || 3306,
+                ssl: { require: true, rejectUnauthorized: false },
+                connectTimeout: 8000
+            });
 
-            const lowercaseDbName = dbName.toLowerCase();
-            let selectedSchema = MOCK_SCHEMAS[lowercaseDbName];
+            try {
+                // Fetch all columns for the target database from INFORMATION_SCHEMA
+                const [rows] = await conn.query(`
+                    SELECT
+                        TABLE_NAME   AS \`table\`,
+                        COLUMN_NAME  AS name,
+                        COLUMN_TYPE  AS type,
+                        COLUMN_KEY   AS \`key\`,
+                        EXTRA        AS extra,
+                        IS_NULLABLE  AS nullable
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = ?
+                    ORDER BY TABLE_NAME, ORDINAL_POSITION
+                `, [dbName]);
 
-            if (!selectedSchema) {
-                selectedSchema = [
-                    {
-                        table: 'accounts',
-                        columns: [
-                            { name: 'account_id', type: 'int(11)', key: 'PRI', extra: 'auto_increment', nullable: 'NO' },
-                            { name: 'account_name', type: 'varchar(150)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'status', type: 'varchar(50)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'created_at', type: 'datetime', key: '', extra: '', nullable: 'NO' }
-                        ]
-                    },
-                    {
-                        table: 'logs',
-                        columns: [
-                            { name: 'log_id', type: 'int(11)', key: 'PRI', extra: 'auto_increment', nullable: 'NO' },
-                            { name: 'log_level', type: 'varchar(20)', key: '', extra: '', nullable: 'NO' },
-                            { name: 'message', type: 'text', key: '', extra: '', nullable: 'YES' },
-                            { name: 'created_at', type: 'datetime', key: '', extra: '', nullable: 'NO' }
-                        ]
-                    }
-                ];
+                // Group columns by table
+                const tableMap = {};
+                for (const row of rows) {
+                    if (!tableMap[row.table]) tableMap[row.table] = [];
+                    tableMap[row.table].push({
+                        name: row.name,
+                        type: row.type,
+                        key: row.key || '',
+                        extra: row.extra || '',
+                        nullable: row.nullable
+                    });
+                }
+
+                const schema = Object.entries(tableMap).map(([table, columns]) => ({ table, columns }));
+                res.json({ success: true, schema });
+            } finally {
+                await conn.end();
+            }
+        } catch (error) {
+            console.error('[AppController] getDatabaseSchema failed:', error.message);
+            res.json({ success: true, schema: [], error: error.message });
+        }
+    },
+
+    /**
+     * POST /api/apps/execute-query
+     * Executes an arbitrary SQL query against a selected database on a server.
+     */
+    executeQuery: async (req, res) => {
+        try {
+            const { serverName, dbName, query } = req.body;
+            if (!serverName || !dbName || !query) {
+                return res.status(400).json({ message: 'Missing serverName, dbName, or query parameters.' });
             }
 
-            res.json({ success: true, schema: selectedSchema });
+            const resolvedHost = appController._resolveDbHost(serverName);
+            const mysql = require('mysql2/promise');
+            
+            const conn = await mysql.createConnection({
+                host: resolvedHost,
+                user: process.env.DB_USER || 'estevia',
+                password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                database: dbName,
+                port: process.env.DB_PORT || 3306,
+                ssl: { require: true, rejectUnauthorized: false },
+                connectTimeout: 8000
+            });
+
+            try {
+                const [results, fields] = await conn.query(query);
+                
+                // If results is an array, it's a SELECT / SHOW query returning rows
+                if (Array.isArray(results)) {
+                    res.json({
+                        success: true,
+                        type: 'select',
+                        rows: results,
+                        fields: fields ? fields.map(f => f.name) : []
+                    });
+                } else {
+                    // It's a DDL / DML query (CREATE, INSERT, UPDATE, etc.) returning metadata
+                    res.json({
+                        success: true,
+                        type: 'dml',
+                        affectedRows: results.affectedRows || 0,
+                        insertId: results.insertId || null,
+                        warningStatus: results.warningStatus || 0,
+                        message: results.message || `Query executed successfully. ${results.affectedRows || 0} rows affected.`
+                    });
+                }
+            } finally {
+                await conn.end();
+            }
         } catch (error) {
-            console.error('[AppController] getDatabaseSchema failed:', error);
-            res.status(500).json({ message: 'Failed to retrieve database schema.', error: error.message });
+            console.error('[AppController] executeQuery failed:', error.message);
+            res.status(500).json({ success: false, message: error.message });
         }
     }
 };

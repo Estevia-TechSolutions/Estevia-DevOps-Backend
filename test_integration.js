@@ -1,7 +1,20 @@
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config();
+const path = require('path');
+const fs = require('fs');
+
+// Choose which environment config file to load
+const envFile = process.env.ENV_FILE || (process.env.NODE_ENV ? `.env.${process.env.NODE_ENV}` : '.env');
+const envPath = path.resolve(process.cwd(), envFile);
+
+if (fs.existsSync(envPath)) {
+    console.log(`[Test Integration] Loading environment from: ${envFile}`);
+    require('dotenv').config({ path: envPath });
+} else {
+    console.log(`[Test Integration] Loading default .env file`);
+    require('dotenv').config();
+}
 
 // Re-create the server instance in test mode
 const app = express();

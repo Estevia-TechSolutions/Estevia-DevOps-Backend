@@ -2,7 +2,7 @@ const mysql = require('mysql2/promise');
 require('dotenv').config();
 
 async function main() {
-    const host = '10.0.0.4';
+    const host = process.env.DB_HOST || '10.0.0.6';
     const user = process.env.DB_USER || 'estevia';
     const password = process.env.DB_PASSWORD || 'Ewco26INCP';
     const database = process.env.DB_NAME || 'estevia_devops';

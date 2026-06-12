@@ -46,6 +46,7 @@ router.get('/db-servers', appController.getDbServers);
 router.get('/databases', appController.getDatabases);
 router.post('/databases', appController.provisionDatabase);
 router.get('/database-schema', appController.getDatabaseSchema);
+router.post('/execute-query', appController.executeQuery);
 
 // Delete SWA/ACA app from Azure and database
 router.delete('/:name', appController.deleteApp);
