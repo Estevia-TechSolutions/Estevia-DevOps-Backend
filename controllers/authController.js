@@ -271,10 +271,39 @@ const runDiagnostic = async (req, res) => {
         } catch (err) {
             results.http[key] = {
                 error: err.message,
+                status: err.response?.status,
                 response: err.response?.data ? JSON.stringify(err.response.data).substring(0, 100) : null
             };
         }
     }
+
+    // 2.5. POST connectivity checks with different payload sizes
+    results.post_payload_test = {};
+    const testPost = async (label, size) => {
+        const payload = 'a'.repeat(size);
+        const start = Date.now();
+        try {
+            const response = await axios.post(
+                'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+                payload,
+                { headers: { 'Content-Type': 'text/plain' }, timeout: 3000 }
+            );
+            results.post_payload_test[label] = {
+                status: response.status,
+                timeMs: Date.now() - start
+            };
+        } catch (err) {
+            results.post_payload_test[label] = {
+                error: err.message,
+                status: err.response?.status,
+                timeMs: Date.now() - start,
+                response: err.response?.data ? JSON.stringify(err.response.data).substring(0, 100) : null
+            };
+        }
+    };
+
+    await testPost('small_10b', 10);
+    await testPost('large_2000b', 2000);
 
     // 3. TCP socket connections
     results.tcp = {};
