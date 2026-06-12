@@ -460,7 +460,19 @@ const appController = {
      */
     provisionApp: async (req, res) => {
         try {
-            const { organizationId, name, type, location, githubRepo } = req.body;
+            const { 
+                organizationId, 
+                name, 
+                type, 
+                location, 
+                githubRepo, 
+                resourceGroup: customResourceGroup,
+                managedEnvironment,
+                cpu,
+                memory,
+                minReplicas,
+                maxReplicas
+            } = req.body;
 
             if (!organizationId || !name || !type) {
                 return res.status(400).json({ message: 'Missing parameters (organizationId, name, type).' });
@@ -472,7 +484,7 @@ const appController = {
 
             const orgSettings = await appController._getOrgSettings(organizationId);
             const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+            const targetResourceGroup = customResourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             const targetLocation = location || 'eastus2';
             const credential = await getAzureCredential(organizationId);
@@ -505,20 +517,21 @@ const appController = {
             if (type === 'frontend') {
                 const webClient = new WebSiteManagementClient(credential, subscriptionId);
                 // Provision SWA in Azure
-                console.log(`[AppController] Provisioning SWA: ${name} in ${targetLocation}...`);
+                console.log(`[AppController] Provisioning SWA: ${name} in ${targetLocation} under RG: ${targetResourceGroup}...`);
                 const staticSiteEnvelope = {
                     location: targetLocation,
                     sku: { name: 'Standard', tier: 'Standard' },
                     properties: {}
                 };
 
-                const poller = await webClient.staticSites.beginCreateOrUpdateStaticSite(resourceGroup, name, staticSiteEnvelope);
+                const poller = await webClient.staticSites.beginCreateOrUpdateStaticSite(targetResourceGroup, name, staticSiteEnvelope);
                 const siteResult = await poller.pollUntilDone();
 
                 const azureDetails = {
                     resourceId: siteResult.id,
                     location: siteResult.location,
-                    hostname: siteResult.defaultHostname
+                    hostname: siteResult.defaultHostname,
+                    resourceGroup: targetResourceGroup
                 };
 
                 // Update status to deployed in DB
@@ -542,15 +555,15 @@ const appController = {
                 });
             } else {
                 const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
-                console.log(`[AppController] Provisioning Container App: ${name} in ${targetLocation}...`);
+                console.log(`[AppController] Provisioning Container App: ${name} in ${targetLocation} under RG: ${targetResourceGroup}...`);
                 
-                const envName = (name.toLowerCase().includes('prod') || name.toLowerCase().includes('production')) ? 'estevia-prod-env' : 'estevia-dev-env';
-                const managedEnvironmentId = `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/managedEnvironments/${envName}`;
+                // If a managed environment resource ID is not supplied, build it
+                const selectedEnvId = managedEnvironment || `/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.App/managedEnvironments/${(name.toLowerCase().includes('prod') || name.toLowerCase().includes('production')) ? 'estevia-prod-env' : 'estevia-dev-env'}`;
                 const targetPortVal = parseInt(req.body.targetPort || 5005, 10);
 
                 const containerAppEnvelope = {
                     location: targetLocation,
-                    managedEnvironmentId: managedEnvironmentId,
+                    managedEnvironmentId: selectedEnvId,
                     configuration: {
                         ingress: {
                             external: true,
@@ -564,21 +577,27 @@ const appController = {
                                 name: "api-container",
                                 image: "mcr.microsoft.com/azuredocs/aci-helloworld:latest",
                                 resources: {
-                                    cpu: 0.25,
-                                    memory: "0.5Gi"
+                                    cpu: parseFloat(cpu || 0.25),
+                                    memory: `${memory || '0.5Gi'}`
                                 }
                             }
-                        ]
+                        ],
+                        scale: {
+                            minReplicas: parseInt(minReplicas !== undefined ? minReplicas : 0, 10),
+                            maxReplicas: parseInt(maxReplicas !== undefined ? maxReplicas : 10, 10)
+                        }
                     }
                 };
 
-                const poller = await containerClient.containerApps.beginCreateOrUpdate(resourceGroup, name, containerAppEnvelope);
+                const poller = await containerClient.containerApps.beginCreateOrUpdate(targetResourceGroup, name, containerAppEnvelope);
                 const appResult = await poller.pollUntilDone();
 
                 const azureDetails = {
                     resourceId: appResult.id,
                     location: appResult.location,
-                    hostname: appResult.configuration?.ingress?.fqdn || ''
+                    hostname: appResult.configuration?.ingress?.fqdn || '',
+                    resourceGroup: targetResourceGroup,
+                    managedEnvironment: selectedEnvId
                 };
 
                 // Update status to deployed in DB
@@ -620,7 +639,6 @@ const appController = {
 
             const orgSettings = await appController._getOrgSettings(organizationId);
             const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
             const targetDomain = domain || orgSettings.default_dns_domain || DEFAULT_DOMAIN;
 
             // Fetch app details from DB
@@ -635,6 +653,7 @@ const appController = {
 
             const app = apps[0];
             const azureDetails = typeof app.azure_resource_details === 'string' ? JSON.parse(app.azure_resource_details || '{}') : (app.azure_resource_details || {});
+            const resourceGroup = azureDetails.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
             if (!azureDetails.hostname) {
                 return res.status(400).json({ message: 'Azure resource has no default hostname. Ensure it is fully provisioned first.' });
             }
@@ -770,6 +789,44 @@ const appController = {
             if (!githubToken) {
                 return res.json({ exists: null, githubRepo, reason: 'no_github_token' });
             }
+
+            // Check if any matching app in database is 'backend' (requires Dockerfile)
+            const [apps] = await db.query(
+                `SELECT app_type FROM applications 
+                 WHERE organization_id = ? 
+                   AND (repo_url = ? OR repo_url = ? OR repo_url LIKE ? OR ? LIKE CONCAT('%', repo_url, '%'))`,
+                [organizationId, `https://github.com/${githubRepo}`, `https://github.com/${githubRepo}/`, `%${githubRepo}%`, `https://github.com/${githubRepo}`]
+            );
+            const isBackend = apps.length > 0 && apps.some(a => a.app_type === 'backend');
+
+            if (isBackend) {
+                let hasDockerfile = false;
+                try {
+                    const dfUrl = `https://api.github.com/repos/${githubRepo}/contents/Dockerfile?ref=${encodeURIComponent(branch || 'main')}`;
+                    const dfRes = await axios.get(dfUrl, {
+                        headers: {
+                            'Authorization': `token ${githubToken}`,
+                            'Accept': 'application/vnd.github.v3+json',
+                            'User-Agent': 'DevOps-Hub'
+                        }
+                    });
+                    if (dfRes.data && dfRes.data.sha) {
+                        hasDockerfile = true;
+                    }
+                } catch (e) {
+                    hasDockerfile = false;
+                }
+                
+                if (!hasDockerfile) {
+                    return res.json({ 
+                        exists: false, 
+                        code: 'DOCKERFILE_MISSING', 
+                        message: `Dockerfile was not found in the repository "${githubRepo}" on branch "${branch || 'main'}". A Dockerfile is required to build the container image for Azure Container Apps.`,
+                        githubRepo 
+                    });
+                }
+            }
+
             const ymlStatus = await appController._checkYmlExists(githubToken, githubRepo, branch || 'main');
             res.json({ exists: ymlStatus.exists, sha: ymlStatus.sha, githubRepo });
         } catch (error) {
@@ -807,32 +864,36 @@ const appController = {
             throw err;
         }
     },
-    async _generateSmartYml(githubToken, githubRepo, branchList, orgSettings, mainBranch = 'main', explicitAppType = null) {
+    async _generateSmartYml(githubToken, githubRepo, branchList, orgSettings, mainBranch = 'main', explicitAppType = null, customAppLocation = null, customApiLocation = null, customOutputLocation = null) {
         const repoShortName = githubRepo.split('/').pop() || 'my-app';
         const defaultDnsDomain = orgSettings ? orgSettings.default_dns_domain || DEFAULT_DOMAIN : DEFAULT_DOMAIN;
         const pipelineVarGroup = orgSettings ? orgSettings.pipeline_variable_group || 'estevia-frontend-vars' : 'estevia-frontend-vars';
-        const azureResourceGroup = orgSettings ? orgSettings.azure_resource_group || 'Estevia-Prod-RG' : 'Estevia-Prod-RG';
 
-        // 1. Query database for registered app type first (source of truth)
+        // 1. Query database for registered app type first (source of truth) and custom resource group
         let appType = explicitAppType;
-        if (!appType) {
-            try {
-                const [apps] = await db.query(
-                    `SELECT app_type FROM applications 
-                     WHERE organization_id = ? 
-                       AND repo_url <> '' AND repo_url IS NOT NULL
-                       AND (repo_url = ? OR repo_url = ? OR repo_url LIKE ? OR ? LIKE CONCAT('%', repo_url, '%'))
-                     ORDER BY id DESC LIMIT 1`,
-                    [orgSettings.id, `https://github.com/${githubRepo}`, `https://github.com/${githubRepo}/`, `%${githubRepo}%`, `https://github.com/${githubRepo}`]
-                );
-                if (apps.length > 0) {
-                    appType = apps[0].app_type;
-                    console.log(`[AppController] Detected appType from database for ${githubRepo}: ${appType}`);
+        let selectedResourceGroup = null;
+        try {
+            const [apps] = await db.query(
+                `SELECT app_type, azure_resource_details FROM applications 
+                 WHERE organization_id = ? 
+                   AND repo_url <> '' AND repo_url IS NOT NULL
+                   AND (repo_url = ? OR repo_url = ? OR repo_url LIKE ? OR ? LIKE CONCAT('%', repo_url, '%'))
+                 ORDER BY id DESC LIMIT 1`,
+                [orgSettings.id, `https://github.com/${githubRepo}`, `https://github.com/${githubRepo}/`, `%${githubRepo}%`, `https://github.com/${githubRepo}`]
+            );
+            if (apps.length > 0) {
+                if (!appType) appType = apps[0].app_type;
+                const details = typeof apps[0].azure_resource_details === 'string' ? JSON.parse(apps[0].azure_resource_details || '{}') : (apps[0].azure_resource_details || {});
+                if (details.resourceGroup) {
+                    selectedResourceGroup = details.resourceGroup;
                 }
-            } catch (e) {
-                console.warn(`[AppController] Failed to query app_type for ${githubRepo}:`, e.message);
+                console.log(`[AppController] Detected appType from database for ${githubRepo}: ${appType}, custom ResourceGroup: ${selectedResourceGroup}`);
             }
+        } catch (e) {
+            console.warn(`[AppController] Failed to query app_type for ${githubRepo}:`, e.message);
         }
+
+        const azureResourceGroup = selectedResourceGroup || (orgSettings ? orgSettings.azure_resource_group || 'Estevia-Prod-RG' : 'Estevia-Prod-RG');
 
         // 2. Fetch actual existing branches from GitHub API to perform branch filtering
         let existingBranches = [];
@@ -986,8 +1047,8 @@ const appController = {
 
             let backendVars = [
                 'variables:',
-                "  azureServiceConnection: 'protrack-azure-sc'",
-                "  containerRegistry: 'esteviacoreregistry.azurecr.io'",
+                `  azureServiceConnection: '${orgSettings?.azure_devops_service_connection || 'protrack-azure-sc'}'`,
+                `  containerRegistry: '${orgSettings?.azure_container_registry || 'esteviacoreregistry.azurecr.io'}'`,
                 `  imageRepository: '${appNameLower}'`,
                 ''
             ];
@@ -1075,7 +1136,7 @@ const appController = {
                 '    - task: Docker@2',
                 "      displayName: 'Build and Push Image to ACR'",
                 '      inputs:',
-                "        containerRegistry: 'estevia-acr-sc'",
+                `        containerRegistry: '${orgSettings?.docker_registry_service_connection || 'estevia-acr-sc'}'`,
                 "        repository: '$(imageRepository)'",
                 "        command: 'buildAndPush'",
                 "        Dockerfile: 'Dockerfile'",
@@ -1127,188 +1188,204 @@ const appController = {
                 `                   -d "{\\"component\\": \\"backend\\", \\"version\\": \\"$VERSION\\", \\"build\\": \\"$BUILD_ID\\"}"`,
                 "            displayName: 'Sync Version to Backend DB'"
             ].join('\n');
-        } else {
-            // FRONTEND STATIC WEB APP (SWA) PIPELINE
-            let envPrefix = 'VITE_';
-            let appLocation = 'dist';
-            if (isNext) {
-                envPrefix = 'NEXT_PUBLIC_';
-                appLocation = 'out';
-            } else if (isReact) {
-                envPrefix = 'REACT_APP_';
-                appLocation = 'build';
-            }
-
-            let frontendSyncUrlScript = [];
-            let fSyncIfCond = 'if';
-            if (hasMain) {
-                frontendSyncUrlScript.push(`        ${fSyncIfCond} [ "$BRANCH_NAME" = "main" ]; then`);
-                frontendSyncUrlScript.push(`          SYNC_URL="https://${apiSubdomainPrefix}.${defaultDnsDomain}/api"`);
-                fSyncIfCond = 'elif';
-            }
-            if (hasQa) {
-                frontendSyncUrlScript.push(`        ${fSyncIfCond} [ "$BRANCH_NAME" = "qa" ]; then`);
-                frontendSyncUrlScript.push(`          SYNC_URL="https://${apiSubdomainPrefix}-qa.${defaultDnsDomain}/api"`);
-                fSyncIfCond = 'elif';
-            }
-            if (hasDev) {
-                frontendSyncUrlScript.push(`        ${fSyncIfCond} [ "$BRANCH_NAME" = "dev" ] || [ "$BRANCH_NAME" = "development" ]; then`);
-                frontendSyncUrlScript.push(`          SYNC_URL="https://${apiSubdomainPrefix}-dev.${defaultDnsDomain}/api"`);
-                fSyncIfCond = 'elif';
-            }
-            frontendSyncUrlScript.push('        else');
-            if (hasDev) {
-                frontendSyncUrlScript.push(`          SYNC_URL="https://${apiSubdomainPrefix}-dev.${defaultDnsDomain}/api"`);
-            } else if (hasMain) {
-                frontendSyncUrlScript.push(`          SYNC_URL="https://${apiSubdomainPrefix}.${defaultDnsDomain}/api"`);
-            } else {
-                frontendSyncUrlScript.push(`          SYNC_URL="https://${apiSubdomainPrefix}.${defaultDnsDomain}/api"`);
-            }
-            frontendSyncUrlScript.push('        fi');
-
-            const tokenProdVar = `${repoShortName.toUpperCase().replace(/-/g, '_')}_SWA_TOKEN_PROD`;
-            const tokenQaVar = `${repoShortName.toUpperCase().replace(/-/g, '_')}_SWA_TOKEN_QA`;
-            const tokenDevVar = `${repoShortName.toUpperCase().replace(/-/g, '_')}_SWA_TOKEN_DEV`;
-
-            let bashTokenScript = [
-                '        BRANCH_NAME="$(Build.SourceBranchName)"'
-            ];
-            
-            let ifCond = 'if';
-            if (hasMain) {
-                bashTokenScript.push(`        ${ifCond} [ "$BRANCH_NAME" = "main" ]; then`);
-                bashTokenScript.push('          TOKEN="$TOKEN_PROD"');
-                ifCond = 'elif';
-            }
-            if (hasQa) {
-                bashTokenScript.push(`        ${ifCond} [ "$BRANCH_NAME" = "qa" ]; then`);
-                bashTokenScript.push('          TOKEN="$TOKEN_QA"');
-                ifCond = 'elif';
-            }
-            if (hasDev) {
-                bashTokenScript.push(`        ${ifCond} [ "$BRANCH_NAME" = "dev" ] || [ "$BRANCH_NAME" = "development" ]; then`);
-                bashTokenScript.push('          TOKEN="$TOKEN_DEV"');
-                ifCond = 'elif';
-            }
-            bashTokenScript.push('        else');
-            if (hasDev) {
-                bashTokenScript.push('          TOKEN="$TOKEN_DEV"');
-            } else if (hasMain) {
-                bashTokenScript.push('          TOKEN="$TOKEN_PROD"');
-            } else {
-                bashTokenScript.push('          TOKEN=""');
-            }
-            bashTokenScript.push('        fi');
-            bashTokenScript.push('        if [ -z "$TOKEN" ]; then');
-            bashTokenScript.push('          echo "##vso[task.logissue type=error]SWA token empty for $BRANCH_NAME"');
-            bashTokenScript.push('          exit 1');
-            bashTokenScript.push('        fi');
-            bashTokenScript.push('        echo "##vso[task.setvariable variable=swaToken;issecret=true]$TOKEN"');
-
-            let bashEnvScript = [];
-            ifCond = 'if';
-            if (hasMain) {
-                bashEnvScript.push(`        ${ifCond} [ "$BRANCH_NAME" = "main" ]; then`);
-                bashEnvScript.push(`          printf '${envPrefix}API_URL=https://${apiSubdomainPrefix}.${defaultDnsDomain}/api\\n' > .env.production`);
-                bashEnvScript.push(`          printf '${envPrefix}APP_ENV=production\\n' >> .env.production`);
-                ifCond = 'elif';
-            }
-            if (hasQa) {
-                bashEnvScript.push(`        ${ifCond} [ "$BRANCH_NAME" = "qa" ]; then`);
-                bashEnvScript.push(`          printf '${envPrefix}API_URL=https://${apiSubdomainPrefix}-qa.${defaultDnsDomain}/api\\n' > .env.production`);
-                bashEnvScript.push(`          printf '${envPrefix}APP_ENV=qa\\n' >> .env.production`);
-                ifCond = 'elif';
-            }
-            if (hasDev) {
-                bashEnvScript.push(`        ${ifCond} [ "$BRANCH_NAME" = "dev" ] || [ "$BRANCH_NAME" = "development" ]; then`);
-                bashEnvScript.push(`          printf '${envPrefix}API_URL=https://${apiSubdomainPrefix}-dev.${defaultDnsDomain}/api\\n' > .env.production`);
-                bashEnvScript.push(`          printf '${envPrefix}APP_ENV=development\\n' >> .env.production`);
-                ifCond = 'elif';
-            }
-            bashEnvScript.push('        else');
-            if (hasDev) {
-                bashEnvScript.push(`          printf '${envPrefix}API_URL=https://${apiSubdomainPrefix}-dev.${defaultDnsDomain}/api\\n' > .env.production`);
-                bashEnvScript.push(`          printf '${envPrefix}APP_ENV=development\\n' >> .env.production`);
-            } else if (hasMain) {
-                bashEnvScript.push(`          printf '${envPrefix}API_URL=https://${apiSubdomainPrefix}.${defaultDnsDomain}/api\\n' > .env.production`);
-                bashEnvScript.push(`          printf '${envPrefix}APP_ENV=production\\n' >> .env.production`);
-            } else {
-                bashEnvScript.push(`          touch .env.production`);
-            }
-            bashEnvScript.push('        fi');
-
-            let envMappings = [];
-            if (hasMain) envMappings.push(`        TOKEN_PROD: $(${tokenProdVar})`);
-            if (hasQa) envMappings.push(`        TOKEN_QA: $(${tokenQaVar})`);
-            if (hasDev) envMappings.push(`        TOKEN_DEV: $(${tokenDevVar})`);
-
-            return [
-                ...triggerLines,
-                '',
-                'variables:',
-                `  - group: ${pipelineVarGroup}`,
-                '',
-                'pool:',
-                "  vmImage: 'ubuntu-latest'",
-                '',
-                'stages:',
-                '- stage: BuildAndDeploy',
-                `  displayName: 'Deploy ${repoShortName}'`,
-                '  jobs:',
-                '  - job: Deploy',
-                "    displayName: 'Build & Deploy to Azure SWA'",
-                '    steps:',
-                '    - checkout: self',
-                "      displayName: 'Checkout Code'",
-                '',
-                '    - bash: |',
-                ...bashTokenScript,
-                ...bashEnvScript,
-                `        printf '${envPrefix}APP_BUILD=$(Build.BuildId)\\n' >> .env.production`,
-                '        cat .env.production',
-                "      displayName: 'Determine Token & Generate Env Config'",
-                '      env:',
-                ...envMappings,
-                '',
-                '    - task: NodeTool@0',
-                "      displayName: 'Install Node.js'",
-                '      inputs:',
-                "        versionSpec: '20.x'",
-                '',
-                '    - script: |',
-                '        npm ci',
-                "      displayName: 'Install Dependencies'",
-                '',
-                '    - script: |',
-                '        npm run build',
-                "      displayName: 'Build Production Assets'",
-                '',
-                '    - task: AzureStaticWebApp@0',
-                "      displayName: 'Deploy to Static Web App'",
-                '      inputs:',
-                `        app_location: '${appLocation}'`,
-                '        skip_app_build: true',
-                '        azure_static_web_apps_api_token: $(swaToken)',
-                '',
-                '    - script: |',
-                '        if [ -f "./package.json" ]; then',
-                '          VERSION=$(node -p "require(\'./package.json\').version")',
-                '        else',
-                '          VERSION="1.0.0"',
-                '        fi',
-                '        BUILD_ID="$(Build.BuildId)"',
-                '        BRANCH_NAME="$(Build.SourceBranchName)"',
-                ...frontendSyncUrlScript,
-                `        echo "Syncing version $VERSION (Build $BUILD_ID) for ${repoShortName.toLowerCase()} to $SYNC_URL..."`,
-                '        curl -X POST "$SYNC_URL/system/version/sync" \\',
-                '             -H "Content-Type: application/json" \\',
-                '             -H "x-ci-key: 3f4e1d2c-5b6a-7890-a1b2-c3d4e5f6a7b8" \\',
-                `             -d "{\\"component\\": \\"${repoShortName.toLowerCase()}\\", \\"version\\": \\"$VERSION\\", \\"build\\": \\"$BUILD_ID\\"}"`,
-                "      displayName: 'Sync Version to Backend DB'"
-            ].join('\n');
         }
+
+        // FRONTEND STATIC WEB APP (SWA) PIPELINE
+        let envPrefix = 'VITE_';
+        let defaultOutput = 'dist';
+        if (isNext) {
+            envPrefix = 'NEXT_PUBLIC_';
+            defaultOutput = 'out';
+        } else if (isReact) {
+            envPrefix = 'REACT_APP_';
+            defaultOutput = 'build';
+        }
+
+        const buildDir = customAppLocation ? customAppLocation.replace(/^\//, '').replace(/\/$/, '') : '';
+        const appLocation = customOutputLocation 
+            ? (buildDir ? `${buildDir}/${customOutputLocation}` : customOutputLocation)
+            : (buildDir ? `${buildDir}/${defaultOutput}` : defaultOutput);
+        
+        const apiLocation = customApiLocation ? customApiLocation.replace(/^\//, '').replace(/\/$/, '') : '';
+
+        let frontendSyncUrlScript = [];
+        let fSyncIfCond = 'if';
+        if (hasMain) {
+            frontendSyncUrlScript.push(`        ${fSyncIfCond} [ "$BRANCH_NAME" = "main" ]; then`);
+            frontendSyncUrlScript.push(`          SYNC_URL="https://${apiSubdomainPrefix}.${defaultDnsDomain}/api"`);
+            fSyncIfCond = 'elif';
+        }
+        if (hasQa) {
+            frontendSyncUrlScript.push(`        ${fSyncIfCond} [ "$BRANCH_NAME" = "qa" ]; then`);
+            frontendSyncUrlScript.push(`          SYNC_URL="https://${apiSubdomainPrefix}-qa.${defaultDnsDomain}/api"`);
+            fSyncIfCond = 'elif';
+        }
+        if (hasDev) {
+            frontendSyncUrlScript.push(`        ${fSyncIfCond} [ "$BRANCH_NAME" = "dev" ] || [ "$BRANCH_NAME" = "development" ]; then`);
+            frontendSyncUrlScript.push(`          SYNC_URL="https://${apiSubdomainPrefix}-dev.${defaultDnsDomain}/api"`);
+            fSyncIfCond = 'elif';
+        }
+        frontendSyncUrlScript.push('        else');
+        if (hasDev) {
+            frontendSyncUrlScript.push(`          SYNC_URL="https://${apiSubdomainPrefix}-dev.${defaultDnsDomain}/api"`);
+        } else if (hasMain) {
+            frontendSyncUrlScript.push(`          SYNC_URL="https://${apiSubdomainPrefix}.${defaultDnsDomain}/api"`);
+        } else {
+            frontendSyncUrlScript.push(`          SYNC_URL="https://${apiSubdomainPrefix}.${defaultDnsDomain}/api"`);
+        }
+        frontendSyncUrlScript.push('        fi');
+
+        const tokenProdVar = `${repoShortName.toUpperCase().replace(/-/g, '_')}_SWA_TOKEN_PROD`;
+        const tokenQaVar = `${repoShortName.toUpperCase().replace(/-/g, '_')}_SWA_TOKEN_QA`;
+        const tokenDevVar = `${repoShortName.toUpperCase().replace(/-/g, '_')}_SWA_TOKEN_DEV`;
+
+        let bashTokenScript = [
+            '        BRANCH_NAME="$(Build.SourceBranchName)"'
+        ];
+        
+        let ifCond = 'if';
+        if (hasMain) {
+            bashTokenScript.push(`        ${ifCond} [ "$BRANCH_NAME" = "main" ]; then`);
+            bashTokenScript.push('          TOKEN="$TOKEN_PROD"');
+            ifCond = 'elif';
+        }
+        if (hasQa) {
+            bashTokenScript.push(`        ${ifCond} [ "$BRANCH_NAME" = "qa" ]; then`);
+            bashTokenScript.push('          TOKEN="$TOKEN_QA"');
+            ifCond = 'elif';
+        }
+        if (hasDev) {
+            bashTokenScript.push(`        ${ifCond} [ "$BRANCH_NAME" = "dev" ] || [ "$BRANCH_NAME" = "development" ]; then`);
+            bashTokenScript.push('          TOKEN="$TOKEN_DEV"');
+            ifCond = 'elif';
+        }
+        bashTokenScript.push('        else');
+        if (hasDev) {
+            bashTokenScript.push('          TOKEN="$TOKEN_DEV"');
+        } else if (hasMain) {
+            bashTokenScript.push('          TOKEN="$TOKEN_PROD"');
+        } else {
+            bashTokenScript.push('          TOKEN=""');
+        }
+        bashTokenScript.push('        fi');
+        bashTokenScript.push('        if [ -z "$TOKEN" ]; then');
+        bashTokenScript.push('          echo "##vso[task.logissue type=error]SWA token empty for $BRANCH_NAME"');
+        bashTokenScript.push('          exit 1');
+        bashTokenScript.push('        fi');
+        bashTokenScript.push('        echo "##vso[task.setvariable variable=swaToken;issecret=true]$TOKEN"');
+
+        let bashEnvScript = [];
+        ifCond = 'if';
+        if (hasMain) {
+            bashEnvScript.push(`        ${ifCond} [ "$BRANCH_NAME" = "main" ]; then`);
+            bashEnvScript.push(`          printf '${envPrefix}API_URL=https://${apiSubdomainPrefix}.${defaultDnsDomain}/api\\n' > ${buildDir ? buildDir + '/' : ''}.env.production`);
+            bashEnvScript.push(`          printf '${envPrefix}APP_ENV=production\\n' >> ${buildDir ? buildDir + '/' : ''}.env.production`);
+            ifCond = 'elif';
+        }
+        if (hasQa) {
+            bashEnvScript.push(`        ${ifCond} [ "$BRANCH_NAME" = "qa" ]; then`);
+            bashEnvScript.push(`          printf '${envPrefix}API_URL=https://${apiSubdomainPrefix}-qa.${defaultDnsDomain}/api\\n' > ${buildDir ? buildDir + '/' : ''}.env.production`);
+            bashEnvScript.push(`          printf '${envPrefix}APP_ENV=qa\\n' >> ${buildDir ? buildDir + '/' : ''}.env.production`);
+            ifCond = 'elif';
+        }
+        if (hasDev) {
+            bashEnvScript.push(`        ${ifCond} [ "$BRANCH_NAME" = "dev" ] || [ "$BRANCH_NAME" = "development" ]; then`);
+            bashEnvScript.push(`          printf '${envPrefix}API_URL=https://${apiSubdomainPrefix}-dev.${defaultDnsDomain}/api\\n' > ${buildDir ? buildDir + '/' : ''}.env.production`);
+            bashEnvScript.push(`          printf '${envPrefix}APP_ENV=development\\n' >> ${buildDir ? buildDir + '/' : ''}.env.production`);
+            ifCond = 'elif';
+        }
+        bashEnvScript.push('        else');
+        if (hasDev) {
+            bashEnvScript.push(`          printf '${envPrefix}API_URL=https://${apiSubdomainPrefix}-dev.${defaultDnsDomain}/api\\n' > ${buildDir ? buildDir + '/' : ''}.env.production`);
+            bashEnvScript.push(`          printf '${envPrefix}APP_ENV=development\\n' >> ${buildDir ? buildDir + '/' : ''}.env.production`);
+        } else if (hasMain) {
+            bashEnvScript.push(`          printf '${envPrefix}API_URL=https://${apiSubdomainPrefix}.${defaultDnsDomain}/api\\n' > ${buildDir ? buildDir + '/' : ''}.env.production`);
+            bashEnvScript.push(`          printf '${envPrefix}APP_ENV=production\\n' >> ${buildDir ? buildDir + '/' : ''}.env.production`);
+        } else {
+            bashEnvScript.push(`          touch ${buildDir ? buildDir + '/' : ''}.env.production`);
+        }
+        bashEnvScript.push('        fi');
+
+        let envMappings = [];
+        if (hasMain) envMappings.push(`        TOKEN_PROD: $(${tokenProdVar})`);
+        if (hasQa) envMappings.push(`        TOKEN_QA: $(${tokenQaVar})`);
+        if (hasDev) envMappings.push(`        TOKEN_DEV: $(${tokenDevVar})`);
+
+        const deployTaskInputs = [
+            `        app_location: '${appLocation}'`,
+            '        skip_app_build: true',
+            '        azure_static_web_apps_api_token: $(swaToken)'
+        ];
+        if (apiLocation) {
+            deployTaskInputs.splice(1, 0, `        api_location: '${apiLocation}'`);
+        }
+
+        return [
+            ...triggerLines,
+            '',
+            'variables:',
+            `  - group: ${pipelineVarGroup}`,
+            '',
+            'pool:',
+            "  vmImage: 'ubuntu-latest'",
+            '',
+            'stages:',
+            '- stage: BuildAndDeploy',
+            `  displayName: 'Deploy ${repoShortName}'`,
+            '  jobs:',
+            '  - job: Deploy',
+            "    displayName: 'Build & Deploy to Azure SWA'",
+            '    steps:',
+            '    - checkout: self',
+            "      displayName: 'Checkout Code'",
+            '',
+            '    - bash: |',
+            ...bashTokenScript,
+            ...bashEnvScript,
+            `        printf '${envPrefix}APP_BUILD=$(Build.BuildId)\\n' >> ${buildDir ? buildDir + '/' : ''}.env.production`,
+            `        cat ${buildDir ? buildDir + '/' : ''}.env.production`,
+            "      displayName: 'Determine Token & Generate Env Config'",
+            '      env:',
+            ...envMappings,
+            '',
+            '    - task: NodeTool@0',
+            "      displayName: 'Install Node.js'",
+            '      inputs:',
+            "        versionSpec: '20.x'",
+            '',
+            '    - script: |',
+            buildDir ? `        cd ${buildDir}` : '        # Root build',
+            '        npm ci',
+            "      displayName: 'Install Dependencies'",
+            '',
+            '    - script: |',
+            buildDir ? `        cd ${buildDir}` : '        # Root build',
+            '        npm run build',
+            "      displayName: 'Build Production Assets'",
+            '',
+            '    - task: AzureStaticWebApp@0',
+            "      displayName: 'Deploy to Static Web App'",
+            '      inputs:',
+            ...deployTaskInputs,
+            '',
+            '    - script: |',
+            `        if [ -f "./${buildDir ? buildDir + '/' : ''}package.json" ]; then`,
+            `          VERSION=$(node -p "require('./${buildDir ? buildDir + '/' : ''}package.json').version")`,
+            '        else',
+            '          VERSION="1.0.0"',
+            '        fi',
+            '        BUILD_ID="$(Build.BuildId)"',
+            '        BRANCH_NAME="$(Build.SourceBranchName)"',
+            ...frontendSyncUrlScript,
+            `        echo "Syncing version $VERSION (Build $BUILD_ID) for ${repoShortName.toLowerCase()} to $SYNC_URL..."`,
+            '        curl -X POST "$SYNC_URL/system/version/sync" \\',
+            '             -H "Content-Type: application/json" \\',
+            '             -H "x-ci-key: 3f4e1d2c-5b6a-7890-a1b2-c3d4e5f6a7b8" \\',
+            `             -d "{\\"component\\": \\"${repoShortName.toLowerCase()}\\", \\"version\\": \\"$VERSION\\", \\"build\\": \\"$BUILD_ID\\"}"`,
+            "      displayName: 'Sync Version to Backend DB'"
+        ].join('\n');
     },
-    async _commitYmlToRepo(githubToken, githubRepo, existingSha, orgSettings, branch = 'main', customYmlContent = null) {
+    async _commitYmlToRepo(githubToken, githubRepo, existingSha, orgSettings, branch = 'main', customYmlContent = null, customAppLocation = null, customApiLocation = null, customOutputLocation = null) {
         const standardBranches = ['main', 'qa', 'dev'];
         const branchesToInclude = Array.from(new Set([...standardBranches, branch]));
 
@@ -1317,7 +1394,11 @@ const appController = {
             githubRepo,
             branchesToInclude,
             orgSettings,
-            branch
+            branch,
+            null,
+            customAppLocation,
+            customApiLocation,
+            customOutputLocation
         );
 
         const contentBase64 = Buffer.from(defaultYml).toString('base64');
@@ -1452,7 +1533,7 @@ const appController = {
 
             // Query matching frontend apps for this repo
             const [frontendApps] = await db.query(
-                `SELECT name, app_type FROM applications 
+                `SELECT name, app_type, azure_resource_details FROM applications 
                  WHERE organization_id = ? 
                    AND app_type = 'frontend'
                    AND repo_url <> '' AND repo_url IS NOT NULL
@@ -1468,8 +1549,10 @@ const appController = {
             if (frontendApps.length > 0) {
                 for (const app of frontendApps) {
                     try {
-                        console.log(`[AppController] Retrieving Static Web App deployment token for ${app.name}...`);
-                        const secrets = await webClient.staticSites.listStaticSiteSecrets(resourceGroup, app.name);
+                        const appDetails = typeof app.azure_resource_details === 'string' ? JSON.parse(app.azure_resource_details || '{}') : (app.azure_resource_details || {});
+                        const targetRg = appDetails.resourceGroup || resourceGroup;
+                        console.log(`[AppController] Retrieving Static Web App deployment token for ${app.name} in RG: ${targetRg}...`);
+                        const secrets = await webClient.staticSites.listStaticSiteSecrets(targetRg, app.name);
                         const swaToken = secrets.properties?.apiKey || secrets.apiKey;
                         if (swaToken) {
                             let envSuffix = 'DEV';
@@ -1501,7 +1584,16 @@ const appController = {
                 // Fallback to the passed appName
                 try {
                     console.log(`[AppController] No matching apps in DB. Fallback to passed appName: ${appName}`);
-                    const secrets = await webClient.staticSites.listStaticSiteSecrets(resourceGroup, appName);
+                    let fallbackRg = resourceGroup;
+                    const [fallbackApp] = await db.query(
+                        'SELECT azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
+                        [organizationId, appName]
+                    );
+                    if (fallbackApp.length > 0) {
+                        const details = typeof fallbackApp[0].azure_resource_details === 'string' ? JSON.parse(fallbackApp[0].azure_resource_details || '{}') : (fallbackApp[0].azure_resource_details || {});
+                        fallbackRg = details.resourceGroup || resourceGroup;
+                    }
+                    const secrets = await webClient.staticSites.listStaticSiteSecrets(fallbackRg, appName);
                     const swaToken = secrets.properties?.apiKey || secrets.apiKey;
                     if (swaToken) {
                         const envSuffix = (branch === 'main' || branch === 'prod') ? 'PROD' : (branch === 'qa' ? 'QA' : 'DEV');
@@ -1583,6 +1675,41 @@ const appController = {
             }
 
             if (githubToken) {
+                // Fetch application type to check Dockerfile if backend (ACA)
+                const [apps] = await db.query(
+                    'SELECT app_type FROM applications WHERE organization_id = ? AND name = ?',
+                    [organizationId, appName]
+                );
+                const appType = apps.length > 0 ? apps[0].app_type : 'frontend';
+
+                if (appType === 'backend') {
+                    let hasDockerfile = false;
+                    try {
+                        const dfUrl = `https://api.github.com/repos/${githubRepo}/contents/Dockerfile?ref=${encodeURIComponent(branch || 'main')}`;
+                        const dfRes = await axios.get(dfUrl, {
+                            headers: {
+                                'Authorization': `token ${githubToken}`,
+                                'Accept': 'application/vnd.github.v3+json',
+                                'User-Agent': 'DevOps-Hub'
+                            }
+                        });
+                        if (dfRes.data && dfRes.data.sha) {
+                            hasDockerfile = true;
+                        }
+                    } catch (e) {
+                        hasDockerfile = false;
+                    }
+                    if (!hasDockerfile) {
+                        console.log(`[AppController] Dockerfile NOT found in ${githubRepo} on branch ${branch || 'main'}. Returning DOCKERFILE_MISSING.`);
+                        return res.status(200).json({
+                            success: false,
+                            code: 'DOCKERFILE_MISSING',
+                            message: `Dockerfile was not found in the repository "${githubRepo}" on branch "${branch || 'main'}". A Dockerfile is required to build the container image for Azure Container Apps.`,
+                            githubRepo
+                        });
+                    }
+                }
+
                 const ymlStatus = await appController._checkYmlExists(githubToken, githubRepo, branch || 'main');
                 if (!ymlStatus.exists) {
                     console.log(`[AppController] azure-pipelines.yml NOT found in ${githubRepo}. Returning YML_MISSING.`);
@@ -1649,7 +1776,19 @@ const appController = {
      */
     createPipelineYml: async (req, res) => {
         try {
-            const { organizationId, appName, githubRepo, devopsOrgUrl, devopsProject, branch, skipRegistration, customYml } = req.body;
+            const { 
+                organizationId, 
+                appName, 
+                githubRepo, 
+                devopsOrgUrl, 
+                devopsProject, 
+                branch, 
+                skipRegistration, 
+                customYml,
+                customAppLocation,
+                customApiLocation,
+                customOutputLocation
+            } = req.body;
 
             if (!organizationId || !appName || !githubRepo || !devopsOrgUrl || !devopsProject) {
                 return res.status(400).json({ message: 'Missing parameters (organizationId, appName, githubRepo, devopsOrgUrl, devopsProject).' });
@@ -1670,7 +1809,17 @@ const appController = {
 
             // 3. Commit the default yml
             console.log(`[AppController] Committing azure-pipelines.yml to ${githubRepo} (exists: ${ymlStatus.exists}) on branch ${branch || 'main'}...`);
-            await appController._commitYmlToRepo(githubToken, githubRepo, ymlStatus.sha, orgSettings, branch || 'main', customYml);
+            await appController._commitYmlToRepo(
+                githubToken, 
+                githubRepo, 
+                ymlStatus.sha, 
+                orgSettings, 
+                branch || 'main', 
+                customYml,
+                customAppLocation,
+                customApiLocation,
+                customOutputLocation
+            );
             console.log(`[AppController] azure-pipelines.yml committed successfully.`);
 
             if (skipRegistration) {
@@ -1750,7 +1899,6 @@ const appController = {
 
             const orgSettings = await appController._getOrgSettings(organizationId);
             const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
             const defaultDomain = orgSettings.default_dns_domain || DEFAULT_DOMAIN;
             const githubOwner = orgSettings.github_owner || 'Estevia-TechSolutions';
 
@@ -1771,6 +1919,8 @@ const appController = {
                 dnsDetails = typeof apps[0].godaddy_dns_details === 'string' ? JSON.parse(apps[0].godaddy_dns_details || '{}') : (apps[0].godaddy_dns_details || {});
                 pipelineId = apps[0].pipeline_id;
             }
+
+            const resourceGroup = azureDetails.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             const hostname = azureDetails.hostname || '';
 
@@ -1941,7 +2091,10 @@ const appController = {
                 azureDevopsOrgUrl, 
                 azureDevopsProject, 
                 pipelineVariableGroup, 
-                githubOwner 
+                githubOwner,
+                azureContainerRegistry,
+                azureDevopsServiceConnection,
+                dockerRegistryServiceConnection
             } = req.body;
 
             if (!organizationId) {
@@ -1961,7 +2114,10 @@ const appController = {
                     azure_devops_org_url = ?,
                     azure_devops_project = ?,
                     pipeline_variable_group = ?,
-                    github_owner = ?
+                    github_owner = ?,
+                    azure_container_registry = ?,
+                    azure_devops_service_connection = ?,
+                    docker_registry_service_connection = ?
                 WHERE id = ?
             `, [
                 azureSubscriptionId || null,
@@ -1971,6 +2127,9 @@ const appController = {
                 azureDevopsProject || null,
                 pipelineVariableGroup || null,
                 githubOwner || null,
+                azureContainerRegistry || null,
+                azureDevopsServiceConnection || null,
+                dockerRegistryServiceConnection || null,
                 organizationId
             ]);
 
@@ -2122,7 +2281,7 @@ const appController = {
      */
     getDefaultYml: async (req, res) => {
         try {
-            const { organizationId, githubRepo, branches, appType } = req.query;
+            const { organizationId, githubRepo, branches, appType, customAppLocation, customApiLocation, customOutputLocation } = req.query;
             if (!organizationId || !githubRepo) {
                 return res.status(400).json({ message: 'Missing organizationId or githubRepo parameters.' });
             }
@@ -2146,7 +2305,10 @@ const appController = {
                 branchList,
                 orgSettings,
                 mainBranch,
-                appType
+                appType,
+                customAppLocation,
+                customApiLocation,
+                customOutputLocation
             );
 
             res.json({ success: true, content: defaultYml });
@@ -2858,7 +3020,410 @@ const appController = {
             console.error('[AppController] executeQuery failed:', error.message);
             res.status(500).json({ success: false, message: error.message });
         }
+    },
+
+    /**
+     * GET /api/apps/provisioning-metadata
+     */
+    getProvisioningMetadata: async (req, res) => {
+        try {
+            const organizationId = req.query.organizationId || 'estevia';
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const devopsOrgUrl = orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech';
+            const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
+
+            const credential = await getAzureCredential(organizationId);
+            const resourceClient = new ResourceManagementClient(credential, subscriptionId);
+
+            // 1. Fetch available Azure regions/locations dynamically
+            const locationsList = [];
+            try {
+                const tokenRes = await credential.getToken("https://management.azure.com/.default");
+                const token = tokenRes.token;
+                const locUrl = `https://management.azure.com/subscriptions/${subscriptionId}/locations?api-version=2022-12-01`;
+                const locRes = await axios.get(locUrl, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (locRes.data && Array.isArray(locRes.data.value)) {
+                    for (const loc of locRes.data.value) {
+                        locationsList.push({
+                            name: loc.name,
+                            displayName: loc.displayName || loc.name
+                        });
+                    }
+                }
+            } catch (err) {
+                console.warn('[AppController] Failed to query subscription locations:', err.message);
+                locationsList.push(
+                    { name: 'eastus2', displayName: 'East US 2 (Recommended)' },
+                    { name: 'centralus', displayName: 'Central US' },
+                    { name: 'westus2', displayName: 'West US 2' }
+                );
+            }
+
+            // 2. Fetch Resource Groups dynamically
+            const resourceGroups = [];
+            try {
+                for await (const rg of resourceClient.resourceGroups.list()) {
+                    if (rg.name) {
+                        resourceGroups.push(rg.name);
+                    }
+                }
+            } catch (err) {
+                console.warn('[AppController] Failed to list resource groups:', err.message);
+            }
+
+            // 3. Fetch ACA Managed Environments dynamically
+            const managedEnvironments = [];
+            try {
+                const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
+                const genericResources = [];
+                for await (const r of resourceClient.resources.list({ filter: "resourceType eq 'Microsoft.App/managedEnvironments'" })) {
+                    genericResources.push(r);
+                }
+                for (const r of genericResources) {
+                    try {
+                        const rgMatch = r.id.match(/\/resourceGroups\/([^\/]+)/);
+                        const rgName = rgMatch ? rgMatch[1] : '';
+                        const envDetail = await containerClient.managedEnvironments.get(rgName, r.name);
+                        managedEnvironments.push({
+                            name: r.name,
+                            id: r.id,
+                            resourceGroup: rgName,
+                            location: r.location,
+                            vnetName: envDetail.vnetConfiguration?.infrastructureSubnetId 
+                                ? envDetail.vnetConfiguration.infrastructureSubnetId.match(/\/virtualNetworks\/([^\/]+)/)?.[1] || 'Custom VPC'
+                                : 'None (Public Cloud)'
+                        });
+                    } catch (e) {
+                        managedEnvironments.push({
+                            name: r.name,
+                            id: r.id,
+                            location: r.location,
+                            vnetName: 'None (Public Cloud)'
+                        });
+                    }
+                }
+            } catch (err) {
+                console.warn('[AppController] Failed to list managed environments:', err.message);
+            }
+
+            // 4. Fetch Azure Container Registries (ACRs) dynamically
+            const containerRegistries = [];
+            try {
+                for await (const res of resourceClient.resources.list({ filter: "resourceType eq 'Microsoft.ContainerRegistry/registries'" })) {
+                    if (res.name) {
+                        containerRegistries.push({
+                            name: res.name,
+                            loginServer: `${res.name.toLowerCase()}.azurecr.io`,
+                            id: res.id
+                        });
+                    }
+                }
+            } catch (err) {
+                console.warn('[AppController] Failed to list container registries:', err.message);
+            }
+
+            // 5. Fetch Azure DevOps Service Connections dynamically
+            const serviceConnections = { arm: [], docker: [] };
+            try {
+                const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
+                if (devopsSecrets && devopsSecrets.pat) {
+                    const cleanOrgUrl = devopsOrgUrl.replace(/\/$/, '');
+                    const devopsUrl = `${cleanOrgUrl}/${devopsProject}/_apis/serviceendpoint/endpoints?api-version=7.1-preview.4`;
+                    const devRes = await axios.get(devopsUrl, {
+                        headers: {
+                            'Authorization': `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`
+                        }
+                    });
+                    if (devRes.data && Array.isArray(devRes.data.value)) {
+                        for (const endpoint of devRes.data.value) {
+                            const type = endpoint.type?.toLowerCase();
+                            if (type === 'azurerm' || type === 'azure') {
+                                serviceConnections.arm.push({
+                                    id: endpoint.id,
+                                    name: endpoint.name
+                                });
+                            } else if (type === 'dockerregistry' || type === 'registry') {
+                                serviceConnections.docker.push({
+                                    id: endpoint.id,
+                                    name: endpoint.name
+                                });
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn('[AppController] Failed to fetch DevOps service connections:', err.message);
+            }
+
+            res.json({
+                success: true,
+                resourceGroups,
+                locations: locationsList,
+                managedEnvironments,
+                containerRegistries,
+                serviceConnections
+            });
+        } catch (error) {
+            console.error('[AppController] getProvisioningMetadata failed:', error);
+            res.status(500).json({ message: 'Failed to query dynamic Azure metadata.', error: error.message });
+        }
+    },
+
+    /**
+     * POST /api/apps/create-dockerfile
+     */
+    createDockerfile: async (req, res) => {
+        try {
+            const { organizationId, githubRepo, branch, targetPort } = req.body;
+            if (!organizationId || !githubRepo) {
+                return res.status(400).json({ message: 'Missing organizationId or githubRepo parameters.' });
+            }
+
+            const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+            const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+            if (!githubToken) {
+                return res.status(400).json({ message: 'GitHub integration credentials not found for organization.' });
+            }
+
+            const port = targetPort || 5005;
+            const dockerfileContent = [
+                '# Optimized multi-stage build Node.js Dockerfile',
+                'FROM node:20-alpine AS builder',
+                'WORKDIR /app',
+                'COPY package*.json ./',
+                'RUN npm ci',
+                'COPY . .',
+                'RUN npm run build --if-present',
+                '',
+                'FROM node:20-alpine',
+                'WORKDIR /app',
+                'COPY package*.json ./',
+                'RUN npm ci --only=production',
+                'COPY --from=builder /app/dist ./dist --chown=node:node',
+                'COPY --from=builder /app/build ./build --chown=node:node',
+                'COPY . .',
+                `EXPOSE ${port}`,
+                `ENV PORT=${port}`,
+                'CMD [ "npm", "start" ]'
+            ].join('\n');
+
+            let existingSha = null;
+            try {
+                const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/Dockerfile?ref=${encodeURIComponent(branch || 'main')}`;
+                const checkRes = await axios.get(contentsUrl, {
+                    headers: {
+                        'Authorization': `token ${githubToken}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'User-Agent': 'DevOps-Hub'
+                    }
+                });
+                if (checkRes.data && checkRes.data.sha) {
+                    existingSha = checkRes.data.sha;
+                }
+            } catch (e) {
+                // File does not exist yet
+            }
+
+            const commitUrl = `https://api.github.com/repos/${githubRepo}/contents/Dockerfile`;
+            const body = {
+                message: `chore: add default Dockerfile for ACA deployment [via Estevia DevOps Hub]`,
+                content: Buffer.from(dockerfileContent).toString('base64'),
+                branch: branch || 'main'
+            };
+            if (existingSha) body.sha = existingSha;
+
+            await axios.put(commitUrl, body, {
+                headers: {
+                    'Authorization': `token ${githubToken}`,
+                    'Accept': 'application/vnd.github.v3+json',
+                    'User-Agent': 'DevOps-Hub',
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            res.json({
+                success: true,
+                message: `Dockerfile committed successfully to "${githubRepo}" on branch "${branch || 'main'}"`
+            });
+        } catch (error) {
+      console.error('[AppController] createDockerfile failed:', error);
+      res.status(500).json({
+        message: 'Failed to commit Dockerfile.',
+        error: error.response?.data?.message || error.message
+      });
     }
+  },
+
+  getDockerfile: async (req, res) => {
+    try {
+      const { organizationId, githubRepo, branch } = req.query;
+      if (!organizationId || !githubRepo) {
+        return res.status(400).json({ message: 'Missing organizationId or githubRepo parameters.' });
+      }
+      const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+      const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+      if (!githubToken) {
+        return res.status(400).json({ message: 'GitHub integration token not found.' });
+      }
+      
+      const branchName = branch || 'main';
+      const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/Dockerfile?ref=${encodeURIComponent(branchName)}`;
+      
+      try {
+        const response = await axios.get(contentsUrl, {
+          headers: {
+            'Authorization': `token ${githubToken}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'Estevia-DevOps-Hub'
+          }
+        });
+        
+        if (response.data && response.data.content) {
+          const decodedDockerfile = Buffer.from(response.data.content, 'base64').toString('utf-8');
+          return res.json({ success: true, exists: true, content: decodedDockerfile, sha: response.data.sha });
+        }
+        
+        return res.json({ success: true, exists: false, content: '' });
+      } catch (err) {
+        if (err.response && err.response.status === 404) {
+          return res.json({ success: true, exists: false, content: '' });
+        }
+        throw err;
+      }
+    } catch (error) {
+      console.error('[AppController] getDockerfile failed:', error);
+      res.status(500).json({ message: 'Failed to fetch Dockerfile.', error: error.message });
+    }
+  },
+
+  /**
+   * PUT /api/apps/update-dockerfile
+   * Push custom Dockerfile content to GitHub (create or update)
+   */
+  updateDockerfile: async (req, res) => {
+    try {
+      const { organizationId, githubRepo, branch, content, commitMessage } = req.body;
+      if (!organizationId || !githubRepo || !content) {
+        return res.status(400).json({ message: 'Missing organizationId, githubRepo, or content.' });
+      }
+
+      const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+      const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+      if (!githubToken) {
+        return res.status(400).json({ message: 'GitHub integration token not found for organization.' });
+      }
+
+      const branchName = branch || 'main';
+      const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/Dockerfile`;
+
+      // Fetch existing SHA so GitHub allows the update
+      let existingSha = null;
+      try {
+        const checkRes = await axios.get(`${contentsUrl}?ref=${encodeURIComponent(branchName)}`, {
+          headers: {
+            'Authorization': `token ${githubToken}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'Estevia-DevOps-Hub'
+          }
+        });
+        if (checkRes.data && checkRes.data.sha) existingSha = checkRes.data.sha;
+      } catch (e) {
+        // File doesn't exist yet — will create it
+      }
+
+      const body = {
+        message: commitMessage || `chore: update Dockerfile [via Estevia DevOps Hub]`,
+        content: Buffer.from(content).toString('base64'),
+        branch: branchName
+      };
+      if (existingSha) body.sha = existingSha;
+
+      await axios.put(contentsUrl, body, {
+        headers: {
+          'Authorization': `token ${githubToken}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'Estevia-DevOps-Hub',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      res.json({
+        success: true,
+        message: `Dockerfile pushed successfully to "${githubRepo}" on branch "${branchName}".`
+      });
+    } catch (error) {
+      console.error('[AppController] updateDockerfile failed:', error);
+      res.status(500).json({
+        message: 'Failed to push Dockerfile to GitHub.',
+        error: error.response?.data?.message || error.message
+      });
+    }
+  },
+
+  /**
+   * GET /api/apps/domain-status
+   * Checks CNAME propagation + HTTPS reachability for a custom domain hostname.
+   * Query params: hostname (e.g. myapp.esteviatech.com)
+   */
+  getDomainStatus: async (req, res) => {
+    const { hostname } = req.query;
+    if (!hostname) {
+      return res.status(400).json({ message: 'Missing hostname parameter.' });
+    }
+
+    const dns = require('dns').promises;
+    const https = require('https');
+
+    const result = {
+      hostname,
+      cname_propagated: false,
+      cname_target: null,
+      ssl_active: false,
+      ssl_issuer: null,
+      ssl_expires: null,
+      reachable: false,
+      http_status: null,
+      checked_at: new Date().toISOString(),
+    };
+
+    // 1. Check CNAME resolution
+    try {
+      const addresses = await dns.resolveCname(hostname);
+      if (addresses && addresses.length > 0) {
+        result.cname_propagated = true;
+        result.cname_target = addresses[0];
+      }
+    } catch (e) {
+      // CNAME not yet propagated or no CNAME record
+      result.cname_propagated = false;
+    }
+
+    // 2. Check HTTPS reachability + SSL cert info
+    await new Promise((resolve) => {
+      const req2 = https.get(`https://${hostname}/`, {
+        timeout: 8000,
+        rejectUnauthorized: false, // allow self-signed to inspect cert
+      }, (r) => {
+        result.reachable = true;
+        result.http_status = r.statusCode;
+        const cert = r.socket?.getPeerCertificate?.();
+        if (cert && cert.subject) {
+          result.ssl_active = true;
+          result.ssl_issuer = cert.issuer?.O || cert.issuer?.CN || null;
+          result.ssl_expires = cert.valid_to || null;
+        }
+        r.resume();
+        resolve(null);
+      });
+      req2.on('error', () => resolve(null));
+      req2.on('timeout', () => { req2.destroy(); resolve(null); });
+    });
+
+    res.json({ success: true, status: result });
+  }
 };
 
 module.exports = appController;

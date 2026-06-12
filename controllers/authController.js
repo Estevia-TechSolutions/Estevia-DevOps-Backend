@@ -245,7 +245,8 @@ const runDiagnostic = async (req, res) => {
         'api.godaddy.com', 
         'dev.azure.com',
         'estevia-dev-db.mysql.database.azure.com',
-        'estevia-dev-db.estevia-prod-db.private.mysql.database.azure.com'
+        'estevia-dev-db.estevia-prod-db.private.mysql.database.azure.com',
+        'estevia-prod-db-v2.estevia-prod-db.private.mysql.database.azure.com'
     ];
 
     // 1. DNS lookups
@@ -358,7 +359,8 @@ const runDiagnostic = async (req, res) => {
         { host: 'login.microsoftonline.com', port: 443 },
         { host: 'www.google.com', port: 443 },
         { host: 'estevia-dev-db.mysql.database.azure.com', port: 3306 },
-        { host: 'estevia-dev-db.estevia-prod-db.private.mysql.database.azure.com', port: 3306 }
+        { host: 'estevia-dev-db.estevia-prod-db.private.mysql.database.azure.com', port: 3306 },
+        { host: 'estevia-prod-db-v2.estevia-prod-db.private.mysql.database.azure.com', port: 3306 }
     ];
 
     for (const target of tcpTargets) {

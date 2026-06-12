@@ -48,6 +48,21 @@ router.post('/databases', appController.provisionDatabase);
 router.get('/database-schema', appController.getDatabaseSchema);
 router.post('/execute-query', appController.executeQuery);
 
+// Get dynamic Azure provisioning metadata (Resource Groups, locations, envs, registries, DevOps service connections)
+router.get('/provisioning-metadata', appController.getProvisioningMetadata);
+
+// Create default Dockerfile in user's GitHub repository
+router.post('/create-dockerfile', appController.createDockerfile);
+
+// Get Dockerfile content from user's GitHub repository
+router.get('/get-dockerfile', appController.getDockerfile);
+
+// Push edited Dockerfile content back to GitHub
+router.put('/update-dockerfile', appController.updateDockerfile);
+
+// Check CNAME propagation and SSL status for a custom domain
+router.get('/domain-status', appController.getDomainStatus);
+
 // Delete SWA/ACA app from Azure and database
 router.delete('/:name', appController.deleteApp);
 

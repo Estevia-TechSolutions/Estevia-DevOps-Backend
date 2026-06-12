@@ -22,4 +22,34 @@ const pool = mysql.createPool({
     queueLimit: 0
 });
 
+async function runAutoMigration() {
+    try {
+        console.log('[DevOps DB] Running database migrations check...');
+        const [columns] = await pool.query(`
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+              AND TABLE_NAME = 'organizations'
+        `);
+        const columnNames = columns.map(c => c.COLUMN_NAME.toLowerCase());
+        
+        if (!columnNames.includes('azure_container_registry')) {
+            console.log('[DevOps DB] Adding column azure_container_registry to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN azure_container_registry VARCHAR(255) DEFAULT NULL`);
+        }
+        if (!columnNames.includes('azure_devops_service_connection')) {
+            console.log('[DevOps DB] Adding column azure_devops_service_connection to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN azure_devops_service_connection VARCHAR(100) DEFAULT NULL`);
+        }
+        if (!columnNames.includes('docker_registry_service_connection')) {
+            console.log('[DevOps DB] Adding column docker_registry_service_connection to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN docker_registry_service_connection VARCHAR(100) DEFAULT NULL`);
+        }
+        console.log('[DevOps DB] Database migrations check completed successfully.');
+    } catch (err) {
+        console.error('[DevOps DB] Database migration check failed:', err.message);
+    }
+}
+runAutoMigration();
+
 module.exports = pool;
