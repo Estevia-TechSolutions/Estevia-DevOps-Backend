@@ -239,7 +239,14 @@ const runDiagnostic = async (req, res) => {
     const dnsPromises = require('dns').promises;
     const net = require('net');
     const results = {};
-    const domains = ['login.microsoftonline.com', 'www.google.com', 'api.godaddy.com', 'dev.azure.com'];
+    const domains = [
+        'login.microsoftonline.com', 
+        'www.google.com', 
+        'api.godaddy.com', 
+        'dev.azure.com',
+        'estevia-dev-db.mysql.database.azure.com',
+        'estevia-dev-db.estevia-prod-db.private.mysql.database.azure.com'
+    ];
 
     // 1. DNS lookups
     results.dns = {};
@@ -349,7 +356,9 @@ const runDiagnostic = async (req, res) => {
     results.tcp = {};
     const tcpTargets = [
         { host: 'login.microsoftonline.com', port: 443 },
-        { host: 'www.google.com', port: 443 }
+        { host: 'www.google.com', port: 443 },
+        { host: 'estevia-dev-db.mysql.database.azure.com', port: 3306 },
+        { host: 'estevia-dev-db.estevia-prod-db.private.mysql.database.azure.com', port: 3306 }
     ];
 
     for (const target of tcpTargets) {
