@@ -305,6 +305,36 @@ const runDiagnostic = async (req, res) => {
     await testPost('small_10b', 10);
     await testPost('large_2000b', 2000);
 
+    // 2.7. Tenant-specific POST test with url-encoded body
+    results.tenant_post_test = {};
+    const tenantId = process.env.MICROSOFT_TENANT_ID || 'common';
+    const tenantParams = new URLSearchParams();
+    tenantParams.append('client_id', process.env.MICROSOFT_CLIENT_ID || 'dummy');
+    tenantParams.append('client_secret', process.env.MICROSOFT_CLIENT_SECRET || 'dummy');
+    tenantParams.append('code', '1.FakeCodeFakeCodeFakeCodeFakeCodeFakeCodeFakeCodeFakeCodeFakeCode');
+    tenantParams.append('redirect_uri', process.env.MICROSOFT_REDIRECT_URI || 'https://evaops.esteviatech.com');
+    tenantParams.append('grant_type', 'authorization_code');
+
+    const startTenant = Date.now();
+    try {
+        const response = await axios.post(
+            `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+            tenantParams.toString(),
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 3000 }
+        );
+        results.tenant_post_test = {
+            status: response.status,
+            timeMs: Date.now() - startTenant
+        };
+    } catch (err) {
+        results.tenant_post_test = {
+            error: err.message,
+            status: err.response?.status,
+            timeMs: Date.now() - startTenant,
+            response: err.response?.data ? JSON.stringify(err.response.data).substring(0, 100) : null
+        };
+    }
+
     // 3. TCP socket connections
     results.tcp = {};
     const tcpTargets = [
