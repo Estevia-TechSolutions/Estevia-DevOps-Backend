@@ -380,16 +380,31 @@ const appController = {
                                             // Check if parent is a phase belonging to this stage
                                             const parentPhase = phases.find(p => p.id === job.parentId);
                                             return parentPhase && parentPhase.parentId === stage.id;
-                                        }).sort((a, b) => (a.order || 0) - (b.order || 0))
-                                          .map(j => ({
-                                              id: j.id,
-                                              name: j.name,
-                                              displayName: j.displayName || j.name,
-                                              state: j.state,       // waiting | inProgress | completed
-                                              result: j.result,     // succeeded | failed | canceled | skipped | null
-                                              startTime: j.startTime || null,
-                                              finishTime: j.finishTime || null
-                                          }));
+                                         }).sort((a, b) => (a.order || 0) - (b.order || 0))
+                                           .map(j => {
+                                               const jobTasks = allRecords
+                                                   .filter(r => r.type === 'Task' && r.parentId === j.id)
+                                                   .sort((a, b) => (a.order || 0) - (b.order || 0))
+                                                   .map(t => ({
+                                                       id: t.id,
+                                                       name: t.name,
+                                                       displayName: t.displayName || t.name,
+                                                       state: t.state,
+                                                       result: t.result,
+                                                       startTime: t.startTime || null,
+                                                       finishTime: t.finishTime || null
+                                                   }));
+                                               return {
+                                                   id: j.id,
+                                                   name: j.name,
+                                                   displayName: j.displayName || j.name,
+                                                   state: j.state,       // waiting | inProgress | completed
+                                                   result: j.result,     // succeeded | failed | canceled | skipped | null
+                                                   startTime: j.startTime || null,
+                                                   finishTime: j.finishTime || null,
+                                                   steps: jobTasks
+                                               };
+                                           });
 
                                         return {
                                             id: stage.id,
