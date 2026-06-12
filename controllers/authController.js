@@ -1,6 +1,7 @@
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
+const https = require('https');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'estevia-devops-jwt-super-secret-key-12345';
 
@@ -39,7 +40,7 @@ const microsoftLogin = async (req, res) => {
 
     try {
         // Exchange authorization code for token
-        console.log('[authController] Exchanging code with Microsoft login service...');
+        console.log(`[authController] Exchanging code with Microsoft login service for tenant: ${envTenantId}...`);
         const params = new URLSearchParams();
         params.append('client_id', clientId);
         params.append('client_secret', clientSecret);
@@ -50,7 +51,11 @@ const microsoftLogin = async (req, res) => {
         const tokenResponse = await axios.post(
             `https://login.microsoftonline.com/${envTenantId}/oauth2/v2.0/token`,
             params.toString(),
-            { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+            { 
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                httpsAgent: new https.Agent({ family: 4 }),
+                timeout: 15000
+            }
         );
 
         const { id_token } = tokenResponse.data;
