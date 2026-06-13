@@ -32,6 +32,9 @@ const PORT = process.env.PORT || 5005;
 app.use(cors());
 app.use(express.json());
 
+const auditLogger = require('./middlewares/auditLogger');
+app.use(auditLogger);
+
 // Routes
 const authRoutes = require('./routes/authRoutes');
 const { protect } = require('./middlewares/authMiddleware');
@@ -47,18 +50,40 @@ app.use('/api/apps', protect, appRoutes);
 const orgRoutes = require('./routes/orgRoutes');
 app.use('/api/org', orgRoutes);
 
+const observabilityRoutes = require('./routes/observabilityRoutes');
+app.use('/api/observability', observabilityRoutes);
+
+const schedulerRoutes = require('./routes/schedulerRoutes');
+app.use('/api/scheduler', schedulerRoutes);
+
+const dbHubRoutes = require('./routes/dbHubRoutes');
+app.use('/api/database-hub', dbHubRoutes);
+
+const cloneRoutes = require('./routes/cloneRoutes');
+app.use('/api/environments', cloneRoutes);
+
+const auditRoutes = require('./routes/auditRoutes');
+app.use('/api/audit-logs', auditRoutes);
+
+const keyVaultRoutes = require('./routes/keyVaultRoutes');
+app.use('/api/keyvault', keyVaultRoutes);
+
 app.get('/health', (req, res) => {
     res.json({ status: 'HEALTHY', timestamp: new Date() });
 });
 
 // Run database migrations automatically on startup
 const runMigrations = require('./run_migrations');
+const schedulerWorker = require('./utils/schedulerWorker');
+
 console.log('[DevOps Backend] Running auto-migrations on server startup...');
 runMigrations()
     .then(() => {
         console.log('[DevOps Backend] Database auto-migrations completed successfully.');
         app.listen(PORT, () => {
             console.log(`[DevOps Backend] Running on http://localhost:${PORT}`);
+            // Start Weekly sleep scheduler background loops
+            schedulerWorker.startSchedulerWorker();
         });
     })
     .catch((err) => {

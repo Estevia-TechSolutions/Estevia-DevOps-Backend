@@ -104,9 +104,24 @@ const microsoftLogin = async (req, res) => {
         const [orgs] = await db.query('SELECT * FROM organizations WHERE tenant_id = ?', [tenantIdFromToken]);
         const matchedOrg = orgs.length > 0 ? orgs[0] : null;
 
-        // Extract role from Azure AD claims (App Roles or Directory Roles)
+        // Extract role from Azure AD claims (App Roles, Directory Roles, or Security Groups)
         let userRole = matchedOrg ? 'viewer' : 'admin';
-        if (claims.roles && claims.roles.length > 0) {
+        if (claims.groups && Array.isArray(claims.groups)) {
+            const ownerGroupId = process.env.AZURE_AD_GROUP_OWNER || 'owner-group-id-placeholder';
+            const adminGroupId = process.env.AZURE_AD_GROUP_ADMIN || 'admin-group-id-placeholder';
+            const contributorGroupId = process.env.AZURE_AD_GROUP_CONTRIBUTOR || 'contributor-group-id-placeholder';
+            const viewerGroupId = process.env.AZURE_AD_GROUP_VIEWER || 'viewer-group-id-placeholder';
+
+            if (claims.groups.includes(ownerGroupId)) {
+                userRole = 'owner';
+            } else if (claims.groups.includes(adminGroupId)) {
+                userRole = 'admin';
+            } else if (claims.groups.includes(contributorGroupId)) {
+                userRole = 'contributor';
+            } else if (claims.groups.includes(viewerGroupId)) {
+                userRole = 'viewer';
+            }
+        } else if (claims.roles && claims.roles.length > 0) {
             const matchedRole = claims.roles.find(r => ['owner', 'admin', 'member', 'viewer', 'contributor', 'reader'].includes(r.toLowerCase()));
             if (matchedRole) {
                 userRole = matchedRole.toLowerCase();
