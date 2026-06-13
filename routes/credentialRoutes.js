@@ -1,14 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const credentialController = require('../controllers/credentialController');
+const { restrictTo } = require('../middlewares/authMiddleware');
 
 // Save/update credentials
-router.post('/', credentialController.saveCredentials);
+router.post('/', restrictTo('owner', 'admin'), credentialController.saveCredentials);
 
 // Decrypt credentials
-router.get('/decrypt', credentialController.getDecryptedCredentials);
+router.get('/decrypt', restrictTo('owner', 'admin'), credentialController.getDecryptedCredentials);
 
 // List credentials (metadata only)
-router.get('/', credentialController.getCredentialsList);
+router.get('/', restrictTo('owner', 'admin'), credentialController.getCredentialsList);
 
 module.exports = router;
