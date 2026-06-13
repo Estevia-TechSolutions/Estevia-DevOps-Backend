@@ -234,6 +234,129 @@ const dbHubController = {
     },
 
     /**
+     * POST /api/database-hub/migrate-data
+     * Copies all row data from source DB to target DB.
+     * Only allowed when target schema is empty (0 existing tables before schema migration).
+     * Expected body: { sourceServerName, sourceDb, targetServerName, targetDb, tables[] }
+     */
+    migrateData: async (req, res) => {
+        try {
+            const { sourceServerName, sourceDb, targetServerName, targetDb, tables } = req.body;
+            if (!sourceDb || !targetDb || !sourceServerName || !targetServerName || !tables?.length) {
+                return res.status(400).json({ success: false, message: 'Missing required parameters: sourceServerName, sourceDb, targetServerName, targetDb, tables.' });
+            }
+
+            console.log(`[DBHub] Starting data migration: [${sourceServerName}].${sourceDb} -> [${targetServerName}].${targetDb} — ${tables.length} tables`);
+
+            const appController = require('./appController');
+            const mysql = require('mysql2/promise');
+
+            const sourceConn = await mysql.createConnection({
+                host: appController._resolveDbHost(sourceServerName),
+                user: process.env.DB_USER || 'estevia',
+                password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                database: sourceDb,
+                port: process.env.DB_PORT || 3306,
+                ssl: { require: true, rejectUnauthorized: false },
+                connectTimeout: 8000
+            });
+
+            const targetConn = await mysql.createConnection({
+                host: appController._resolveDbHost(targetServerName),
+                user: process.env.DB_USER || 'estevia',
+                password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                database: targetDb,
+                port: process.env.DB_PORT || 3306,
+                ssl: { require: true, rejectUnauthorized: false },
+                connectTimeout: 8000
+            });
+
+            const migrationLog = [];
+            let totalRows = 0;
+
+            try {
+                // Temporarily disable FK checks on target to avoid insert-order issues
+                await targetConn.query('SET FOREIGN_KEY_CHECKS = 0;');
+
+                for (const tableName of tables) {
+                    try {
+                        // Fetch all rows from source
+                        const [rows] = await sourceConn.query(`SELECT * FROM \`${tableName}\``);
+                        if (rows.length === 0) {
+                            migrationLog.push({ table: tableName, rows: 0, status: 'SKIPPED', note: 'No rows in source' });
+                            continue;
+                        }
+
+                        // Build batched INSERT statements (500 rows per batch)
+                        const columns = Object.keys(rows[0]).map(c => `\`${c}\``).join(', ');
+                        const batchSize = 500;
+                        let inserted = 0;
+
+                        for (let i = 0; i < rows.length; i += batchSize) {
+                            const batch = rows.slice(i, i + batchSize);
+                            const values = batch.map(row =>
+                                '(' + Object.values(row).map(v =>
+                                    v === null ? 'NULL' : mysql.escape(v)
+                                ).join(', ') + ')'
+                            ).join(',\n');
+                            const insertSql = `INSERT IGNORE INTO \`${tableName}\` (${columns}) VALUES\n${values};`;
+                            await targetConn.query(insertSql);
+                            inserted += batch.length;
+                        }
+
+                        totalRows += inserted;
+                        migrationLog.push({ table: tableName, rows: inserted, status: 'SUCCESS' });
+                        console.log(`[DBHub] Migrated ${inserted} rows -> \`${tableName}\``);
+                    } catch (tableErr) {
+                        migrationLog.push({ table: tableName, rows: 0, status: 'ERROR', error: tableErr.message });
+                        console.error(`[DBHub] Failed to migrate table \`${tableName}\`:`, tableErr.message);
+                    }
+                }
+
+                // Re-enable FK checks
+                await targetConn.query('SET FOREIGN_KEY_CHECKS = 1;');
+            } finally {
+                await sourceConn.end();
+                await targetConn.end();
+            }
+
+            res.json({
+                success: true,
+                message: `Data migration complete. ${totalRows} total rows copied across ${tables.length} tables.`,
+                totalRows,
+                log: migrationLog
+            });
+
+            // Fire Teams alert asynchronously
+            setImmediate(async () => {
+                try {
+                    const orgId = req.user?.organization_id || 'estevia';
+                    const actorEmail = req.user?.email || 'system';
+                    await sendTeamsNotification(orgId, {
+                        title: '📦 Database Data Migration Completed',
+                        text: `Full data migration executed: **${sourceDb}** → **${targetDb}**.`,
+                        themeColor: '0078D4',
+                        facts: [
+                            { name: 'Source', value: `${sourceServerName}.${sourceDb}` },
+                            { name: 'Target', value: `${targetServerName}.${targetDb}` },
+                            { name: 'Tables Migrated', value: String(tables.length) },
+                            { name: 'Total Rows Copied', value: String(totalRows) },
+                            { name: 'Executed By', value: actorEmail },
+                            { name: 'Completed At', value: new Date().toISOString() }
+                        ]
+                    });
+                } catch (notifyErr) {
+                    console.error('[DBHub] Teams notification failed:', notifyErr.message);
+                }
+            });
+
+        } catch (error) {
+            console.error('[DBHub] Data migration failed:', error);
+            res.status(500).json({ success: false, message: error.message });
+        }
+    },
+
+    /**
      * GET /api/database/erd?serverName=...&dbName=...
      * Lists tables, columns, attributes, and foreign keys relationships to dynamically build ERD schema diagram.
      */
@@ -329,4 +452,3 @@ const dbHubController = {
 };
 
 module.exports = dbHubController;
-

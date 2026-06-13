@@ -3,3 +3,8 @@ node_modules/
 .env.*
 *.log
 .DS_Store
+api-evaops.json
+scan_response.json
+db_debug.js
+test_grouping.js
+test_scan.js

@@ -5,6 +5,7 @@ const { protect, restrictTo } = require('../middlewares/authMiddleware');
 
 router.post('/compare', protect, dbHubController.compareSchemas);
 router.post('/migrate', protect, restrictTo('owner', 'admin', 'contributor'), dbHubController.executeMigration);
+router.post('/migrate-data', protect, restrictTo('owner', 'admin', 'contributor'), dbHubController.migrateData);
 router.get('/erd', protect, dbHubController.getErdSchema);
 
 module.exports = router;
