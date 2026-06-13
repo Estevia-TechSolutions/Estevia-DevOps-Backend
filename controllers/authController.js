@@ -502,8 +502,24 @@ const syncUsers = async (req, res) => {
         const orgId = req.user?.organization_id || 'estevia';
         const tenantId = req.user?.tenant_id || 'a39c526c-2005-4529-ab5a-f008fc5cbc57';
 
-        // Retrieve token for Microsoft Graph
-        const credential = await getAzureCredential(orgId);
+        // Retrieve token for Microsoft Graph using the main App Registration credentials
+        // which have been granted the User.Read.All Application permission.
+        let credential;
+        const msClientId = process.env.MICROSOFT_CLIENT_ID;
+        const msClientSecret = process.env.MICROSOFT_CLIENT_SECRET;
+
+        if (msClientId && msClientSecret) {
+            console.log(`[AzureAuth] Using App Registration ClientSecretCredential for directory sync. Tenant: ${tenantId}`);
+            credential = new ClientSecretCredential(
+                tenantId,
+                msClientId,
+                msClientSecret
+            );
+        } else {
+            console.log(`[AzureAuth] Fallback: Using organization Azure credentials for directory sync. Tenant: ${tenantId}`);
+            credential = await getAzureCredential(orgId);
+        }
+
         const tokenResponse = await credential.getToken("https://graph.microsoft.com/.default");
         const accessToken = tokenResponse.token;
 
