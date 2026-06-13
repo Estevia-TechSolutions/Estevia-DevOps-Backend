@@ -2702,6 +2702,24 @@ const appController = {
     },
 
     /**
+     * GET /api/apps/billing
+     * Fetches billing invoice records from DB.
+     */
+    getBillingHistory: async (req, res) => {
+        try {
+            const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
+            const [rows] = await db.query(
+                'SELECT id, invoice_number, amount, status, DATE_FORMAT(issue_date, "%Y-%m-%d") as issue_date, DATE_FORMAT(due_date, "%Y-%m-%d") as due_date, DATE_FORMAT(payment_date, "%Y-%m-%d") as payment_date FROM billing_invoices WHERE organization_id = ? ORDER BY due_date DESC',
+                [organizationId]
+            );
+            res.json(rows);
+        } catch (error) {
+            console.error('[AppController] getBillingHistory failed:', error);
+            res.status(500).json({ message: 'Failed to fetch billing invoices history.', error: error.message });
+        }
+    },
+
+    /**
      * GET /api/apps/db-servers
      * Lists MySQL Flexible Servers in the subscription.
      */

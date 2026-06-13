@@ -128,6 +128,22 @@ async function main() {
             )
         `);
 
+        // 5.5 Create billing_invoices table
+        console.log('Creating billing_invoices table...');
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS billing_invoices (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                organization_id VARCHAR(50) NOT NULL,
+                invoice_number VARCHAR(100) UNIQUE NOT NULL,
+                amount DECIMAL(10, 2) NOT NULL,
+                status VARCHAR(50) DEFAULT 'Pending',
+                issue_date DATE NOT NULL,
+                due_date DATE NOT NULL,
+                payment_date DATE DEFAULT NULL,
+                FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+            )
+        `);
+
         // 6. Seed initial organizations
         console.log('Seeding initial organizations and config settings...');
         await connection.query(`
@@ -159,6 +175,47 @@ async function main() {
             VALUES ('dev-bypass-user-id', 'dev@estevia.com', 'Developer Bypass', 'estevia', 'admin')
             ON DUPLICATE KEY UPDATE organization_id = VALUES(organization_id), role = VALUES(role)
         `);
+
+        // 8. Seed initial directory users and roles
+        console.log('Seeding initial directory users and roles...');
+        const initialUsers = [
+            { email: 'tanmay.k@esteviatech.com', name: 'Tanmay Kommireddi', role: 'contributor' },
+            { email: 'premnath.m@esteviatech.com', name: 'Premnath Moturi', role: 'contributor' },
+            { email: 'akhil.m@esteviatech.com', name: 'Akhil Menon', role: 'contributor' },
+            { email: 'vishnu.m@esteviatech.com', name: 'Vishnu Menon', role: 'contributor' },
+            { email: 'venkatesan.k@esteviatech.com', name: 'Venkatesan K', role: 'contributor' },
+            { email: 'chaintanya.v@esteviatech.com', name: 'Chaitanya Varma', role: 'contributor' },
+            { email: 'dhruv.c@esteviatech.com', name: 'Dhruv Charan', role: 'contributor' },
+            { email: 'avadhoot.p@esteviatech.com', name: 'Avadhoot Patwardhan', role: 'viewer' },
+            { email: 'deepa.g@esteviatech.com', name: 'Deepa Govind', role: 'viewer' },
+            { email: 'dilip.m@esteviatech.com', name: 'Dilip Menon', role: 'viewer' },
+            { email: 'rajni.m@esteviatech.com', name: 'Rajni Menon', role: 'viewer' }
+        ];
+
+        for (const u of initialUsers) {
+            await connection.query(`
+                INSERT INTO users (id, email, name, organization_id, role, tenant_id)
+                VALUES (?, ?, ?, 'estevia', ?, 'a39c526c-2005-4529-ab5a-f008fc5cbc57')
+                ON DUPLICATE KEY UPDATE name = VALUES(name), role = VALUES(role)
+            `, [u.email, u.email, u.name, u.role]);
+        }
+
+        // 9. Seed mock billing invoices
+        console.log('Seeding mock billing invoices...');
+        const mockInvoices = [
+            { invoice_number: 'INV-2026-004', amount: 148.50, status: 'Pending', issue_date: '2026-06-05', due_date: '2026-07-05', payment_date: null },
+            { invoice_number: 'INV-2026-003', amount: 152.00, status: 'Paid', issue_date: '2026-05-05', due_date: '2026-06-05', payment_date: '2026-06-04' },
+            { invoice_number: 'INV-2026-002', amount: 122.30, status: 'Paid', issue_date: '2026-04-05', due_date: '2026-05-05', payment_date: '2026-05-05' },
+            { invoice_number: 'INV-2026-001', amount: 165.20, status: 'Paid', issue_date: '2026-03-05', due_date: '2026-04-05', payment_date: '2026-04-05' }
+        ];
+
+        for (const inv of mockInvoices) {
+            await connection.query(`
+                INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date, payment_date)
+                VALUES ('estevia', ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE amount = VALUES(amount), status = VALUES(status), due_date = VALUES(due_date), payment_date = VALUES(payment_date)
+            `, [inv.invoice_number, inv.amount, inv.status, inv.issue_date, inv.due_date, inv.payment_date]);
+        }
 
         console.log('\n================================================================');
         console.log('SUCCESS: Database migration and seeding completed successfully!');

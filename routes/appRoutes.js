@@ -1,15 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const appController = require('../controllers/appController');
+const { restrictTo } = require('../middlewares/authMiddleware');
 
 // Scan active resources from Azure and sync with DB
 router.get('/scan', appController.scanApps);
 
 // Provision new Static Web App
-router.post('/provision', appController.provisionApp);
+router.post('/provision', restrictTo('owner', 'admin', 'contributor'), appController.provisionApp);
 
 // Bind custom domain in DNS & Azure
-router.post('/bind-domain', appController.bindCustomDomain);
+router.post('/bind-domain', restrictTo('owner', 'admin', 'contributor'), appController.bindCustomDomain);
 
 // Check if azure-pipelines.yml exists in a GitHub repo
 router.get('/check-yml', appController.checkYml);
@@ -21,10 +22,10 @@ router.get('/get-yml', appController.getYml);
 router.get('/default-yml', appController.getDefaultYml);
 
 // Create CI/CD pipeline in Azure DevOps
-router.post('/pipeline', appController.createPipeline);
+router.post('/pipeline', restrictTo('owner', 'admin', 'contributor'), appController.createPipeline);
 
 // Commit a default azure-pipelines.yml to GitHub repo, then register pipeline
-router.post('/create-pipeline-yml', appController.createPipelineYml);
+router.post('/create-pipeline-yml', restrictTo('owner', 'admin', 'contributor'), appController.createPipelineYml);
 
 // Get organization dynamic settings
 router.get('/organization-settings', appController.getOrgSettings);
@@ -32,8 +33,11 @@ router.get('/organization-settings', appController.getOrgSettings);
 // Fetch Azure resource costs and optimizations
 router.get('/cost', appController.getCostData);
 
+// Fetch billing invoices history
+router.get('/billing', appController.getBillingHistory);
+
 // Update organization settings
-router.post('/organization-settings', appController.updateOrgSettings);
+router.post('/organization-settings', restrictTo('owner', 'admin'), appController.updateOrgSettings);
 
 // Fetch organization GitHub repos dynamically
 router.get('/github-repos', appController.getGithubRepos);
@@ -44,26 +48,26 @@ router.get('/github-branches', appController.getGithubBranches);
 // Expose Database management endpoints
 router.get('/db-servers', appController.getDbServers);
 router.get('/databases', appController.getDatabases);
-router.post('/databases', appController.provisionDatabase);
+router.post('/databases', restrictTo('owner', 'admin', 'contributor'), appController.provisionDatabase);
 router.get('/database-schema', appController.getDatabaseSchema);
-router.post('/execute-query', appController.executeQuery);
+router.post('/execute-query', restrictTo('owner', 'admin', 'contributor'), appController.executeQuery);
 
 // Get dynamic Azure provisioning metadata (Resource Groups, locations, envs, registries, DevOps service connections)
 router.get('/provisioning-metadata', appController.getProvisioningMetadata);
 
 // Create default Dockerfile in user's GitHub repository
-router.post('/create-dockerfile', appController.createDockerfile);
+router.post('/create-dockerfile', restrictTo('owner', 'admin', 'contributor'), appController.createDockerfile);
 
 // Get Dockerfile content from user's GitHub repository
 router.get('/get-dockerfile', appController.getDockerfile);
 
 // Push edited Dockerfile content back to GitHub
-router.put('/update-dockerfile', appController.updateDockerfile);
+router.put('/update-dockerfile', restrictTo('owner', 'admin', 'contributor'), appController.updateDockerfile);
 
 // Check CNAME propagation and SSL status for a custom domain
 router.get('/domain-status', appController.getDomainStatus);
 
 // Delete SWA/ACA app from Azure and database
-router.delete('/:name', appController.deleteApp);
+router.delete('/:name', restrictTo('owner', 'admin', 'contributor'), appController.deleteApp);
 
 module.exports = router;

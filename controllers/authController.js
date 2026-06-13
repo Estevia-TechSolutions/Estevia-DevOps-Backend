@@ -85,7 +85,7 @@ const microsoftLogin = async (req, res) => {
         const matchedOrg = orgs.length > 0 ? orgs[0] : null;
 
         // Extract role from Azure AD claims (App Roles or Directory Roles)
-        let userRole = matchedOrg ? 'member' : 'admin';
+        let userRole = matchedOrg ? 'viewer' : 'admin';
         if (claims.roles && claims.roles.length > 0) {
             const matchedRole = claims.roles.find(r => ['owner', 'admin', 'member', 'viewer', 'contributor', 'reader'].includes(r.toLowerCase()));
             if (matchedRole) {
@@ -106,18 +106,36 @@ const microsoftLogin = async (req, res) => {
         let user;
 
         if (users.length === 0) {
-            // User does not exist, insert them
-            console.log(`[authController] Creating new user: ${email} for tenant: ${tenantIdFromToken} with role: ${userRole}`);
+            // User does not exist by MSAL ID. Check if they exist by email (pre-seeded user)
+            const [usersByEmail] = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', [email]);
             const orgId = matchedOrg ? matchedOrg.id : null;
-            await db.query(
-                'INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES (?, ?, ?, ?, ?, ?)',
-                [msalId, email, name, orgId, tenantIdFromToken, userRole]
-            );
-            user = { id: msalId, email, name, organization_id: orgId, tenant_id: tenantIdFromToken, role: userRole };
+            
+            if (usersByEmail.length > 0) {
+                // Link pre-seeded user
+                const preSeededUser = usersByEmail[0];
+                console.log(`[authController] Linking pre-seeded user ${email} to MSAL ID: ${msalId} with role: ${preSeededUser.role}`);
+                const finalRole = preSeededUser.role || userRole;
+                
+                await db.query(
+                    'UPDATE users SET id = ?, name = ?, tenant_id = ?, organization_id = ?, role = ? WHERE email = ?',
+                    [msalId, name, tenantIdFromToken, orgId || preSeededUser.organization_id, finalRole, email]
+                );
+                user = { id: msalId, email, name, organization_id: orgId || preSeededUser.organization_id, tenant_id: tenantIdFromToken, role: finalRole };
+            } else {
+                // User does not exist at all, insert them
+                console.log(`[authController] Creating new user: ${email} for tenant: ${tenantIdFromToken} with role: ${userRole}`);
+                await db.query(
+                    'INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES (?, ?, ?, ?, ?, ?)',
+                    [msalId, email, name, orgId, tenantIdFromToken, userRole]
+                );
+                user = { id: msalId, email, name, organization_id: orgId, tenant_id: tenantIdFromToken, role: userRole };
+            }
         } else {
             user = users[0];
             // Update name, email, tenant_id, organization_id, or role if changed/missing
-            let shouldUpdate = user.name !== name || user.email !== email || user.tenant_id !== tenantIdFromToken || user.role !== userRole;
+            // If they have a role in the DB (like contributor/viewer/owner), let's keep it and not force-overwrite with userRole fallback
+            const finalRole = user.role || userRole;
+            let shouldUpdate = user.name !== name || user.email !== email || user.tenant_id !== tenantIdFromToken || user.role !== finalRole;
             let targetOrgId = user.organization_id;
 
             if (matchedOrg && user.organization_id !== matchedOrg.id) {
@@ -128,13 +146,13 @@ const microsoftLogin = async (req, res) => {
             if (shouldUpdate) {
                 await db.query(
                     'UPDATE users SET name = ?, email = ?, tenant_id = ?, organization_id = ?, role = ? WHERE id = ?',
-                    [name, email, tenantIdFromToken, targetOrgId, userRole, msalId]
+                    [name, email, tenantIdFromToken, targetOrgId, finalRole, msalId]
                 );
                 user.name = name;
                 user.email = email;
                 user.tenant_id = tenantIdFromToken;
                 user.organization_id = targetOrgId;
-                user.role = userRole;
+                user.role = finalRole;
             }
         }
 
@@ -417,10 +435,114 @@ const getLoginUrl = (req, res) => {
     return res.json({ url: loginUrl });
 };
 
+const listUsers = async (req, res) => {
+    try {
+        const [rows] = await db.query(
+            'SELECT id, email, name, role, created_at FROM users WHERE organization_id = ? ORDER BY name ASC',
+            [req.user.organization_id || 'estevia']
+        );
+        return res.json(rows);
+    } catch (err) {
+        return res.status(500).json({ error: 'Failed to retrieve users list', details: err.message });
+    }
+};
+
+const updateUserRole = async (req, res) => {
+    const { userId } = req.params;
+    const { role } = req.body;
+    
+    if (!['owner', 'admin', 'contributor', 'viewer'].includes(role.toLowerCase())) {
+        return res.status(400).json({ error: 'Invalid role value specified.' });
+    }
+
+    try {
+        // Get target user current details
+        const [targetUsers] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
+        if (targetUsers.length === 0) {
+            return res.status(404).json({ error: 'User not found.' });
+        }
+        const targetUser = targetUsers[0];
+
+        // Authorization checks
+        if (targetUser.role === 'owner' && req.user.role !== 'owner') {
+            return res.status(403).json({ error: 'Only Owners can modify other Owner settings.' });
+        }
+
+        await db.query('UPDATE users SET role = ? WHERE id = ?', [role.toLowerCase(), userId]);
+        return res.json({ message: 'User role updated successfully.', userId, role: role.toLowerCase() });
+    } catch (err) {
+        return res.status(500).json({ error: 'Failed to update user role.', details: err.message });
+    }
+};
+
+const syncUsers = async (req, res) => {
+    console.log('[authController] Triggering team directory sync from Azure AD...');
+    const azPath = process.platform === 'darwin' ? '/opt/homebrew/bin/az' : 'az';
+    const { exec } = require('child_process');
+    
+    exec(`${azPath} ad user list`, async (err, stdout, stderr) => {
+        if (err) {
+            console.error('[authController] Azure AD user list sync failed:', stderr);
+            return res.status(500).json({ error: 'Failed to retrieve users from Azure AD', details: stderr || err.message });
+        }
+        
+        try {
+            const adUsers = JSON.parse(stdout);
+            const orgId = req.user?.organization_id || 'estevia';
+            const tenantId = req.user?.tenant_id || 'a39c526c-2005-4529-ab5a-f008fc5cbc57';
+            
+            let newUsersCount = 0;
+            let updatedUsersCount = 0;
+            
+            for (const adUser of adUsers) {
+                const email = adUser.mail || adUser.userPrincipalName;
+                if (!email) continue;
+                
+                const name = adUser.displayName || email.split('@')[0];
+                const msalId = adUser.id;
+                
+                // Check if user exists by MSAL ID or Email
+                const [existingById] = await db.query('SELECT * FROM users WHERE id = ?', [msalId]);
+                if (existingById.length > 0) {
+                    if (existingById[0].name !== name || existingById[0].email !== email) {
+                        await db.query('UPDATE users SET name = ?, email = ? WHERE id = ?', [name, email, msalId]);
+                        updatedUsersCount++;
+                    }
+                    continue;
+                }
+                
+                const [existingByEmail] = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', [email]);
+                if (existingByEmail.length > 0) {
+                    await db.query('UPDATE users SET id = ?, name = ? WHERE email = ?', [msalId, name, email]);
+                    updatedUsersCount++;
+                } else {
+                    await db.query(
+                        'INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES (?, ?, ?, ?, ?, ?)',
+                        [msalId, email, name, orgId, tenantId, 'viewer']
+                    );
+                    newUsersCount++;
+                }
+            }
+            
+            return res.json({ 
+                message: 'Directory sync completed successfully.', 
+                added: newUsersCount, 
+                updated: updatedUsersCount 
+            });
+        } catch (parseErr) {
+            console.error('[authController] Failed to parse Azure AD users output:', parseErr.message);
+            return res.status(500).json({ error: 'Failed to process Azure AD users list', details: parseErr.message });
+        }
+    });
+};
+
 module.exports = {
     microsoftLogin,
     getMe,
     bypassLogin,
     getLoginUrl,
-    runDiagnostic
+    runDiagnostic,
+    listUsers,
+    updateUserRole,
+    syncUsers
 };

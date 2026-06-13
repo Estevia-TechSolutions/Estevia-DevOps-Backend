@@ -23,4 +23,22 @@ const protect = (req, res, next) => {
     }
 };
 
-module.exports = { protect };
+const restrictTo = (...allowedRoles) => {
+    return (req, res, next) => {
+        if (!req.user || !req.user.role) {
+            return res.status(403).json({ error: 'Access denied: role not identified.' });
+        }
+        
+        const userRole = req.user.role.toLowerCase();
+        const hasPermission = allowedRoles.some(role => role.toLowerCase() === userRole);
+        
+        if (!hasPermission) {
+            return res.status(403).json({ 
+                error: `Access denied: this action requires one of the following roles: [${allowedRoles.join(', ')}]. Current role: ${userRole}` 
+            });
+        }
+        next();
+    };
+};
+
+module.exports = { protect, restrictTo };
