@@ -52,6 +52,46 @@ async function runAutoMigration() {
             SET admin_email = 'govind.m@esteviatech.com' 
             WHERE id = 'estevia'
         `);
+
+        // Create billing_invoices table if not exists
+        console.log('[DevOps DB] Checking billing_invoices table...');
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS billing_invoices (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                organization_id VARCHAR(50) NOT NULL,
+                invoice_number VARCHAR(100) UNIQUE NOT NULL,
+                amount DECIMAL(10, 2) NOT NULL,
+                status VARCHAR(50) DEFAULT 'Pending',
+                issue_date DATE NOT NULL,
+                due_date DATE NOT NULL,
+                payment_date DATE DEFAULT NULL,
+                FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+            )
+        `);
+
+        // Seed initial directory users and roles
+        console.log('[DevOps DB] Seeding initial directory users...');
+        const initialUsers = [
+            { email: 'tanmay.k@esteviatech.com', name: 'Tanmay Kommireddi', role: 'contributor' },
+            { email: 'premnath.m@esteviatech.com', name: 'Premnath Moturi', role: 'contributor' },
+            { email: 'akhil.m@esteviatech.com', name: 'Akhil Menon', role: 'contributor' },
+            { email: 'vishnu.m@esteviatech.com', name: 'Vishnu Menon', role: 'contributor' },
+            { email: 'venkatesan.k@esteviatech.com', name: 'Venkatesan K', role: 'contributor' },
+            { email: 'chaintanya.v@esteviatech.com', name: 'Chaitanya Varma', role: 'contributor' },
+            { email: 'dhruv.c@esteviatech.com', name: 'Dhruv Charan', role: 'contributor' },
+            { email: 'avadhoot.p@esteviatech.com', name: 'Avadhoot Patwardhan', role: 'viewer' },
+            { email: 'deepa.g@esteviatech.com', name: 'Deepa Govind', role: 'viewer' },
+            { email: 'dilip.m@esteviatech.com', name: 'Dilip Menon', role: 'viewer' },
+            { email: 'rajni.m@esteviatech.com', name: 'Rajni Menon', role: 'viewer' }
+        ];
+
+        for (const u of initialUsers) {
+            await pool.query(`
+                INSERT INTO users (id, email, name, organization_id, role, tenant_id)
+                VALUES (?, ?, ?, 'estevia', ?, 'a39c526c-2005-4529-ab5a-f008fc5cbc57')
+                ON DUPLICATE KEY UPDATE name = VALUES(name), role = VALUES(role)
+            `, [u.email, u.email, u.name, u.role]);
+        }
         
         console.log('[DevOps DB] Database migrations check completed successfully.');
     } catch (err) {

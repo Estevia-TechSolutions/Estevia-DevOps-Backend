@@ -2,6 +2,26 @@ const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const https = require('https');
+const { DefaultAzureCredential, ClientSecretCredential } = require('@azure/identity');
+const credentialController = require('./credentialController');
+
+async function getAzureCredential(organizationId) {
+    try {
+        const azureSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure');
+        if (azureSecrets && azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
+            console.log(`[AzureAuth] Using ClientSecretCredential for organization: ${organizationId}`);
+            return new ClientSecretCredential(
+                azureSecrets.tenantId,
+                azureSecrets.clientId,
+                azureSecrets.clientSecret
+            );
+        }
+    } catch (err) {
+        console.warn(`[AzureAuth] Failed to retrieve Azure credentials for organization ${organizationId}:`, err.message);
+    }
+    console.log(`[AzureAuth] Falling back to DefaultAzureCredential for organization: ${organizationId}`);
+    return new DefaultAzureCredential();
+}
 
 const JWT_SECRET = process.env.JWT_SECRET || 'estevia-devops-jwt-super-secret-key-12345';
 
@@ -476,64 +496,71 @@ const updateUserRole = async (req, res) => {
 };
 
 const syncUsers = async (req, res) => {
-    console.log('[authController] Triggering team directory sync from Azure AD...');
-    const azPath = process.platform === 'darwin' ? '/opt/homebrew/bin/az' : 'az';
-    const { exec } = require('child_process');
+    console.log('[authController] Triggering team directory sync from Azure AD (Microsoft Graph API)...');
     
-    exec(`${azPath} ad user list`, async (err, stdout, stderr) => {
-        if (err) {
-            console.error('[authController] Azure AD user list sync failed:', stderr);
-            return res.status(500).json({ error: 'Failed to retrieve users from Azure AD', details: stderr || err.message });
-        }
+    try {
+        const orgId = req.user?.organization_id || 'estevia';
+        const tenantId = req.user?.tenant_id || 'a39c526c-2005-4529-ab5a-f008fc5cbc57';
+
+        // Retrieve token for Microsoft Graph
+        const credential = await getAzureCredential(orgId);
+        const tokenResponse = await credential.getToken("https://graph.microsoft.com/.default");
+        const accessToken = tokenResponse.token;
+
+        // Fetch users from Graph API
+        const graphResponse = await axios.get('https://graph.microsoft.com/v1.0/users', {
+            headers: {
+                Authorization: `Bearer ${accessToken}`
+            }
+        });
+
+        const adUsers = graphResponse.data.value || [];
         
-        try {
-            const adUsers = JSON.parse(stdout);
-            const orgId = req.user?.organization_id || 'estevia';
-            const tenantId = req.user?.tenant_id || 'a39c526c-2005-4529-ab5a-f008fc5cbc57';
+        let newUsersCount = 0;
+        let updatedUsersCount = 0;
+        
+        for (const adUser of adUsers) {
+            const email = adUser.mail || adUser.userPrincipalName;
+            if (!email) continue;
             
-            let newUsersCount = 0;
-            let updatedUsersCount = 0;
+            const name = adUser.displayName || email.split('@')[0];
+            const msalId = adUser.id;
             
-            for (const adUser of adUsers) {
-                const email = adUser.mail || adUser.userPrincipalName;
-                if (!email) continue;
-                
-                const name = adUser.displayName || email.split('@')[0];
-                const msalId = adUser.id;
-                
-                // Check if user exists by MSAL ID or Email
-                const [existingById] = await db.query('SELECT * FROM users WHERE id = ?', [msalId]);
-                if (existingById.length > 0) {
-                    if (existingById[0].name !== name || existingById[0].email !== email) {
-                        await db.query('UPDATE users SET name = ?, email = ? WHERE id = ?', [name, email, msalId]);
-                        updatedUsersCount++;
-                    }
-                    continue;
-                }
-                
-                const [existingByEmail] = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', [email]);
-                if (existingByEmail.length > 0) {
-                    await db.query('UPDATE users SET id = ?, name = ? WHERE email = ?', [msalId, name, email]);
+            // Check if user exists by MSAL ID or Email
+            const [existingById] = await db.query('SELECT * FROM users WHERE id = ?', [msalId]);
+            if (existingById.length > 0) {
+                if (existingById[0].name !== name || existingById[0].email !== email) {
+                    await db.query('UPDATE users SET name = ?, email = ? WHERE id = ?', [name, email, msalId]);
                     updatedUsersCount++;
-                } else {
-                    await db.query(
-                        'INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES (?, ?, ?, ?, ?, ?)',
-                        [msalId, email, name, orgId, tenantId, 'viewer']
-                    );
-                    newUsersCount++;
                 }
+                continue;
             }
             
-            return res.json({ 
-                message: 'Directory sync completed successfully.', 
-                added: newUsersCount, 
-                updated: updatedUsersCount 
-            });
-        } catch (parseErr) {
-            console.error('[authController] Failed to parse Azure AD users output:', parseErr.message);
-            return res.status(500).json({ error: 'Failed to process Azure AD users list', details: parseErr.message });
+            const [existingByEmail] = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', [email]);
+            if (existingByEmail.length > 0) {
+                await db.query('UPDATE users SET id = ?, name = ? WHERE email = ?', [msalId, name, email]);
+                updatedUsersCount++;
+            } else {
+                await db.query(
+                    'INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES (?, ?, ?, ?, ?, ?)',
+                    [msalId, email, name, orgId, tenantId, 'viewer']
+                );
+                newUsersCount++;
+            }
         }
-    });
+        
+        return res.json({ 
+            message: 'Directory sync completed successfully.', 
+            added: newUsersCount, 
+            updated: updatedUsersCount 
+        });
+    } catch (err) {
+        console.error('[authController] Azure AD Microsoft Graph sync failed:', err.message);
+        return res.status(500).json({ 
+            error: 'Failed to retrieve users from Azure AD', 
+            details: err.response?.data ? JSON.stringify(err.response.data) : err.message 
+        });
+    }
 };
 
 module.exports = {
