@@ -11,7 +11,7 @@ if (!host || !user || !password) {
 }
 
 const pool = mysql.createPool({
-    host: host || 'estevia-prod-db-v2.estevia-prod-db.private.mysql.database.azure.com',
+    host: host || 'estevia-dev-db.mysql.database.azure.com',
     user: user || 'estevia',
     password: password || 'Ewco26INCP',
     database,

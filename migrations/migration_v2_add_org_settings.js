@@ -4,8 +4,8 @@ require('dotenv').config();
 async function migrate() {
     console.log('Connecting to database server...');
     const connection = await mysql.createConnection({
-        host: process.env.DB_HOST || 'dev.c8h82uuqyx51.us-east-1.rds.amazonaws.com',
-        user: process.env.DB_USER || 'admin',
+        host: process.env.DB_HOST || 'estevia-dev-db.mysql.database.azure.com',
+        user: process.env.DB_USER || 'estevia',
         password: process.env.DB_PASSWORD || 'Ewco26INCP',
         database: process.env.DB_NAME || 'estevia_devops',
         port: process.env.DB_PORT || 3306

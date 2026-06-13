@@ -134,15 +134,16 @@ async function main() {
             INSERT INTO organizations (
                 id, name, azure_subscription_id, azure_resource_group, default_dns_domain, 
                 azure_devops_org_url, azure_devops_project, pipeline_variable_group, github_owner,
-                tenant_id, onboarding_complete
+                tenant_id, admin_email, onboarding_complete
             ) VALUES (
                 'estevia', 'Estevia Tech Solutions', 'a812e8e3-34f9-4773-82ee-6398869533b0', 'Estevia-Prod-RG', 'esteviatech.com',
                 'https://dev.azure.com/esteviatech', 'Estevia-Platform', 'estevia-frontend-vars', 'Estevia-TechSolutions',
-                'a39c526c-2005-4529-ab5a-f008fc5cbc57', 1
+                'a39c526c-2005-4529-ab5a-f008fc5cbc57', 'govind.m@esteviatech.com', 1
             ) ON DUPLICATE KEY UPDATE 
                 azure_subscription_id = VALUES(azure_subscription_id),
                 azure_resource_group = VALUES(azure_resource_group),
                 tenant_id = VALUES(tenant_id),
+                admin_email = VALUES(admin_email),
                 onboarding_complete = VALUES(onboarding_complete)
         `);
 

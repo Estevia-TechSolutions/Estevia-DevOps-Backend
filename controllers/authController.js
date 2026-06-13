@@ -84,15 +84,31 @@ const microsoftLogin = async (req, res) => {
         const [orgs] = await db.query('SELECT * FROM organizations WHERE tenant_id = ?', [tenantIdFromToken]);
         const matchedOrg = orgs.length > 0 ? orgs[0] : null;
 
+        // Extract role from Azure AD claims (App Roles or Directory Roles)
+        let userRole = matchedOrg ? 'member' : 'admin';
+        if (claims.roles && claims.roles.length > 0) {
+            const matchedRole = claims.roles.find(r => ['owner', 'admin', 'member', 'viewer', 'contributor', 'reader'].includes(r.toLowerCase()));
+            if (matchedRole) {
+                userRole = matchedRole.toLowerCase();
+            } else {
+                userRole = claims.roles[0].toLowerCase();
+            }
+        } else if (claims.wids && claims.wids.includes('62e90394-69f5-4237-9190-012177145e10')) {
+            // Global Administrator Template ID
+            userRole = 'owner';
+        } else if (matchedOrg && matchedOrg.admin_email && matchedOrg.admin_email.toLowerCase() === email.toLowerCase()) {
+            // Fallback: check matching organization admin_email setting
+            userRole = 'owner';
+        }
+
         // Check if user already exists
         const [users] = await db.query('SELECT * FROM users WHERE id = ?', [msalId]);
         let user;
 
         if (users.length === 0) {
             // User does not exist, insert them
-            console.log(`[authController] Creating new user: ${email} for tenant: ${tenantIdFromToken}`);
+            console.log(`[authController] Creating new user: ${email} for tenant: ${tenantIdFromToken} with role: ${userRole}`);
             const orgId = matchedOrg ? matchedOrg.id : null;
-            const userRole = matchedOrg ? 'member' : 'admin'; // First user of new tenant is admin
             await db.query(
                 'INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES (?, ?, ?, ?, ?, ?)',
                 [msalId, email, name, orgId, tenantIdFromToken, userRole]
@@ -100,8 +116,8 @@ const microsoftLogin = async (req, res) => {
             user = { id: msalId, email, name, organization_id: orgId, tenant_id: tenantIdFromToken, role: userRole };
         } else {
             user = users[0];
-            // Update name, email, tenant_id, or organization_id if changed/missing
-            let shouldUpdate = user.name !== name || user.email !== email || user.tenant_id !== tenantIdFromToken;
+            // Update name, email, tenant_id, organization_id, or role if changed/missing
+            let shouldUpdate = user.name !== name || user.email !== email || user.tenant_id !== tenantIdFromToken || user.role !== userRole;
             let targetOrgId = user.organization_id;
 
             if (matchedOrg && user.organization_id !== matchedOrg.id) {
@@ -111,13 +127,14 @@ const microsoftLogin = async (req, res) => {
 
             if (shouldUpdate) {
                 await db.query(
-                    'UPDATE users SET name = ?, email = ?, tenant_id = ?, organization_id = ? WHERE id = ?',
-                    [name, email, tenantIdFromToken, targetOrgId, msalId]
+                    'UPDATE users SET name = ?, email = ?, tenant_id = ?, organization_id = ?, role = ? WHERE id = ?',
+                    [name, email, tenantIdFromToken, targetOrgId, userRole, msalId]
                 );
                 user.name = name;
                 user.email = email;
                 user.tenant_id = tenantIdFromToken;
                 user.organization_id = targetOrgId;
+                user.role = userRole;
             }
         }
 
