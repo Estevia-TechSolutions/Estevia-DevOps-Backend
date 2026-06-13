@@ -7,6 +7,13 @@ const schedulerController = {
     getRules: async (req, res) => {
         try {
             const orgId = req.query.organizationId || req.user?.organization_id || 'estevia';
+            
+            // Fetch all applications for this organization from DB
+            const [apps] = await db.query(
+                'SELECT id, name, app_type, status FROM applications WHERE organization_id = ?',
+                [orgId]
+            );
+
             const [rows] = await db.query('SELECT * FROM sleep_schedules WHERE organization_id = ?', [orgId]);
             
             if (rows.length === 0) {
@@ -20,14 +27,16 @@ const schedulerController = {
                     sat: { start: '08:00', end: '18:00', enabled: false },
                     sun: { start: '08:00', end: '18:00', enabled: false },
                     autoScaleAca: true,
-                    autoStopVm: false
+                    autoStopVm: false,
+                    selectedApps: []
                 };
                 return res.json({
                     success: true,
                     organization_id: orgId,
                     rules: defaultRules,
                     active: true,
-                    is_default: true
+                    is_default: true,
+                    applications: apps
                 });
             }
 
@@ -39,7 +48,8 @@ const schedulerController = {
                 organization_id: orgId,
                 rules,
                 active: !!schedule.active,
-                is_default: false
+                is_default: false,
+                applications: apps
             });
         } catch (error) {
             console.error('[SchedulerController] Failed to get rules:', error);

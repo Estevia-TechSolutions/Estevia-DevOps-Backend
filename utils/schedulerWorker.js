@@ -90,21 +90,36 @@ async function setContainerAppScale(orgId, appName, minReplicas, maxReplicas) {
 /**
  * Sends a Teams notification when a container app transitions between active and sleep states.
  */
-async function notifyScaleTransition(orgId, appName, newState, minReplicas, maxReplicas) {
+async function notifyScaleTransition(orgId, appName, newState, minReplicas, maxReplicas, appType = 'backend') {
     const isSleeping   = newState === 'sleep';
     const themeColor   = isSleeping ? '6264a7' : '36a64f'; // Teams purple for sleep, green for wake
     const emoji        = isSleeping ? '💤' : '▶️';
-    const stateLabel   = isSleeping ? 'Scaled Down (Sleep Mode)' : 'Scaled Up (Active)';
-    const costNote     = isSleeping
-        ? 'Replica count set to 0. No compute costs are being incurred.'
-        : `Replica count restored to min: ${minReplicas}, max: ${maxReplicas}. App is now serving traffic.`;
+    
+    let stateLabel = '';
+    let costNote = '';
+    let appTypeLabel = '';
+    
+    if (appType === 'frontend') {
+        appTypeLabel = 'Static Web App';
+        stateLabel = isSleeping ? 'Suspended (Sleep Mode)' : 'Active';
+        costNote = isSleeping
+            ? 'Traffic routing simulated offline. No bandwidth costs are being incurred.'
+            : 'App serving traffic normally.';
+    } else {
+        appTypeLabel = 'Container App';
+        stateLabel = isSleeping ? 'Scaled Down (Sleep Mode)' : 'Scaled Up (Active)';
+        costNote = isSleeping
+            ? 'Replica count set to 0. No compute costs are being incurred.'
+            : `Replica count restored to min: ${minReplicas}, max: ${maxReplicas}. App is now serving traffic.`;
+    }
 
     await sendTeamsNotification(orgId, {
         title: `${emoji} Sleep Scheduler — ${appName} ${stateLabel}`,
-        text:  `Container app **${appName}** has transitioned to **${stateLabel}**.`,
+        text:  `${appTypeLabel} **${appName}** has transitioned to **${stateLabel}**.`,
         themeColor,
         facts: [
             { name: 'App Name',    value: appName },
+            { name: 'App Type',    value: appTypeLabel },
             { name: 'New State',   value: stateLabel },
             { name: 'Min Replicas', value: String(minReplicas) },
             { name: 'Max Replicas', value: String(maxReplicas) },
@@ -146,19 +161,42 @@ async function checkSchedules() {
                 }
             }
 
-            // Fetch backends/container apps for this organization
+            // Fetch all applications for this organization from DB
             const [apps] = await db.query(
-                "SELECT name, status FROM applications WHERE organization_id = ? AND app_type = 'backend'",
+                "SELECT name, app_type, status FROM applications WHERE organization_id = ?",
                 [orgId]
             );
 
             for (const app of apps) {
-                if (shouldBeSleep && rules.autoScaleAca) {
-                    // Scale down to zero
-                    await setContainerAppScale(orgId, app.name, 0, 0);
-                } else {
-                    // Restore active container app scaling (e.g. min 1, max 10)
-                    await setContainerAppScale(orgId, app.name, 1, 10);
+                // Determine selection:
+                // If rules.selectedApps is defined, check if this app is in it.
+                // Otherwise default to app.app_type === 'backend' (backward compatibility).
+                const isSelected = rules.selectedApps
+                    ? rules.selectedApps.includes(app.name)
+                    : (app.app_type === 'backend');
+
+                if (!isSelected) continue;
+
+                if (app.app_type === 'backend') {
+                    if (shouldBeSleep && rules.autoScaleAca) {
+                        // Scale down to zero
+                        await setContainerAppScale(orgId, app.name, 0, 0);
+                    } else {
+                        // Restore active container app scaling (e.g. min 1, max 10)
+                        await setContainerAppScale(orgId, app.name, 1, 10);
+                    }
+                } else if (app.app_type === 'frontend') {
+                    // Simulate SWA sleep transition
+                    const isSleeping  = shouldBeSleep && rules.autoScaleAca;
+                    const targetState = isSleeping ? 'sleep' : 'active';
+                    const cacheKey    = `${orgId}:${app.name}`;
+                    const prevState   = scaleStateCache.get(cacheKey);
+
+                    if (prevState !== targetState) {
+                        scaleStateCache.set(cacheKey, targetState);
+                        console.log(`[MOCK SWA SleepScheduler] SWA '${app.name}' transitioned to state: ${targetState} (Traffic routing simulated/Mocked)`);
+                        await notifyScaleTransition(orgId, app.name, targetState, 0, 0, 'frontend');
+                    }
                 }
             }
         }
