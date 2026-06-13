@@ -3,6 +3,7 @@ const { DefaultAzureCredential, ClientSecretCredential } = require('@azure/ident
 const { ContainerAppsAPIClient } = require('@azure/arm-appcontainers');
 const { LogsQueryClient, Durations } = require('@azure/monitor-query-logs');
 const axios = require('axios');
+const logCapturer = require('../utils/logCapturer');
 
 const SUBSCRIPTION_ID = 'a812e8e3-34f9-4773-82ee-6398869533b0';
 const RESOURCE_GROUP = 'Estevia-Prod-RG';
@@ -138,12 +139,35 @@ const observabilityController = {
             const { organizationId, timeRange = 'live' } = req.query;
             const orgId = organizationId || 'estevia';
 
-            const workspaceId = await resolveWorkspaceId(orgId);
+            const name = appName.toLowerCase();
+            const isSelf = name.includes('evaops') || name.includes('devops-backend');
+
+            if (isSelf) {
+                const logs = logCapturer.getLogs();
+                return res.json({
+                    success: true,
+                    source: 'local-process',
+                    timeRange,
+                    logs
+                });
+            }
+
+            let workspaceId;
+            try {
+                workspaceId = await resolveWorkspaceId(orgId);
+            } catch (err) {
+                console.warn('[Observability] Failed to resolve workspace ID:', err.message);
+            }
 
             if (!workspaceId) {
-                return res.status(404).json({
-                    success: false,
-                    message: `Azure Log Analytics Workspace ID could not be auto-discovered for organization '${orgId}'. Verify that subscription credentials, subscription ID, and resource group are configured correctly.`
+                // Fallback to mock logs
+                const logs = generateMockLogs(appName);
+                return res.json({
+                    success: true,
+                    source: 'mock-fallback',
+                    timeRange,
+                    logs,
+                    info: `Showing simulated logs for '${appName}'. Azure Log Analytics workspace is not configured.`
                 });
             }
 
@@ -182,24 +206,31 @@ const observabilityController = {
                 if (result.status === 'Success' && result.tables && result.tables.length > 0) {
                     const logs = parseLogAnalyticsRows(result.tables[0]);
                     console.log(`[Observability] Returned ${logs.length} real log lines for '${appName}'.`);
-                    return res.json({ success: true, source: 'log-analytics', timeRange, logs });
+                    if (logs.length > 0) {
+                        return res.json({ success: true, source: 'log-analytics', timeRange, logs });
+                    }
                 }
 
                 // Empty result — no logs in this window
-                console.log(`[Observability] Log Analytics returned 0 rows for '${appName}' in range '${label}'.`);
+                console.log(`[Observability] Log Analytics returned 0 rows for '${appName}' in range '${label}'. Falling back to mock logs.`);
+                const logs = generateMockLogs(appName);
                 return res.json({
                     success: true,
-                    source: 'log-analytics',
+                    source: 'mock-fallback',
                     timeRange,
-                    logs: [],
-                    info: `No log entries found for '${appName}' in the last ${label}. Verify that ACA Diagnostic Settings are routing console logs to this Log Analytics workspace.`
+                    logs,
+                    info: `Showing simulated logs. Azure Log Analytics returned 0 rows for '${appName}' in range '${label}'.`
                 });
 
             } catch (azureErr) {
                 console.warn(`[Observability] Log Analytics query failed for '${appName}':`, azureErr.message);
-                return res.status(500).json({
-                    success: false,
-                    message: `Azure Log Analytics query failed: ${azureErr.message}`
+                const logs = generateMockLogs(appName);
+                return res.json({
+                    success: true,
+                    source: 'mock-fallback',
+                    timeRange,
+                    logs,
+                    info: `Showing simulated logs. Azure Log Analytics query failed: ${azureErr.message}`
                 });
             }
         } catch (error) {
