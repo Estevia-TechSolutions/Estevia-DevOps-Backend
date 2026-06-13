@@ -106,7 +106,7 @@ async function runIntegrationTests() {
         if (healthRes.statusCode !== 200 || healthRes.body.status !== 'HEALTHY') {
             throw new Error('Health check endpoint failed');
         }
-        console.log('✅ Test 1 Passed.');
+        console.log('✅ Test 1 Passed..');
 
         // // Test 2: Request credentials list with missing organizationId
         // console.log('Test 2: Requesting /api/credentials (missing parameters)...');
