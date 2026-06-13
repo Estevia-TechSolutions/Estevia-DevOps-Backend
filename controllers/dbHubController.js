@@ -8,19 +8,23 @@ const dbHubController = {
      */
     compareSchemas: async (req, res) => {
         try {
-            const { serverName, sourceDb, targetDb } = req.body;
+            const { sourceServerName, sourceDb, targetServerName, targetDb } = req.body;
             
-            if (!sourceDb || !targetDb || !serverName) {
-                return res.status(400).json({ success: false, message: 'Missing serverName, sourceDb, or targetDb parameters.' });
+            if (!sourceDb || !targetDb || !sourceServerName || !targetServerName) {
+                return res.status(400).json({ success: false, message: 'Missing sourceServerName, sourceDb, targetServerName, or targetDb parameters.' });
             }
 
-            console.log(`[DBHub] Comparing schema structure: [${sourceDb}] -> [${targetDb}] on server [${serverName}]...`);
+            console.log(`[DBHub] Comparing schema structure: [${sourceServerName}].\`${sourceDb}\` -> [${targetServerName}].\`${targetDb}\`...`);
 
             const appController = require('./appController');
-            const resolvedHost = appController._resolveDbHost(serverName);
+            const sourceHost = appController._resolveDbHost(sourceServerName);
+            const targetHost = appController._resolveDbHost(targetServerName);
+            
             const mysql = require('mysql2/promise');
-            const conn = await mysql.createConnection({
-                host: resolvedHost,
+            
+            // 1. Establish connection to source server
+            const sourceConn = await mysql.createConnection({
+                host: sourceHost,
                 user: process.env.DB_USER || 'estevia',
                 password: process.env.DB_PASSWORD || 'Ewco26INCP',
                 port: process.env.DB_PORT || 3306,
@@ -28,89 +32,104 @@ const dbHubController = {
                 connectTimeout: 8000
             });
 
+            let targetConn;
             try {
-                // 1. Fetch columns and tables from sourceDb
-                const [sourceRows] = await conn.query(`
-                    SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, EXTRA
-                    FROM INFORMATION_SCHEMA.COLUMNS
-                    WHERE TABLE_SCHEMA = ?
-                `, [sourceDb]);
+                // 2. Establish connection to target server
+                targetConn = await mysql.createConnection({
+                    host: targetHost,
+                    user: process.env.DB_USER || 'estevia',
+                    password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                    port: process.env.DB_PORT || 3306,
+                    ssl: { require: true, rejectUnauthorized: false },
+                    connectTimeout: 8000
+                });
 
-                // 2. Fetch columns and tables from targetDb
-                const [targetRows] = await conn.query(`
-                    SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, EXTRA
-                    FROM INFORMATION_SCHEMA.COLUMNS
-                    WHERE TABLE_SCHEMA = ?
-                `, [targetDb]);
+                try {
+                    // Fetch columns and tables from sourceDb
+                    const [sourceRows] = await sourceConn.query(`
+                        SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, EXTRA
+                        FROM INFORMATION_SCHEMA.COLUMNS
+                        WHERE TABLE_SCHEMA = ?
+                    `, [sourceDb]);
 
-                // Group columns by table
-                const sourceTables = {};
-                for (const row of sourceRows) {
-                    if (!sourceTables[row.TABLE_NAME]) sourceTables[row.TABLE_NAME] = [];
-                    sourceTables[row.TABLE_NAME].push(row);
-                }
+                    // Fetch columns and tables from targetDb
+                    const [targetRows] = await targetConn.query(`
+                        SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, EXTRA
+                        FROM INFORMATION_SCHEMA.COLUMNS
+                        WHERE TABLE_SCHEMA = ?
+                    `, [targetDb]);
 
-                const targetTables = {};
-                for (const row of targetRows) {
-                    if (!targetTables[row.TABLE_NAME]) targetTables[row.TABLE_NAME] = [];
-                    targetTables[row.TABLE_NAME].push(row);
-                }
+                    // Group columns by table
+                    const sourceTables = {};
+                    for (const row of sourceRows) {
+                        if (!sourceTables[row.TABLE_NAME]) sourceTables[row.TABLE_NAME] = [];
+                        sourceTables[row.TABLE_NAME].push(row);
+                    }
 
-                const differences = [];
+                    const targetTables = {};
+                    for (const row of targetRows) {
+                        if (!targetTables[row.TABLE_NAME]) targetTables[row.TABLE_NAME] = [];
+                        targetTables[row.TABLE_NAME].push(row);
+                    }
 
-                // Compare tables and columns
-                for (const tableName of Object.keys(sourceTables)) {
-                    if (!targetTables[tableName]) {
-                        // Table is missing in targetDb. Let's get the exact CREATE TABLE DDL from sourceDb
-                        try {
-                            const [createResult] = await conn.query(`SHOW CREATE TABLE \`${sourceDb}\`.\`${tableName}\``);
-                            let ddl = createResult[0]['Create Table'];
-                            // Make it IF NOT EXISTS
-                            ddl = ddl.replace(/CREATE TABLE/i, 'CREATE TABLE IF NOT EXISTS');
-                            differences.push({
-                                type: 'table_missing',
-                                tableName,
-                                ddl: ddl + ';'
-                            });
-                        } catch (err) {
-                            // Fallback basic DDL
-                            const colsDdl = sourceTables[tableName].map(col => {
-                                return `\`${col.COLUMN_NAME}\` ${col.COLUMN_TYPE} ${col.IS_NULLABLE === 'YES' ? 'NULL' : 'NOT NULL'}`;
-                            }).join(',\n    ');
-                            differences.push({
-                                type: 'table_missing',
-                                tableName,
-                                ddl: `CREATE TABLE IF NOT EXISTS \`${tableName}\` (\n    ${colsDdl}\n);`
-                            });
-                        }
-                    } else {
-                        // Table exists, check for missing columns
-                        const targetCols = new Set(targetTables[tableName].map(c => c.COLUMN_NAME));
-                        for (const col of sourceTables[tableName]) {
-                            if (!targetCols.has(col.COLUMN_NAME)) {
-                                const ddl = `ALTER TABLE \`${tableName}\` ADD COLUMN \`${col.COLUMN_NAME}\` ${col.COLUMN_TYPE} ${col.IS_NULLABLE === 'YES' ? 'NULL' : 'NOT NULL'}${col.EXTRA ? ' ' + col.EXTRA : ''};`;
+                    const differences = [];
+
+                    // Compare tables and columns
+                    for (const tableName of Object.keys(sourceTables)) {
+                        if (!targetTables[tableName]) {
+                            // Table is missing in targetDb. Let's get the exact CREATE TABLE DDL from sourceDb
+                            try {
+                                const [createResult] = await sourceConn.query(`SHOW CREATE TABLE \`${sourceDb}\`.\`${tableName}\``);
+                                let ddl = createResult[0]['Create Table'];
+                                // Make it IF NOT EXISTS
+                                ddl = ddl.replace(/CREATE TABLE/i, 'CREATE TABLE IF NOT EXISTS');
                                 differences.push({
-                                    type: 'column_missing',
+                                    type: 'table_missing',
                                     tableName,
-                                    columnName: col.COLUMN_NAME,
-                                    ddl
+                                    ddl: ddl + ';'
                                 });
+                            } catch (err) {
+                                // Fallback basic DDL
+                                const colsDdl = sourceTables[tableName].map(col => {
+                                    return `\`${col.COLUMN_NAME}\` ${col.COLUMN_TYPE} ${col.IS_NULLABLE === 'YES' ? 'NULL' : 'NOT NULL'}`;
+                                }).join(',\n    ');
+                                differences.push({
+                                    type: 'table_missing',
+                                    tableName,
+                                    ddl: `CREATE TABLE IF NOT EXISTS \`${tableName}\` (\n    ${colsDdl}\n);`
+                                });
+                            }
+                        } else {
+                            // Table exists, check for missing columns
+                            const targetCols = new Set(targetTables[tableName].map(c => c.COLUMN_NAME));
+                            for (const col of sourceTables[tableName]) {
+                                if (!targetCols.has(col.COLUMN_NAME)) {
+                                    const ddl = `ALTER TABLE \`${tableName}\` ADD COLUMN \`${col.COLUMN_NAME}\` ${col.COLUMN_TYPE} ${col.IS_NULLABLE === 'YES' ? 'NULL' : 'NOT NULL'}${col.EXTRA ? ' ' + col.EXTRA : ''};`;
+                                    differences.push({
+                                        type: 'column_missing',
+                                        tableName,
+                                        columnName: col.COLUMN_NAME,
+                                        ddl
+                                    });
+                                }
                             }
                         }
                     }
+
+                    const generatedSql = differences.map(d => d.ddl).join('\n\n');
+
+                    res.json({
+                        success: true,
+                        sourceDb,
+                        targetDb,
+                        differences,
+                        sqlScript: generatedSql
+                    });
+                } finally {
+                    await targetConn.end();
                 }
-
-                const generatedSql = differences.map(d => d.ddl).join('\n\n');
-
-                res.json({
-                    success: true,
-                    sourceDb,
-                    targetDb,
-                    differences,
-                    sqlScript: generatedSql
-                });
             } finally {
-                await conn.end();
+                await sourceConn.end();
             }
         } catch (error) {
             console.error('[DBHub] Schema compare failed:', error);
@@ -124,12 +143,12 @@ const dbHubController = {
      */
     executeMigration: async (req, res) => {
         try {
-            const { serverName, targetDb, sqlScript } = req.body;
-            if (!targetDb || !sqlScript || !serverName) {
-                return res.status(400).json({ success: false, message: 'Missing serverName, targetDb, or sqlScript parameters.' });
+            const { targetServerName, targetDb, sqlScript } = req.body;
+            if (!targetDb || !sqlScript || !targetServerName) {
+                return res.status(400).json({ success: false, message: 'Missing targetServerName, targetDb, or sqlScript parameters.' });
             }
 
-            console.log(`[DBHub] Starting step-by-step migration wizard for target: ${targetDb} on server: ${serverName}...`);
+            console.log(`[DBHub] Starting step-by-step migration wizard for target: ${targetDb} on server: ${targetServerName}...`);
 
             // 1. Create automatic backup of target DB (simulated validation)
             const backupName = `${targetDb}_backup_${Date.now()}.sql`;
@@ -144,7 +163,7 @@ const dbHubController = {
             console.log(`[DBHub] Step 2/4: Executing ${statements.length} DDL statements...`);
             
             const appController = require('./appController');
-            const resolvedHost = appController._resolveDbHost(serverName);
+            const resolvedHost = appController._resolveDbHost(targetServerName);
             const mysql = require('mysql2/promise');
             const conn = await mysql.createConnection({
                 host: resolvedHost,
@@ -193,9 +212,10 @@ const dbHubController = {
                     const actorEmail = req.user?.email || 'system';
                     await sendTeamsNotification(orgId, {
                         title: '🗄️ Database Schema Migration Completed',
-                        text:  `A schema migration was successfully executed against **${targetDb}**.`,
+                        text:  `A schema migration was successfully executed against **${targetDb}** on server **${targetServerName}**.`,
                         themeColor: '0078D4',
                         facts: [
+                            { name: 'Target Server',       value: targetServerName },
                             { name: 'Target Database',     value: targetDb },
                             { name: 'Statements Executed', value: String(statements.length) },
                             { name: 'Backup File',         value: backupName },

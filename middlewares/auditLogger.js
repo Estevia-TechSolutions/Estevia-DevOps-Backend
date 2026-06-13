@@ -6,9 +6,11 @@ async function auditLogger(req, res, next) {
         try {
             const method = req.method;
             const path = req.path;
+            const isLogsView = method === 'GET' && path.includes('/observability/') && path.includes('/logs');
+            const isAuditView = method === 'GET' && path.includes('/audit-logs');
             
-            // Only audit mutating actions (POST, PUT, DELETE) and skip read-only operations
-            if (!['POST', 'PUT', 'DELETE'].includes(method)) return;
+            // Only audit mutating actions (POST, PUT, DELETE) or sensitive read actions
+            if (!['POST', 'PUT', 'DELETE'].includes(method) && !isLogsView && !isAuditView) return;
             
             // Skip logging internal health checks or diagnostic actions
             if (path.includes('/health') || path.includes('/diagnostic')) return;
@@ -20,7 +22,15 @@ async function auditLogger(req, res, next) {
             let actionType = 'UNKNOWN_ACTION';
             let target = path;
             
-            if (path.includes('/auth/users/sync')) {
+            if (isLogsView) {
+                actionType = 'VIEW_LOGS';
+                const parts = path.split('/');
+                const obsIdx = parts.indexOf('observability');
+                target = (obsIdx !== -1 && parts[obsIdx + 1]) ? parts[obsIdx + 1] : 'Container App';
+            } else if (isAuditView) {
+                actionType = 'VIEW_AUDIT';
+                target = 'Security Audit Trail';
+            } else if (path.includes('/auth/users/sync')) {
                 actionType = 'DIRECTORY_SYNC';
                 target = 'Azure AD Sync';
             } else if (path.includes('/auth/users/') && path.includes('/role')) {
@@ -62,6 +72,7 @@ async function auditLogger(req, res, next) {
                 method,
                 path,
                 ip: req.ip || req.connection.remoteAddress,
+                query: req.query,
                 payload: bodyCopy
             });
 
