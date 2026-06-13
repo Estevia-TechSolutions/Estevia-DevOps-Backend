@@ -45,6 +45,14 @@ async function runAutoMigration() {
             console.log('[DevOps DB] Adding column docker_registry_service_connection to organizations...');
             await pool.query(`ALTER TABLE organizations ADD COLUMN docker_registry_service_connection VARCHAR(100) DEFAULT NULL`);
         }
+        
+        console.log('[DevOps DB] Seeding admin_email for estevia organization...');
+        await pool.query(`
+            UPDATE organizations 
+            SET admin_email = 'govind.m@esteviatech.com' 
+            WHERE id = 'estevia'
+        `);
+        
         console.log('[DevOps DB] Database migrations check completed successfully.');
     } catch (err) {
         console.error('[DevOps DB] Database migration check failed:', err.message);
