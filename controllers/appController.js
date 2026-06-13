@@ -2890,7 +2890,7 @@ const appController = {
                 success: true,
                 servers: [
                     {
-                        id: 'mock-db-server-id',
+                        id: 'db-server-dev',
                         name: 'estevia-dev-db',
                         location: 'Central US',
                         version: '8.0.21',
@@ -2903,7 +2903,7 @@ const appController = {
                         password: process.env.DB_PASSWORD || 'Ewco26INCP'
                     },
                     {
-                        id: 'mock-db-server-qa',
+                        id: 'db-server-qa',
                         name: 'estevia-qa-dn',
                         location: 'Central US',
                         version: '8.0.21',
@@ -2916,7 +2916,7 @@ const appController = {
                         password: process.env.DB_PASSWORD || 'Ewco26INCP'
                     },
                     {
-                        id: 'mock-db-server-prod',
+                        id: 'db-server-prod',
                         name: 'estevia-prod-db-v2',
                         location: 'Central US',
                         version: '8.0.21',
