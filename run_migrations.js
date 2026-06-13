@@ -148,6 +148,45 @@ async function main() {
             )
         `);
 
+        // 5.6 Create audit_logs table
+        console.log('Creating audit_logs table...');
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                actor_email VARCHAR(150) NOT NULL,
+                action_type VARCHAR(50) NOT NULL,
+                target VARCHAR(255) NOT NULL,
+                details TEXT DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // 5.7 Create sleep_schedules table
+        console.log('Creating sleep_schedules table...');
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS sleep_schedules (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                organization_id VARCHAR(50) NOT NULL,
+                rules_json TEXT NOT NULL,
+                active BOOLEAN DEFAULT TRUE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+            )
+        `);
+
+        // 5.8 Create key_vault_mappings table
+        console.log('Creating key_vault_mappings table...');
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS key_vault_mappings (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                organization_id VARCHAR(50) NOT NULL,
+                secret_name VARCHAR(150) NOT NULL,
+                mapped_to_variable_group VARCHAR(150) NOT NULL,
+                active BOOLEAN DEFAULT TRUE,
+                FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+            )
+        `);
+
         // 6. Seed initial organizations
         console.log('Seeding initial organizations and config settings...');
         await connection.query(`
