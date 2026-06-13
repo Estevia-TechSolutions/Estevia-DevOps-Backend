@@ -42,6 +42,9 @@ router.post('/organization-settings', restrictTo('owner', 'admin'), appControlle
 // Test Microsoft Teams webhook connectivity
 router.post('/test-teams-webhook', restrictTo('owner', 'admin'), appController.testTeamsWebhook);
 
+// Force discover Log Analytics workspace ID from Azure
+router.post('/discover-workspace', restrictTo('owner', 'admin'), appController.discoverWorkspace);
+
 // Fetch organization GitHub repos dynamically
 router.get('/github-repos', appController.getGithubRepos);
 

@@ -2201,6 +2201,54 @@ const appController = {
     },
 
     /**
+     * POST /api/apps/discover-workspace
+     */
+    discoverWorkspace: async (req, res) => {
+        try {
+            const { organizationId } = req.body;
+            if (!organizationId) {
+                return res.status(400).json({ success: false, message: 'Missing organizationId parameter.' });
+            }
+
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const subscriptionId = orgSettings.azure_subscription_id;
+            const resourceGroup = orgSettings.azure_resource_group;
+
+            if (!subscriptionId || !resourceGroup) {
+                return res.status(400).json({ success: false, message: 'Azure Subscription ID and Resource Group must be configured first under the Azure tab.' });
+            }
+
+            let discoveredId = null;
+            try {
+                const credential = await getAzureCredential(organizationId);
+                const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
+                for await (const env of containerClient.managedEnvironments.listByResourceGroup(resourceGroup)) {
+                    const customerId = env.appLogsConfiguration?.logAnalyticsConfiguration?.customerId || env.properties?.appLogsConfiguration?.logAnalyticsConfiguration?.customerId;
+                    if (customerId) {
+                        discoveredId = customerId;
+                        break;
+                    }
+                }
+            } catch (err) {
+                return res.status(500).json({ success: false, message: `Azure API Error: ${err.message}` });
+            }
+
+            if (discoveredId) {
+                await db.query(
+                    'UPDATE organizations SET log_analytics_workspace_id = ? WHERE id = ?',
+                    [discoveredId, organizationId]
+                );
+                return res.json({ success: true, message: 'Log Analytics Workspace discovered successfully.', workspaceId: discoveredId });
+            } else {
+                return res.status(404).json({ success: false, message: 'No Container App Managed Environments found in resource group to discover workspace from.' });
+            }
+        } catch (error) {
+            console.error('[AppController] discoverWorkspace failed:', error);
+            res.status(500).json({ success: false, message: error.message });
+        }
+    },
+
+    /**
      * POST /api/apps/test-teams-webhook
      * Sends a test MessageCard to verify Teams webhook URL connectivity.
      */
