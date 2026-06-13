@@ -2109,7 +2109,9 @@ const appController = {
                 githubOwner,
                 azureContainerRegistry,
                 azureDevopsServiceConnection,
-                dockerRegistryServiceConnection
+                dockerRegistryServiceConnection,
+                teamsWebhookUrl,
+                logAnalyticsWorkspaceId
             } = req.body;
 
             if (!organizationId) {
@@ -2132,7 +2134,9 @@ const appController = {
                     github_owner = ?,
                     azure_container_registry = ?,
                     azure_devops_service_connection = ?,
-                    docker_registry_service_connection = ?
+                    docker_registry_service_connection = ?,
+                    teams_webhook_url = ?,
+                    log_analytics_workspace_id = ?
                 WHERE id = ?
             `, [
                 azureSubscriptionId || null,
@@ -2145,13 +2149,45 @@ const appController = {
                 azureContainerRegistry || null,
                 azureDevopsServiceConnection || null,
                 dockerRegistryServiceConnection || null,
+                teamsWebhookUrl !== undefined ? (teamsWebhookUrl || null) : null,
+                logAnalyticsWorkspaceId || null,
                 organizationId
             ]);
+
+            // Ensure every organization has a unique webhook token for the public Azure DevOps receiver
+            const crypto = require('crypto');
+            const [tokenCheck] = await db.query('SELECT teams_webhook_token FROM organizations WHERE id = ?', [organizationId]);
+            if (!tokenCheck[0]?.teams_webhook_token) {
+                const token = crypto.randomBytes(16).toString('hex');
+                await db.query('UPDATE organizations SET teams_webhook_token = ? WHERE id = ?', [token, organizationId]);
+                console.log(`[AppController] Generated teams_webhook_token for org '${organizationId}'.`);
+            }
 
             res.json({ success: true, message: 'Organization settings updated successfully.' });
         } catch (error) {
             console.error('[AppController] updateOrgSettings failed:', error);
             res.status(500).json({ message: 'Failed to update organization settings.', error: error.message });
+        }
+    },
+
+    /**
+     * POST /api/apps/test-teams-webhook
+     * Sends a test MessageCard to verify Teams webhook URL connectivity.
+     */
+    testTeamsWebhook: async (req, res) => {
+        try {
+            const { webhookUrl } = req.body;
+            if (!webhookUrl) {
+                return res.status(400).json({ message: 'Missing webhookUrl parameter.' });
+            }
+
+            const { testTeamsConnection } = require('../utils/teamsNotifier');
+            await testTeamsConnection(webhookUrl);
+
+            res.json({ success: true, message: 'Test notification delivered to Microsoft Teams successfully.' });
+        } catch (error) {
+            console.error('[AppController] testTeamsWebhook failed:', error.message);
+            res.status(400).json({ success: false, message: `Teams webhook test failed: ${error.message}` });
         }
     },
 

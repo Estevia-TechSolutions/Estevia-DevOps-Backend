@@ -39,6 +39,9 @@ router.get('/billing', appController.getBillingHistory);
 // Update organization settings
 router.post('/organization-settings', restrictTo('owner', 'admin'), appController.updateOrgSettings);
 
+// Test Microsoft Teams webhook connectivity
+router.post('/test-teams-webhook', restrictTo('owner', 'admin'), appController.testTeamsWebhook);
+
 // Fetch organization GitHub repos dynamically
 router.get('/github-repos', appController.getGithubRepos);
 

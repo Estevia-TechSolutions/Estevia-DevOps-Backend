@@ -68,6 +68,10 @@ app.use('/api/audit-logs', auditRoutes);
 const keyVaultRoutes = require('./routes/keyVaultRoutes');
 app.use('/api/keyvault', keyVaultRoutes);
 
+// Public webhook receiver — no auth middleware (token in URL path is the security control)
+const webhookRoutes = require('./routes/webhookRoutes');
+app.use('/api/webhooks', webhookRoutes);
+
 app.get('/health', (req, res) => {
     res.json({ status: 'HEALTHY', timestamp: new Date() });
 });

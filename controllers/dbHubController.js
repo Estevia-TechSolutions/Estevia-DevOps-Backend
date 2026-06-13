@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { sendTeamsNotification } = require('../utils/teamsNotifier');
 
 const dbHubController = {
     /**
@@ -102,7 +103,7 @@ const dbHubController = {
                 }
             }
 
-            res.json({
+            const responseBody = {
                 success: true,
                 message: 'Database schema migration executed successfully.',
                 backupFile: backupName,
@@ -113,6 +114,30 @@ const dbHubController = {
                     '4. Integrity check and foreign key verification complete.'
                 ],
                 logs: executionLogs
+            };
+
+            res.json(responseBody);
+
+            // Fire Teams alert asynchronously — must not block the HTTP response
+            setImmediate(async () => {
+                try {
+                    const orgId = req.user?.organization_id || 'estevia';
+                    const actorEmail = req.user?.email || 'system';
+                    await sendTeamsNotification(orgId, {
+                        title: '🗄️ Database Schema Migration Completed',
+                        text:  `A schema migration was successfully executed against **${targetDb}**.`,
+                        themeColor: '0078D4',
+                        facts: [
+                            { name: 'Target Database',     value: targetDb },
+                            { name: 'Statements Executed', value: String(statements.length) },
+                            { name: 'Backup File',         value: backupName },
+                            { name: 'Executed By',         value: actorEmail },
+                            { name: 'Completed At',        value: new Date().toISOString() }
+                        ]
+                    });
+                } catch (notifyErr) {
+                    console.error('[DBHub] Teams notification failed:', notifyErr.message);
+                }
             });
         } catch (error) {
             console.error('[DBHub] Migration execution failed:', error);

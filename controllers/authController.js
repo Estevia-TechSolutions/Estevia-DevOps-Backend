@@ -4,6 +4,7 @@ const db = require('../config/db');
 const https = require('https');
 const { DefaultAzureCredential, ClientSecretCredential } = require('@azure/identity');
 const credentialController = require('./credentialController');
+const { sendTeamsNotification } = require('../utils/teamsNotifier');
 
 async function getAzureCredential(organizationId) {
     try {
@@ -504,6 +505,29 @@ const updateUserRole = async (req, res) => {
         }
 
         await db.query('UPDATE users SET role = ? WHERE id = ?', [role.toLowerCase(), userId]);
+
+        // Fire Teams security alert asynchronously
+        setImmediate(async () => {
+            try {
+                const orgId = req.user?.organization_id || targetUser.organization_id || 'estevia';
+                const adminEmail = req.user?.email || 'system';
+                const roleLabel = role.charAt(0).toUpperCase() + role.slice(1).toLowerCase();
+                await sendTeamsNotification(orgId, {
+                    title: '🔒 User Role Updated — Security Alert',
+                    text:  `A user's authorization role was changed in **EvaOps Control Centre**.`,
+                    themeColor: 'FFA500',
+                    facts: [
+                        { name: 'Affected User',  value: targetUser.email || userId },
+                        { name: 'New Role',        value: roleLabel },
+                        { name: 'Changed By',      value: adminEmail },
+                        { name: 'Changed At',      value: new Date().toISOString() }
+                    ]
+                });
+            } catch (notifyErr) {
+                console.error('[AuthController] Teams role-change notification failed:', notifyErr.message);
+            }
+        });
+
         return res.json({ message: 'User role updated successfully.', userId, role: role.toLowerCase() });
     } catch (err) {
         return res.status(500).json({ error: 'Failed to update user role.', details: err.message });

@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { sendTeamsNotification } = require('../utils/teamsNotifier');
 
 const cloneController = {
     /**
@@ -62,7 +63,7 @@ const cloneController = {
                 );
             }
 
-            res.json({
+            const cloneResponse = {
                 success: true,
                 message: `Successfully cloned environment for '${appName}' from '${sourceEnv}' to '${targetEnv}'.`,
                 sourceApp: appName,
@@ -71,6 +72,36 @@ const cloneController = {
                     name: targetAppName,
                     status: 'deployed',
                     azureDetails: targetDetails
+                }
+            };
+
+            res.json(cloneResponse);
+
+            // Fire Teams alert asynchronously — must not block the HTTP response
+            setImmediate(async () => {
+                try {
+                    const orgId = req.user?.organization_id || organizationId;
+                    const actorEmail = req.user?.email || 'system';
+                    const sourceUrl = sourceApp.azure_resource_details
+                        ? (typeof sourceApp.azure_resource_details === 'string'
+                            ? JSON.parse(sourceApp.azure_resource_details) : sourceApp.azure_resource_details).hostname
+                        : appName;
+                    await sendTeamsNotification(orgId, {
+                        title: '🔄 Environment Clone Completed',
+                        text:  `App **${appName}** was successfully cloned from **${sourceEnv}** to **${targetEnv}**.`,
+                        themeColor: '36a64f',
+                        facts: [
+                            { name: 'Source App',       value: appName },
+                            { name: 'Source Env',       value: sourceEnv },
+                            { name: 'Cloned App Name',  value: targetAppName },
+                            { name: 'Target Env',       value: targetEnv },
+                            { name: 'Target Hostname',  value: targetDetails.hostname || targetAppName },
+                            { name: 'Initiated By',     value: actorEmail },
+                            { name: 'Completed At',     value: new Date().toISOString() }
+                        ]
+                    });
+                } catch (notifyErr) {
+                    console.error('[Clone] Teams notification failed:', notifyErr.message);
                 }
             });
         } catch (error) {

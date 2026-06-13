@@ -60,10 +60,43 @@ async function main() {
                 admin_email VARCHAR(255) NULL,
                 onboarding_complete BOOLEAN DEFAULT FALSE,
                 plan VARCHAR(50) DEFAULT 'free',
+                teams_webhook_url VARCHAR(500) DEFAULT NULL,
+                teams_webhook_token VARCHAR(64) DEFAULT NULL,
+                log_analytics_workspace_id VARCHAR(100) DEFAULT NULL,
                 created_by VARCHAR(255) NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
+
+        // Alter organizations table dynamically if columns are missing
+        const [orgCols] = await connection.query(`
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+              AND TABLE_NAME = 'organizations'
+        `);
+        const orgColNames = orgCols.map(c => c.COLUMN_NAME.toLowerCase());
+        if (!orgColNames.includes('teams_webhook_url')) {
+            console.log('Adding column teams_webhook_url to organizations...');
+            await connection.query('ALTER TABLE organizations ADD COLUMN teams_webhook_url VARCHAR(500) DEFAULT NULL');
+        }
+        if (!orgColNames.includes('teams_webhook_token')) {
+            console.log('Adding column teams_webhook_token to organizations...');
+            await connection.query('ALTER TABLE organizations ADD COLUMN teams_webhook_token VARCHAR(64) DEFAULT NULL');
+        }
+        if (!orgColNames.includes('log_analytics_workspace_id')) {
+            console.log('Adding column log_analytics_workspace_id to organizations...');
+            await connection.query('ALTER TABLE organizations ADD COLUMN log_analytics_workspace_id VARCHAR(100) DEFAULT NULL');
+        }
+
+        // Generate unique teams_webhook_token for organizations currently lacking one
+        const crypto = require('crypto');
+        const [orgRows] = await connection.query('SELECT id FROM organizations WHERE teams_webhook_token IS NULL');
+        for (const row of orgRows) {
+            const token = crypto.randomBytes(16).toString('hex');
+            await connection.query('UPDATE organizations SET teams_webhook_token = ? WHERE id = ?', [token, row.id]);
+            console.log(`Generated teams_webhook_token for organization ${row.id}`);
+        }
 
         // 2. Create users table
         console.log('Creating users table...');
@@ -241,23 +274,6 @@ async function main() {
                 VALUES (?, ?, ?, 'estevia', ?, 'a39c526c-2005-4529-ab5a-f008fc5cbc57')
                 ON DUPLICATE KEY UPDATE name = VALUES(name), role = VALUES(role)
             `, [u.email, u.email, u.name, u.role]);
-        }
-
-        // 9. Seed mock billing invoices
-        console.log('Seeding mock billing invoices...');
-        const mockInvoices = [
-            { invoice_number: 'INV-2026-004', amount: 148.50, status: 'Pending', issue_date: '2026-06-05', due_date: '2026-07-05', payment_date: null },
-            { invoice_number: 'INV-2026-003', amount: 152.00, status: 'Paid', issue_date: '2026-05-05', due_date: '2026-06-05', payment_date: '2026-06-04' },
-            { invoice_number: 'INV-2026-002', amount: 122.30, status: 'Paid', issue_date: '2026-04-05', due_date: '2026-05-05', payment_date: '2026-05-05' },
-            { invoice_number: 'INV-2026-001', amount: 165.20, status: 'Paid', issue_date: '2026-03-05', due_date: '2026-04-05', payment_date: '2026-04-05' }
-        ];
-
-        for (const inv of mockInvoices) {
-            await connection.query(`
-                INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date, payment_date)
-                VALUES ('estevia', ?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE amount = VALUES(amount), status = VALUES(status), due_date = VALUES(due_date), payment_date = VALUES(payment_date)
-            `, [inv.invoice_number, inv.amount, inv.status, inv.issue_date, inv.due_date, inv.payment_date]);
         }
 
         console.log('\n================================================================');
