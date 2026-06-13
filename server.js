@@ -51,6 +51,18 @@ app.get('/health', (req, res) => {
     res.json({ status: 'HEALTHY', timestamp: new Date() });
 });
 
-app.listen(PORT, () => {
-    console.log(`[DevOps Backend] Running on http://localhost:${PORT}`);
-});
+// Run database migrations automatically on startup
+const runMigrations = require('./run_migrations');
+console.log('[DevOps Backend] Running auto-migrations on server startup...');
+runMigrations()
+    .then(() => {
+        console.log('[DevOps Backend] Database auto-migrations completed successfully.');
+        app.listen(PORT, () => {
+            console.log(`[DevOps Backend] Running on http://localhost:${PORT}`);
+        });
+    })
+    .catch((err) => {
+        console.error('[DevOps Backend] Database auto-migrations failed to execute:', err.message);
+        console.error('Server is shutting down due to migration failure.');
+        process.exit(1);
+    });

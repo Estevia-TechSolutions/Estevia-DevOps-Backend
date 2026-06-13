@@ -28,7 +28,11 @@ async function main() {
         console.log('1. Ensure you are connected to the corporate VPN if using a private endpoint host.');
         console.log('2. Verify that your local machine is whitelisted on the MySQL Server firewall rules.');
         console.log('3. Ensure Azure credentials in the .env match host authorization.');
-        process.exit(1);
+        if (require.main === module) {
+            process.exit(1);
+        } else {
+            throw err;
+        }
     }
 
     try {
@@ -220,14 +224,23 @@ async function main() {
         console.log('\n================================================================');
         console.log('SUCCESS: Database migration and seeding completed successfully!');
         console.log('================================================================');
-        process.exit(0);
-
+        if (require.main === module) {
+            process.exit(0);
+        }
     } catch (err) {
         console.error('ERROR: Migration execution failed:', err);
-        process.exit(1);
+        if (require.main === module) {
+            process.exit(1);
+        } else {
+            throw err;
+        }
     } finally {
         if (connection) await connection.end();
     }
 }
 
-main().catch(console.error);
+if (require.main === module) {
+    main().catch(console.error);
+} else {
+    module.exports = main;
+}

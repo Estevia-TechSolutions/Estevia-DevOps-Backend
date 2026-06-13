@@ -524,7 +524,7 @@ const syncUsers = async (req, res) => {
         const accessToken = tokenResponse.token;
 
         // Fetch users from Graph API
-        const graphResponse = await axios.get('https://graph.microsoft.com/v1.0/users', {
+        const graphResponse = await axios.get('https://graph.microsoft.com/v1.0/users?$select=id,displayName,mail,userPrincipalName,accountEnabled', {
             headers: {
                 Authorization: `Bearer ${accessToken}`
             }
@@ -534,6 +534,8 @@ const syncUsers = async (req, res) => {
         
         let newUsersCount = 0;
         let updatedUsersCount = 0;
+        const activeAdUserIds = new Set();
+        const disabledAdUserIds = new Set();
         
         for (const adUser of adUsers) {
             const email = adUser.mail || adUser.userPrincipalName;
@@ -541,6 +543,14 @@ const syncUsers = async (req, res) => {
             
             const name = adUser.displayName || email.split('@')[0];
             const msalId = adUser.id;
+            
+            // If the account is disabled in Azure AD, collect the ID and skip upsert
+            if (adUser.accountEnabled === false) {
+                disabledAdUserIds.add(msalId);
+                continue;
+            }
+            
+            activeAdUserIds.add(msalId);
             
             // Check if user exists by MSAL ID or Email
             const [existingById] = await db.query('SELECT * FROM users WHERE id = ?', [msalId]);
@@ -565,10 +575,32 @@ const syncUsers = async (req, res) => {
             }
         }
         
+        // Retrieve all current users in the organization to check for missing/disabled users
+        const [localUsers] = await db.query('SELECT id, email FROM users WHERE organization_id = ?', [orgId]);
+        
+        let removedUsersCount = 0;
+        for (const localUser of localUsers) {
+            // Do not delete the bypass account
+            if (localUser.id === 'dev-bypass-user-id') continue;
+            
+            // Do not delete pre-seeded users that haven't linked their MSAL ID yet (whose id matches their email)
+            if (localUser.id.toLowerCase() === localUser.email.toLowerCase()) continue;
+            
+            const isDisabled = disabledAdUserIds.has(localUser.id);
+            const isMissing = !activeAdUserIds.has(localUser.id);
+            
+            if (isDisabled || isMissing) {
+                console.log(`[authController] Removing user ${localUser.email} (ID: ${localUser.id}) because they are ${isDisabled ? 'disabled' : 'missing'} in Azure AD.`);
+                await db.query('DELETE FROM users WHERE id = ?', [localUser.id]);
+                removedUsersCount++;
+            }
+        }
+        
         return res.json({ 
             message: 'Directory sync completed successfully.', 
             added: newUsersCount, 
-            updated: updatedUsersCount 
+            updated: updatedUsersCount,
+            removed: removedUsersCount
         });
     } catch (err) {
         console.error('[authController] Azure AD Microsoft Graph sync failed:', err.message);
