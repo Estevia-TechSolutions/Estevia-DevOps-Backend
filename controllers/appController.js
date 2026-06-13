@@ -2123,6 +2123,36 @@ const appController = {
                 INSERT IGNORE INTO organizations (id, name) VALUES (?, ?)
             `, [organizationId, organizationId.toUpperCase()]);
 
+            // Load existing org settings to check for changes
+            const [existingOrg] = await db.query(
+                'SELECT azure_subscription_id, azure_resource_group, log_analytics_workspace_id FROM organizations WHERE id = ?',
+                [organizationId]
+            );
+            let resolvedWorkspaceId = existingOrg[0]?.log_analytics_workspace_id || null;
+
+            const subChanged = existingOrg[0]?.azure_subscription_id !== azureSubscriptionId;
+            const rgChanged = existingOrg[0]?.azure_resource_group !== azureResourceGroup;
+
+            if (subChanged || rgChanged || !resolvedWorkspaceId) {
+                resolvedWorkspaceId = null; // Reset to re-discover
+                if (azureSubscriptionId && azureResourceGroup) {
+                    try {
+                        const credential = await getAzureCredential(organizationId);
+                        const containerClient = new ContainerAppsAPIClient(credential, azureSubscriptionId);
+                        for await (const env of containerClient.managedEnvironments.listByResourceGroup(azureResourceGroup)) {
+                            const customerId = env.appLogsConfiguration?.logAnalyticsConfiguration?.customerId || env.properties?.appLogsConfiguration?.logAnalyticsConfiguration?.customerId;
+                            if (customerId) {
+                                resolvedWorkspaceId = customerId;
+                                console.log(`[AppController] Settings Save - Auto-discovered Log Analytics Workspace ID: ${resolvedWorkspaceId}`);
+                                break;
+                            }
+                        }
+                    } catch (discoveryErr) {
+                        console.warn('[AppController] Settings Save - Log Analytics Workspace ID auto-discovery failed:', discoveryErr.message);
+                    }
+                }
+            }
+
             await db.query(`
                 UPDATE organizations SET
                     azure_subscription_id = ?,
@@ -2150,7 +2180,7 @@ const appController = {
                 azureDevopsServiceConnection || null,
                 dockerRegistryServiceConnection || null,
                 teamsWebhookUrl !== undefined ? (teamsWebhookUrl || null) : null,
-                logAnalyticsWorkspaceId || null,
+                resolvedWorkspaceId,
                 organizationId
             ]);
 

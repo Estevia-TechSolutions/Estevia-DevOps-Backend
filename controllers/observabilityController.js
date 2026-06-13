@@ -24,21 +24,46 @@ async function getAzureCredential(organizationId) {
 
 /**
  * Resolves the Log Analytics Workspace ID for an organization.
- * Priority:
- *   1. org.log_analytics_workspace_id from DB
- *   2. LOG_ANALYTICS_WORKSPACE_ID env variable
- *   3. null (will trigger mock fallback)
+ * Automatically discovers workspace customerId from Azure Container App environments if not configured.
  */
 async function resolveWorkspaceId(orgId) {
     try {
         const [rows] = await db.query(
-            'SELECT log_analytics_workspace_id FROM organizations WHERE id = ?',
+            'SELECT log_analytics_workspace_id, azure_subscription_id, azure_resource_group FROM organizations WHERE id = ?',
             [orgId]
         );
-        const wsId = rows[0]?.log_analytics_workspace_id || process.env.LOG_ANALYTICS_WORKSPACE_ID;
+        if (rows.length === 0) return null;
+        
+        let wsId = rows[0].log_analytics_workspace_id;
+        
+        // If not explicitly configured, try to auto-discover it!
+        if (!wsId && rows[0].azure_subscription_id && rows[0].azure_resource_group) {
+            const subscriptionId = rows[0].azure_subscription_id;
+            const resourceGroup = rows[0].azure_resource_group;
+            
+            console.log(`[Observability] Workspace ID not configured for org '${orgId}'. Attempting auto-discovery from Azure Managed Environments...`);
+            
+            const credential = await getAzureCredential(orgId);
+            const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
+            
+            for await (const env of containerClient.managedEnvironments.listByResourceGroup(resourceGroup)) {
+                const customerId = env.appLogsConfiguration?.logAnalyticsConfiguration?.customerId || env.properties?.appLogsConfiguration?.logAnalyticsConfiguration?.customerId;
+                if (customerId) {
+                    wsId = customerId;
+                    // Cache in database so we don't query Azure ARM every time
+                    await db.query(
+                        'UPDATE organizations SET log_analytics_workspace_id = ? WHERE id = ?',
+                        [wsId, orgId]
+                    );
+                    console.log(`[Observability] Successfully auto-discovered and cached Workspace ID: ${wsId}`);
+                    break;
+                }
+            }
+        }
         return wsId || null;
-    } catch {
-        return process.env.LOG_ANALYTICS_WORKSPACE_ID || null;
+    } catch (err) {
+        console.error('[Observability] resolveWorkspaceId auto-discovery failed:', err.message);
+        return null;
     }
 }
 
@@ -105,8 +130,7 @@ const observabilityController = {
      * GET /api/observability/:appName/logs?organizationId=...&timeRange=live|1h|12h|24h
      *
      * Returns container console logs for the specified ACA app from Azure Log Analytics.
-     * When the workspace is not configured or Azure credentials are unavailable,
-     * falls back to app-specific mock logs.
+     * Throws explicit errors when configuration is missing to ensure accuracy.
      */
     getLogs: async (req, res) => {
         try {
@@ -114,13 +138,13 @@ const observabilityController = {
             const { organizationId, timeRange = 'live' } = req.query;
             const orgId = organizationId || 'estevia';
 
-            const forceMock = req.query.mock === 'true';
-            const workspaceId = forceMock ? null : await resolveWorkspaceId(orgId);
+            const workspaceId = await resolveWorkspaceId(orgId);
 
-            if (forceMock || !workspaceId) {
-                console.log(`[Observability] No Log Analytics workspace configured for org '${orgId}'. Serving mock logs.`);
-                const logs = generateMockLogs(appName);
-                return res.json({ success: true, source: 'mock', timeRange, logs });
+            if (!workspaceId) {
+                return res.status(404).json({
+                    success: false,
+                    message: `Azure Log Analytics Workspace ID could not be auto-discovered for organization '${orgId}'. Verify that subscription credentials, subscription ID, and resource group are configured correctly.`
+                });
             }
 
             try {
@@ -173,20 +197,16 @@ const observabilityController = {
 
             } catch (azureErr) {
                 console.warn(`[Observability] Log Analytics query failed for '${appName}':`, azureErr.message);
-                // Fall back to mock on Azure errors (e.g. permissions, network, invalid workspace ID)
-                const logs = generateMockLogs(appName);
-                return res.json({
-                    success: true,
-                    source: 'mock-fallback',
-                    timeRange,
-                    logs,
-                    warning: `Live log query failed: ${azureErr.message}. Showing simulated logs.`
+                return res.status(500).json({
+                    success: false,
+                    message: `Azure Log Analytics query failed: ${azureErr.message}`
                 });
             }
         } catch (error) {
             res.status(500).json({ success: false, message: error.message });
         }
     },
+
 
     /**
      * GET /api/apps/:appName/metrics?organizationId=...
