@@ -123,7 +123,9 @@ const dbHubController = {
                         sourceDb,
                         targetDb,
                         differences,
-                        sqlScript: generatedSql
+                        sqlScript: generatedSql,
+                        isTargetEmpty: targetRows.length === 0,
+                        sourceTables: Object.keys(sourceTables)
                     });
                 } finally {
                     await targetConn.end();
