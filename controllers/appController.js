@@ -3917,23 +3917,155 @@ const appController = {
     try {
       const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
       
-      // Query billing invoices
+      // Calculate active monthly cost from Azure resources to align with getCostData
+      const orgSettings = await appController._getOrgSettings(organizationId);
+      const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+      const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+      const defaultDomain = orgSettings.default_dns_domain || DEFAULT_DOMAIN;
+
+      const credential = await getAzureCredential(organizationId);
+      const resourceClient = new ResourceManagementClient(credential, subscriptionId);
+
+      const azureResources = [];
+      try {
+        for await (const r of resourceClient.resources.listByResourceGroup(resourceGroup)) {
+          azureResources.push(r);
+        }
+      } catch (err) {
+        console.error('[AppController] Error listing resources for forecast costing:', err.message);
+      }
+
+      // Fetch applications from DB for mapping CPU/Memory/DNS
+      const [apps] = await db.query(
+        'SELECT name, app_type, azure_resource_details, godaddy_dns_details FROM applications WHERE organization_id = ?',
+        [organizationId]
+      );
+
+      const dbAppMap = new Map();
+      for (const app of apps) {
+        const azureDetails = typeof app.azure_resource_details === 'string' 
+          ? JSON.parse(app.azure_resource_details || '{}') 
+          : (app.azure_resource_details || {});
+        if (azureDetails.resourceId) {
+          dbAppMap.set(azureDetails.resourceId.toLowerCase(), app);
+        }
+        dbAppMap.set(app.name.toLowerCase(), app);
+      }
+
+      const costBreakdown = {
+        swa: 0,
+        aca: 0,
+        dns: 0,
+        database: 0,
+        vm: 0,
+        registry: 0,
+        other: 0
+      };
+
+      for (const r of azureResources) {
+        const matchedApp = dbAppMap.get(r.id?.toLowerCase()) || dbAppMap.get(r.name?.toLowerCase());
+        const rType = r.type || '';
+        
+        if (rType === 'Microsoft.Web/staticSites') {
+          costBreakdown.swa += 9.00;
+          if (matchedApp) {
+            const dnsDetails = typeof matchedApp.godaddy_dns_details === 'string'
+              ? JSON.parse(matchedApp.godaddy_dns_details || '{}')
+              : (matchedApp.godaddy_dns_details || {});
+            if (dnsDetails && dnsDetails.subdomain) {
+              costBreakdown.dns += 1.00;
+            }
+          }
+        } else if (rType === 'Microsoft.App/containerApps') {
+          let appCost = 15.00;
+          if (matchedApp) {
+            const azureDetails = typeof matchedApp.azure_resource_details === 'string'
+              ? JSON.parse(matchedApp.azure_resource_details || '{}')
+              : (matchedApp.azure_resource_details || {});
+            const cpu = parseFloat(azureDetails.cpu) || 0.25;
+            const memory = parseFloat(azureDetails.memory) || 0.5;
+            const replicas = parseInt(azureDetails.replicaCount) || 1;
+            const cpuCostRate = 12.00;
+            const memCostRate = 4.00;
+            appCost = ((cpu / 0.25) * cpuCostRate + (memory / 0.5) * memCostRate) * replicas;
+
+            const dnsDetails = typeof matchedApp.godaddy_dns_details === 'string'
+              ? JSON.parse(matchedApp.godaddy_dns_details || '{}')
+              : (matchedApp.godaddy_dns_details || {});
+            if (dnsDetails && dnsDetails.subdomain) {
+              costBreakdown.dns += 1.00;
+            }
+          }
+          costBreakdown.aca += appCost;
+        } else if (rType === 'Microsoft.DBforMySQL/flexibleServers') {
+          const skuName = r.sku?.name || '';
+          const appCost = (skuName.toLowerCase().includes('d2ads') || skuName.toLowerCase().includes('general') || skuName.toLowerCase().includes('gp')) ? 118.00 : 29.00;
+          costBreakdown.database += appCost;
+        } else if (rType === 'Microsoft.Compute/virtualMachines') {
+          costBreakdown.vm += 85.00;
+        } else if (rType === 'Microsoft.ContainerRegistry/registries') {
+          const skuName = r.sku?.name || 'Basic';
+          costBreakdown.registry += skuName.toLowerCase() === 'basic' ? 5.00 : 20.00;
+        } else if (rType === 'Microsoft.OperationalInsights/workspaces') {
+          costBreakdown.other += 12.00;
+        } else if (rType === 'Microsoft.Compute/disks') {
+          costBreakdown.other += 5.00;
+        } else if (rType === 'Microsoft.Network/publicIPAddresses') {
+          costBreakdown.other += 3.00;
+        } else if (rType === 'Microsoft.Network/virtualNetworks') {
+          costBreakdown.other += 19.00;
+        }
+      }
+
+      // Sync database apps that were not matched by ID/name from the Azure subscription list
+      const processedResourceIds = new Set(azureResources.map(r => r.id?.toLowerCase()).filter(Boolean));
+      for (const app of apps) {
+        const appName = app.name.toLowerCase();
+        const matched = Array.from(processedResourceIds).some(id => id.includes(appName)) || 
+                        azureResources.some(r => r.name?.toLowerCase() === appName);
+        if (!matched) {
+          let appCost = 0;
+          if (app.app_type === 'frontend') {
+            appCost = 9.00;
+            costBreakdown.swa += appCost;
+          } else if (app.app_type === 'backend') {
+            const azureDetails = typeof app.azure_resource_details === 'string' 
+              ? JSON.parse(app.azure_resource_details || '{}') 
+              : (app.azure_resource_details || {});
+            const cpu = parseFloat(azureDetails.cpu) || 0.25;
+            const memory = parseFloat(azureDetails.memory) || 0.5;
+            const replicas = parseInt(azureDetails.replicaCount) || 1;
+            const cpuCostRate = 12.00;
+            const memCostRate = 4.00;
+            appCost = ((cpu / 0.25) * cpuCostRate + (memory / 0.5) * memCostRate) * replicas;
+            costBreakdown.aca += appCost;
+          } else if (app.app_type === 'vm') {
+            costBreakdown.vm += 85.00;
+          }
+          const dnsDetails = typeof app.godaddy_dns_details === 'string'
+            ? JSON.parse(app.godaddy_dns_details || '{}')
+            : (app.godaddy_dns_details || {});
+          if (dnsDetails && dnsDetails.subdomain) {
+            costBreakdown.dns += 1.00;
+          }
+        }
+      }
+
+      const activeMonthlyCost = costBreakdown.swa + costBreakdown.aca + costBreakdown.dns + 
+                                (costBreakdown.database || 0) + (costBreakdown.vm || 0) + 
+                                (costBreakdown.registry || 0) + (costBreakdown.other || 0);
+
+      // Query billing invoices for historical fallback
       const [rows] = await db.query(
         'SELECT amount FROM billing_invoices WHERE organization_id = ? ORDER BY due_date DESC',
         [organizationId]
       );
 
-      let monthlyBaselineRunRate = 450.00; // default fallback
+      let monthlyBaselineRunRate = activeMonthlyCost > 0 ? activeMonthlyCost : 450.00;
       if (rows.length > 0) {
         const sum = rows.reduce((acc, row) => acc + parseFloat(row.amount), 0);
-        monthlyBaselineRunRate = sum / rows.length;
+        monthlyBaselineRunRate = activeMonthlyCost > 0 ? activeMonthlyCost : (sum / rows.length);
       }
-
-      // Check potential savings from recommendations
-      const [apps] = await db.query(
-        'SELECT name, app_type FROM applications WHERE organization_id = ?',
-        [organizationId]
-      );
       
       let potentialSavings = 0;
       for (const app of apps) {
