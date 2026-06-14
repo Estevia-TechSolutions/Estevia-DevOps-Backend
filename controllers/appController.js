@@ -2270,6 +2270,95 @@ const appController = {
     },
 
     /**
+     * POST /api/apps/setup-teams-service-hook
+     * Automatically configures a Build Completed Service Hook Webhook subscription in Azure DevOps.
+     */
+    setupTeamsServiceHook: async (req, res) => {
+        try {
+            const orgId = req.user?.organization_id || 'estevia';
+            const { receiverUrl } = req.body;
+
+            if (!receiverUrl) {
+                return res.status(400).json({ success: false, message: 'Missing receiverUrl parameter.' });
+            }
+
+            const orgSettings = await appController._getOrgSettings(orgId);
+            const devopsOrgUrl = orgSettings.azure_devops_org_url;
+            const devopsProject = orgSettings.azure_devops_project;
+
+            if (!devopsOrgUrl || !devopsProject) {
+                return res.status(400).json({ success: false, message: 'Azure DevOps Org URL or Project is not configured under the Azure tab.' });
+            }
+
+            const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(orgId, 'azure_devops');
+            const pat = devopsSecrets?.pat;
+
+            if (!pat) {
+                return res.status(400).json({ success: false, message: 'Azure DevOps Personal Access Token (PAT) is not configured under the Azure tab.' });
+            }
+
+            // Extract organization name
+            const orgName = devopsOrgUrl.replace(/\/$/, '').split('/').pop();
+            const basicAuth = Buffer.from(':' + pat).toString('base64');
+
+            // 1. Get Project ID (UUID)
+            const projectUrl = `https://dev.azure.com/${orgName}/_apis/projects/${encodeURIComponent(devopsProject)}?api-version=6.0`;
+            let projectId;
+            try {
+                const projRes = await axios.get(projectUrl, {
+                    headers: { 'Authorization': `Basic ${basicAuth}` }
+                });
+                projectId = projRes.data.id;
+            } catch (projErr) {
+                console.error('[AppController] Failed to retrieve Azure DevOps Project ID:', projErr.response?.data || projErr.message);
+                return res.status(400).json({ 
+                    success: false, 
+                    message: `Failed to find Azure DevOps project '${devopsProject}': ` + (projErr.response?.data?.message || projErr.message)
+                });
+            }
+
+            // 2. Create Service Hook Subscription
+            const hookUrl = `https://dev.azure.com/${orgName}/_apis/hooks/subscriptions?api-version=6.0`;
+            const payload = {
+                publisherId: 'tfs',
+                eventType: 'build.complete',
+                resourceVersion: '1.0',
+                consumerId: 'webHooks',
+                consumerActionId: 'httpRequest',
+                publisherInputs: {
+                    projectId: projectId
+                },
+                consumerInputs: {
+                    url: receiverUrl
+                }
+            };
+
+            try {
+                const hookRes = await axios.post(hookUrl, payload, {
+                    headers: { 
+                        'Authorization': `Basic ${basicAuth}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                console.log(`[AppController] Service Hook created successfully:`, hookRes.data.id);
+                res.json({ 
+                    success: true, 
+                    message: `Successfully registered Build Completed Service Hook in Azure DevOps project '${devopsProject}'!` 
+                });
+            } catch (hookErr) {
+                console.error('[AppController] Failed to create DevOps Service Hook:', hookErr.response?.data || hookErr.message);
+                res.status(400).json({ 
+                    success: false, 
+                    message: 'Failed to create Service Hook subscription in Azure DevOps: ' + (hookErr.response?.data?.message || hookErr.message) 
+                });
+            }
+        } catch (error) {
+            console.error('[AppController] setupTeamsServiceHook failed:', error.message);
+            res.status(500).json({ success: false, message: `Internal server error: ${error.message}` });
+        }
+    },
+
+    /**
      * GET /api/apps/github-repos?organizationId=...
      */
     getGithubRepos: async (req, res) => {
