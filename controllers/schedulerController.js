@@ -19,16 +19,20 @@ const schedulerController = {
             if (rows.length === 0) {
                 // Return default weekly active hour settings (e.g. Monday-Friday 8 AM to 6 PM active, active: true)
                 const defaultRules = {
-                    mon: { start: '08:00', end: '18:00', enabled: true },
-                    tue: { start: '08:00', end: '18:00', enabled: true },
-                    wed: { start: '08:00', end: '18:00', enabled: true },
-                    thu: { start: '08:00', end: '18:00', enabled: true },
-                    fri: { start: '08:00', end: '18:00', enabled: true },
-                    sat: { start: '08:00', end: '18:00', enabled: false },
-                    sun: { start: '08:00', end: '18:00', enabled: false },
                     autoScaleAca: true,
                     autoStopVm: false,
-                    selectedApps: []
+                    schedules: [{
+                        id: 'default',
+                        name: 'Default Sleep Policy',
+                        mon: { start: '08:00', end: '18:00', enabled: true },
+                        tue: { start: '08:00', end: '18:00', enabled: true },
+                        wed: { start: '08:00', end: '18:00', enabled: true },
+                        thu: { start: '08:00', end: '18:00', enabled: true },
+                        fri: { start: '08:00', end: '18:00', enabled: true },
+                        sat: { start: '08:00', end: '18:00', enabled: false },
+                        sun: { start: '08:00', end: '18:00', enabled: false },
+                        selectedApps: []
+                    }]
                 };
                 return res.json({
                     success: true,
@@ -41,12 +45,36 @@ const schedulerController = {
             }
 
             const schedule = rows[0];
-            const rules = typeof schedule.rules_json === 'string' ? JSON.parse(schedule.rules_json) : schedule.rules_json;
+            const parsedRules = typeof schedule.rules_json === 'string' ? JSON.parse(schedule.rules_json) : schedule.rules_json;
+
+            // Upgrade/Normalize rules format
+            const normalizedRules = {
+                autoScaleAca: parsedRules.autoScaleAca !== undefined ? parsedRules.autoScaleAca : true,
+                autoStopVm: parsedRules.autoStopVm !== undefined ? parsedRules.autoStopVm : false,
+                schedules: []
+            };
+
+            if (parsedRules.schedules && Array.isArray(parsedRules.schedules)) {
+                normalizedRules.schedules = parsedRules.schedules;
+            } else {
+                normalizedRules.schedules = [{
+                    id: 'default',
+                    name: 'Default Sleep Policy',
+                    mon: parsedRules.mon || { start: '08:00', end: '18:00', enabled: true },
+                    tue: parsedRules.tue || { start: '08:00', end: '18:00', enabled: true },
+                    wed: parsedRules.wed || { start: '08:00', end: '18:00', enabled: true },
+                    thu: parsedRules.thu || { start: '08:00', end: '18:00', enabled: true },
+                    fri: parsedRules.fri || { start: '08:00', end: '18:00', enabled: true },
+                    sat: parsedRules.sat || { start: '08:00', end: '18:00', enabled: false },
+                    sun: parsedRules.sun || { start: '08:00', end: '18:00', enabled: false },
+                    selectedApps: parsedRules.selectedApps || []
+                }];
+            }
 
             res.json({
                 success: true,
                 organization_id: orgId,
-                rules,
+                rules: normalizedRules,
                 active: !!schedule.active,
                 is_default: false,
                 applications: apps

@@ -148,17 +148,23 @@ async function checkSchedules() {
             const orgId = schedule.organization_id;
             const rules = typeof schedule.rules_json === 'string' ? JSON.parse(schedule.rules_json) : schedule.rules_json;
 
-            const dayRule = rules[currentDay];
-            let shouldBeSleep = true; // Default to sleep if day is disabled
-
-            if (dayRule && dayRule.enabled) {
-                const startMins = parseTimeToMinutes(dayRule.start);
-                const endMins = parseTimeToMinutes(dayRule.end);
-                
-                // If current time is within active start/end range, keep app active
-                if (currentMinutes >= startMins && currentMinutes <= endMins) {
-                    shouldBeSleep = false;
-                }
+            // Upgrade/Normalize rules format to support multiple schedules
+            let schedulesList = [];
+            if (rules.schedules && Array.isArray(rules.schedules)) {
+                schedulesList = rules.schedules;
+            } else {
+                schedulesList = [{
+                    id: 'default',
+                    name: 'Default Sleep Policy',
+                    mon: rules.mon,
+                    tue: rules.tue,
+                    wed: rules.wed,
+                    thu: rules.thu,
+                    fri: rules.fri,
+                    sat: rules.sat,
+                    sun: rules.sun,
+                    selectedApps: rules.selectedApps || []
+                }];
             }
 
             // Fetch all applications for this organization from DB
@@ -168,14 +174,28 @@ async function checkSchedules() {
             );
 
             for (const app of apps) {
-                // Determine selection:
-                // If rules.selectedApps is defined, check if this app is in it.
-                // Otherwise default to app.app_type === 'backend' (backward compatibility).
-                const isSelected = rules.selectedApps
-                    ? rules.selectedApps.includes(app.name)
-                    : (app.app_type === 'backend');
+                // Find all schedules this app is enrolled in
+                const appSchedules = schedulesList.filter(s => s.selectedApps && s.selectedApps.includes(app.name));
+                
+                // If the app is not enrolled in any schedule, skip it (runs 24/7)
+                if (appSchedules.length === 0) continue;
 
-                if (!isSelected) continue;
+                // An app is active if it is active in AT LEAST ONE active schedule it is enrolled in
+                let isAppActiveInSomeSchedule = false;
+
+                for (const s of appSchedules) {
+                    const dayRule = s[currentDay];
+                    if (dayRule && dayRule.enabled) {
+                        const startMins = parseTimeToMinutes(dayRule.start);
+                        const endMins = parseTimeToMinutes(dayRule.end);
+                        if (currentMinutes >= startMins && currentMinutes <= endMins) {
+                            isAppActiveInSomeSchedule = true;
+                            break; // No need to check other schedules if it's already active in one
+                        }
+                    }
+                }
+
+                const shouldBeSleep = !isAppActiveInSomeSchedule;
 
                 if (app.app_type === 'backend') {
                     if (shouldBeSleep && rules.autoScaleAca) {
