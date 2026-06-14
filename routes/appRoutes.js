@@ -66,6 +66,9 @@ router.post('/execute-query', restrictTo('owner', 'admin', 'contributor'), appCo
 // Get dynamic Azure provisioning metadata (Resource Groups, locations, envs, registries, DevOps service connections)
 router.get('/provisioning-metadata', appController.getProvisioningMetadata);
 
+// List all available Azure resource groups
+router.get('/resource-groups', appController.getResourceGroups);
+
 // Create default Dockerfile in user's GitHub repository
 router.post('/create-dockerfile', restrictTo('owner', 'admin', 'contributor'), appController.createDockerfile);
 

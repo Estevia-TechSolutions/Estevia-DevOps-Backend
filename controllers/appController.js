@@ -103,7 +103,7 @@ const appController = {
 
             const orgSettings = await appController._getOrgSettings(organizationId);
             const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+            const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
             const defaultDomain = orgSettings.default_dns_domain || DEFAULT_DOMAIN;
             const githubOwner = orgSettings.github_owner || 'Estevia-TechSolutions';
 
@@ -123,7 +123,8 @@ const appController = {
                         hostname: site.defaultHostname,
                         resourceId: site.id,
                         status: 'deployed',
-                        repositoryUrl: site.repositoryUrl || ''
+                        repositoryUrl: site.repositoryUrl || '',
+                        resourceGroup: resourceGroup
                     });
                 }
             } catch (err) {
@@ -140,7 +141,8 @@ const appController = {
                         hostname: app.configuration?.ingress?.fqdn || '',
                         resourceId: app.id,
                         status: 'deployed',
-                        repositoryUrl: ''
+                        repositoryUrl: '',
+                        resourceGroup: resourceGroup
                     });
                 }
             } catch (err) {
@@ -178,7 +180,13 @@ const appController = {
                     const nameLower = vm.name.toLowerCase();
                     if (nameLower.includes('ml')) {
                         repositoryUrl = `https://github.com/${githubOwner}/estevia-ml-setup`;
-                        hostname = `ml.${defaultDomain}`;
+                        if (nameLower.includes('dev')) {
+                            hostname = `dev.ml.${defaultDomain}`;
+                        } else if (nameLower.includes('prod') || nameLower.includes('production')) {
+                            hostname = `prod.ml.${defaultDomain}`;
+                        } else {
+                            hostname = `ml.${defaultDomain}`;
+                        }
                     } else {
                         hostname = `${vm.name}.${defaultDomain}`;
                     }
@@ -190,7 +198,8 @@ const appController = {
                         hostname: hostname,
                         resourceId: vm.id,
                         status: status,
-                        repositoryUrl: repositoryUrl
+                        repositoryUrl: repositoryUrl,
+                        resourceGroup: resourceGroup
                     });
                 }
             } catch (err) {
@@ -200,10 +209,11 @@ const appController = {
                         name: 'estevia-ml-vm-dev',
                         type: 'vm',
                         location: 'eastus2',
-                        hostname: `ml.${defaultDomain}`,
+                        hostname: `dev.ml.${defaultDomain}`,
                         resourceId: `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/virtualMachines/estevia-ml-vm-dev`,
                         status: 'running',
-                        repositoryUrl: `https://github.com/${githubOwner}/estevia-ml-setup`
+                        repositoryUrl: `https://github.com/${githubOwner}/estevia-ml-setup`,
+                        resourceGroup: resourceGroup
                     });
                 }
             }
@@ -347,9 +357,12 @@ const appController = {
                 let matchedPipelineId = null;
                 let matchedPipelineName = null;
                 
+                // Do not map pipelines to development VMs (e.g. estevia-ml-cpu-vm-dev or mock estevia-ml-vm-dev)
+                const isDevVm = app.type === 'vm' && (app.name.toLowerCase().includes('-dev') || app.name.toLowerCase().includes('dev'));
+                
                 // Try repository matching first (100% accurate)
                 let matchingPipeline = null;
-                if (app.repositoryUrl) {
+                if (!isDevVm && app.repositoryUrl) {
                     const cleanAppRepo = app.repositoryUrl.replace('https://github.com/', '').replace(/\/$/, '').toLowerCase();
                     matchingPipeline = devopsPipelines.find(p => {
                         const repoFullName = p.configuration?.repository?.fullName;
@@ -358,7 +371,7 @@ const appController = {
                 }
                 
                 // Fallback to name-based heuristics if no repo matches
-                if (!matchingPipeline) {
+                if (!isDevVm && !matchingPipeline) {
                     matchingPipeline = devopsPipelines.find(p => {
                         const pName = p.name.toLowerCase();
                         const cleanAppName = app.name.toLowerCase();
@@ -507,7 +520,8 @@ const appController = {
                     resourceId: app.resourceId,
                     location: app.location,
                     hostname: app.hostname,
-                    pipelineName: app.pipelineName
+                    pipelineName: app.pipelineName,
+                    resourceGroup: app.resourceGroup || resourceGroup
                 });
 
                 if (existing.length > 0) {
@@ -2007,7 +2021,7 @@ const appController = {
 
             const orgSettings = await appController._getOrgSettings(orgId);
             const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+            const resourceGroup = azureDetails.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             const isDevMode = !process.env.AZURE_CLIENT_ID;
 
@@ -3614,6 +3628,31 @@ const appController = {
         } catch (error) {
             console.error('[AppController] getProvisioningMetadata failed:', error);
             res.status(500).json({ message: 'Failed to query dynamic Azure metadata.', error: error.message });
+        }
+    },
+
+    /**
+     * GET /api/apps/resource-groups
+     * Lists all resource groups inside the Azure subscription.
+     */
+    getResourceGroups: async (req, res) => {
+        try {
+            const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+
+            const credential = await getAzureCredential(organizationId);
+            const client = new ResourceManagementClient(credential, subscriptionId);
+
+            const resourceGroups = [];
+            for await (const rg of client.resourceGroups.list()) {
+                resourceGroups.push(rg.name);
+            }
+
+            res.json({ success: true, resourceGroups });
+        } catch (error) {
+            console.error('[AppController] getResourceGroups failed:', error);
+            res.status(500).json({ message: 'Failed to retrieve subscription resource groups.', error: error.message });
         }
     },
 
