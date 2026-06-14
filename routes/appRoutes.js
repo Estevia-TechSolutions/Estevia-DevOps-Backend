@@ -35,6 +35,8 @@ router.get('/cost', appController.getCostData);
 
 // Fetch billing invoices history
 router.get('/billing', appController.getBillingHistory);
+router.get('/billing/forecast', appController.getBillingForecast);
+
 
 // Update organization settings
 router.post('/organization-settings', restrictTo('owner', 'admin'), appController.updateOrgSettings);
@@ -75,6 +77,17 @@ router.put('/update-dockerfile', restrictTo('owner', 'admin', 'contributor'), ap
 
 // Check CNAME propagation and SSL status for a custom domain
 router.get('/domain-status', appController.getDomainStatus);
+
+// Control app power states (start/stop/restart)
+router.post('/:name/control', restrictTo('owner', 'admin', 'contributor'), appController.controlApp);
+
+// Revisions & traffic control for Container Apps (ACA)
+router.get('/:name/revisions', appController.getRevisions);
+router.post('/:name/traffic', restrictTo('owner', 'admin', 'contributor'), appController.updateTraffic);
+router.post('/:name/revision-mode', restrictTo('owner', 'admin', 'contributor'), appController.updateRevisionMode);
+
+// DNS CNAME swap mapping (SWA/ACA)
+router.post('/dns-swap', restrictTo('owner', 'admin', 'contributor'), appController.dnsSwap);
 
 // Delete SWA/ACA app from Azure and database
 router.delete('/:name', restrictTo('owner', 'admin', 'contributor'), appController.deleteApp);

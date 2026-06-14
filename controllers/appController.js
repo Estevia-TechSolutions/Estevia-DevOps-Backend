@@ -147,6 +147,57 @@ const appController = {
                 console.error('[AppController] Error scanning container apps:', err.message);
             }
 
+            // 2.5. Fetch Virtual Machines (VMs)
+            try {
+                const tokenRes = await credential.getToken("https://management.azure.com/.default");
+                const token = tokenRes.token;
+                const vmUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/virtualMachines?api-version=2023-09-01`;
+                const vmRes = await axios.get(vmUrl, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const vms = vmRes.data?.value || [];
+                for (const vm of vms) {
+                    let status = 'running';
+                    try {
+                        const detailUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/virtualMachines/${vm.name}/instanceView?api-version=2023-09-01`;
+                        const detailRes = await axios.get(detailUrl, {
+                            headers: { 'Authorization': `Bearer ${token}` },
+                            timeout: 3000
+                        });
+                        const statuses = detailRes.data?.statuses || [];
+                        const powerStatus = statuses.find(s => s.code && s.code.startsWith('PowerState/'));
+                        if (powerStatus) {
+                            status = powerStatus.code === 'PowerState/running' ? 'running' : 'stopped';
+                        }
+                    } catch (err) {
+                        console.warn(`[AppController] Failed to fetch instance view for VM ${vm.name}:`, err.message);
+                    }
+
+                    apps.push({
+                        name: vm.name,
+                        type: 'vm',
+                        location: vm.location,
+                        hostname: '',
+                        resourceId: vm.id,
+                        status: status,
+                        repositoryUrl: ''
+                    });
+                }
+            } catch (err) {
+                console.error('[AppController] Error scanning virtual machines:', err.message);
+                if (!process.env.AZURE_CLIENT_ID) {
+                    apps.push({
+                        name: 'estevia-ml-vm-dev',
+                        type: 'vm',
+                        location: 'eastus2',
+                        hostname: '',
+                        resourceId: `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/virtualMachines/estevia-ml-vm-dev`,
+                        status: 'running',
+                        repositoryUrl: ''
+                    });
+                }
+            }
+
             // 3. Auto-discover GoDaddy CNAME configurations
             let godaddyCnames = [];
             try {
@@ -1901,6 +1952,146 @@ const appController = {
      * Delete an application from Azure and from the local database.
      * Also recursively purges the linked GoDaddy DNS CNAME record and Azure DevOps Pipeline.
      */
+    /**
+     * Control resource power state (Start, Stop, Restart)
+     * POST /api/apps/:name/control
+     */
+    controlApp: async (req, res) => {
+        try {
+            const { name } = req.params;
+            const { action, organizationId: bodyOrgId } = req.body;
+            const orgId = bodyOrgId || req.query.organizationId || req.user?.organization_id || 'estevia';
+
+            if (!action || !['start', 'stop', 'restart'].includes(action)) {
+                return res.status(400).json({ message: 'Invalid or missing action parameter. Must be "start", "stop", or "restart".' });
+            }
+
+            // Self-preservation check
+            const nameLower = name.toLowerCase();
+            if (action === 'stop' && (nameLower.includes('evaops') || nameLower.includes('devops-backend') || nameLower.includes('devops-frontend'))) {
+                return res.status(400).json({ message: 'Action "stop" is not allowed on critical EvaOps platform infrastructure (self-preservation rule).' });
+            }
+
+            // Fetch app from database
+            const [rows] = await db.query(
+                'SELECT id, app_type, status, azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
+                [orgId, name]
+            );
+
+            if (rows.length === 0) {
+                return res.status(404).json({ message: `Resource "${name}" not found in database.` });
+            }
+
+            const app = rows[0];
+            const azureDetails = typeof app.azure_resource_details === 'string'
+                ? JSON.parse(app.azure_resource_details || '{}')
+                : (app.azure_resource_details || {});
+
+            const orgSettings = await appController._getOrgSettings(orgId);
+            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+
+            const isDevMode = !process.env.AZURE_CLIENT_ID;
+
+            if (app.app_type === 'vm') {
+                if (isDevMode) {
+                    console.log(`[MOCK controlApp] Performing action '${action}' on VM '${name}'`);
+                    const newStatus = action === 'stop' ? 'stopped' : 'running';
+                    await db.query('UPDATE applications SET status = ? WHERE id = ?', [newStatus, app.id]);
+                    return res.json({ success: true, message: `[MOCK] VM "${name}" power action "${action}" completed successfully.`, status: newStatus });
+                }
+
+                console.log(`[controlApp] Calling Azure VM '${name}' API for action: ${action}`);
+                const credential = await getAzureCredential(orgId);
+                const tokenRes = await credential.getToken("https://management.azure.com/.default");
+                const token = tokenRes.token;
+
+                const azureAction = action === 'stop' ? 'deallocate' : action;
+                const url = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/virtualMachines/${name}/${azureAction}?api-version=2023-09-01`;
+
+                await axios.post(url, {}, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                const newStatus = action === 'stop' ? 'stopped' : 'running';
+                await db.query('UPDATE applications SET status = ? WHERE id = ?', [newStatus, app.id]);
+                return res.json({ success: true, message: `VM "${name}" power action "${action}" completed successfully.`, status: newStatus });
+
+            } else if (app.app_type === 'backend') { // ACA
+                if (isDevMode) {
+                    console.log(`[MOCK controlApp] Performing action '${action}' on Container App (ACA) '${name}'`);
+                    const newStatus = action === 'stop' ? 'sleep' : 'deployed';
+                    await db.query('UPDATE applications SET status = ? WHERE id = ?', [newStatus, app.id]);
+                    return res.json({ success: true, message: `[MOCK] Container App "${name}" power action "${action}" completed successfully.`, status: newStatus });
+                }
+
+                const credential = await getAzureCredential(orgId);
+                const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
+
+                if (action === 'stop') {
+                    console.log(`[controlApp] Stopping Container App '${name}' (scaling down to 0,0)`);
+                    const appEnvelope = await containerClient.containerApps.get(resourceGroup, name);
+                    if (!appEnvelope.template) appEnvelope.template = {};
+                    appEnvelope.template.scale = { minReplicas: 0, maxReplicas: 0 };
+                    const poller = await containerClient.containerApps.beginCreateOrUpdate(resourceGroup, name, appEnvelope);
+                    await poller.pollUntilDone();
+                    await db.query('UPDATE applications SET status = ? WHERE id = ?', ['sleep', app.id]);
+                    return res.json({ success: true, message: `Container App "${name}" scaled down to 0 (Stopped).`, status: 'sleep' });
+
+                } else if (action === 'start') {
+                    console.log(`[controlApp] Starting Container App '${name}' (scaling up to 1,10)`);
+                    const appEnvelope = await containerClient.containerApps.get(resourceGroup, name);
+                    if (!appEnvelope.template) appEnvelope.template = {};
+                    appEnvelope.template.scale = { minReplicas: 1, maxReplicas: 10 };
+                    const poller = await containerClient.containerApps.beginCreateOrUpdate(resourceGroup, name, appEnvelope);
+                    await poller.pollUntilDone();
+                    await db.query('UPDATE applications SET status = ? WHERE id = ?', ['deployed', app.id]);
+                    return res.json({ success: true, message: `Container App "${name}" scaled up to 1-10 (Started).`, status: 'deployed' });
+
+                } else if (action === 'restart') {
+                    console.log(`[controlApp] Restarting Container App '${name}'`);
+                    const tokenRes = await credential.getToken("https://management.azure.com/.default");
+                    const token = tokenRes.token;
+
+                    // Get revisions list to find latest revision
+                    const revUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/containerApps/${name}/revisions?api-version=2023-05-01`;
+                    const revRes = await axios.get(revUrl, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    const revisions = revRes.data?.value || [];
+                    if (revisions.length > 0) {
+                        const latestRev = revisions[0].name;
+                        const restartUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/containerApps/${name}/revisions/${latestRev}/restart?api-version=2023-05-01`;
+                        await axios.post(restartUrl, {}, {
+                            headers: { 'Authorization': `Bearer ${token}` }
+                        });
+                        console.log(`Restarted latest revision ${latestRev} for ACA ${name}`);
+                    } else {
+                        // Fallback: trigger a template update to restart
+                        const appEnvelope = await containerClient.containerApps.get(resourceGroup, name);
+                        if (!appEnvelope.template) appEnvelope.template = {};
+                        appEnvelope.template.revisionSuffix = `restart-${Date.now()}`;
+                        const poller = await containerClient.containerApps.beginCreateOrUpdate(resourceGroup, name, appEnvelope);
+                        await poller.pollUntilDone();
+                    }
+                    await db.query('UPDATE applications SET status = ? WHERE id = ?', ['deployed', app.id]);
+                    return res.json({ success: true, message: `Container App "${name}" restarted successfully.`, status: 'deployed' });
+                }
+
+            } else if (app.app_type === 'frontend') { // SWA
+                console.log(`[controlApp] Simulating action '${action}' on Static Web App '${name}'`);
+                const newStatus = action === 'stop' ? 'sleep' : 'deployed';
+                await db.query('UPDATE applications SET status = ? WHERE id = ?', [newStatus, app.id]);
+                return res.json({ success: true, message: `Static Web App "${name}" simulated state changed to "${action === 'stop' ? 'Stopped/Offline' : 'Online'}".`, status: newStatus });
+            }
+
+            res.status(400).json({ message: `Unrecognized application type: ${app.app_type}` });
+        } catch (error) {
+            console.error('[AppController] controlApp failed:', error);
+            res.status(500).json({ message: 'Failed to perform power control action.', error: error.message });
+        }
+    },
+
     deleteApp: async (req, res) => {
         try {
             const { name } = req.params;
@@ -3659,6 +3850,429 @@ const appController = {
     });
 
     res.json({ success: true, status: result });
+  },
+
+  /**
+   * GET /api/apps/billing/forecast
+   * Estimates 3, 6, and 12-month billing forecasts based on invoice history and optimizations.
+   */
+  getBillingForecast: async (req, res) => {
+    try {
+      const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
+      
+      // Query billing invoices
+      const [rows] = await db.query(
+        'SELECT amount FROM billing_invoices WHERE organization_id = ? ORDER BY due_date DESC',
+        [organizationId]
+      );
+
+      let monthlyBaselineRunRate = 450.00; // default fallback
+      if (rows.length > 0) {
+        const sum = rows.reduce((acc, row) => acc + parseFloat(row.amount), 0);
+        monthlyBaselineRunRate = sum / rows.length;
+      }
+
+      // Check potential savings from recommendations
+      const [apps] = await db.query(
+        'SELECT name, app_type FROM applications WHERE organization_id = ?',
+        [organizationId]
+      );
+      
+      let potentialSavings = 0;
+      for (const app of apps) {
+        const nameLower = app.name.toLowerCase();
+        if (app.app_type === 'vm') {
+          potentialSavings += 42.50; // Schedule auto-shutdown VM
+        } else if (app.app_type === 'backend') {
+          if (nameLower.includes('-dev') || nameLower.includes('-qa')) {
+            potentialSavings += 10.00; // Scale idle replicas to zero
+          }
+        } else if (app.app_type === 'frontend') {
+          if (nameLower.includes('-dev')) {
+            potentialSavings += 9.00; // Demote SWA to free tier
+          }
+        }
+      }
+
+      if (potentialSavings === 0) {
+        potentialSavings = monthlyBaselineRunRate * 0.22; // default 22% savings
+      }
+
+      // Ensure savings don't exceed baseline
+      potentialSavings = Math.min(potentialSavings, monthlyBaselineRunRate * 0.5);
+
+      const result = {
+        success: true,
+        monthlyBaselineRunRate,
+        monthlySavings: potentialSavings,
+        forecast: {
+          3: {
+            baseline: Math.round(monthlyBaselineRunRate * 3),
+            optimized: Math.round((monthlyBaselineRunRate - potentialSavings) * 3),
+            savings: Math.round(potentialSavings * 3)
+          },
+          6: {
+            baseline: Math.round(monthlyBaselineRunRate * 6),
+            optimized: Math.round((monthlyBaselineRunRate - potentialSavings) * 6),
+            savings: Math.round(potentialSavings * 6)
+          },
+          12: {
+            baseline: Math.round(monthlyBaselineRunRate * 12),
+            optimized: Math.round((monthlyBaselineRunRate - potentialSavings) * 12),
+            savings: Math.round(potentialSavings * 12)
+          }
+        }
+      };
+
+      res.json(result);
+    } catch (error) {
+      console.error('[AppController] getBillingForecast failed:', error);
+      res.status(500).json({ message: 'Failed to fetch billing forecast.', error: error.message });
+    }
+  },
+
+  /**
+   * GET /api/apps/:name/revisions
+   * Fetch active revisions and traffic weight split configuration (ACA).
+   */
+  getRevisions: async (req, res) => {
+    try {
+      const { name } = req.params;
+      const orgId = req.query.organizationId || req.user?.organization_id || 'estevia';
+
+      const [rows] = await db.query(
+        'SELECT id, app_type, azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
+        [orgId, name]
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ message: `Resource "${name}" not found.` });
+      }
+
+      const app = rows[0];
+      if (app.app_type !== 'backend') {
+        return res.status(400).json({ message: 'Only Container Apps (ACA) have revisions.' });
+      }
+
+      const isDevMode = !process.env.AZURE_CLIENT_ID;
+
+      if (isDevMode) {
+        const mockRevisions = [
+          {
+            name: `${name}--rev-latest`,
+            active: true,
+            createdTime: new Date(Date.now() - 3600000).toISOString(),
+            trafficWeight: 100,
+            latestRevision: true
+          },
+          {
+            name: `${name}--rev-previous`,
+            active: true,
+            createdTime: new Date(Date.now() - 86400000).toISOString(),
+            trafficWeight: 0,
+            latestRevision: false
+          }
+        ];
+        return res.json({
+          success: true,
+          activeRevisionsMode: 'Single',
+          revisions: mockRevisions,
+          traffic: [
+            { revisionName: `${name}--rev-latest`, weight: 100, latestRevision: true },
+            { revisionName: `${name}--rev-previous`, weight: 0, latestRevision: false }
+          ]
+        });
+      }
+
+      const orgSettings = await appController._getOrgSettings(orgId);
+      const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+      const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+
+      const credential = await getAzureCredential(orgId);
+      const tokenRes = await credential.getToken("https://management.azure.com/.default");
+      const token = tokenRes.token;
+
+      // Get revisions list
+      const revUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/containerApps/${name}/revisions?api-version=2023-05-01`;
+      const revRes = await axios.get(revUrl, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const revisions = revRes.data?.value || [];
+
+      // Get container app ingress config
+      const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
+      const appEnvelope = await containerClient.containerApps.get(resourceGroup, name);
+      const configuration = appEnvelope.configuration || {};
+      const activeRevisionsMode = configuration.activeRevisionsMode || 'Single';
+      const traffic = configuration.ingress?.traffic || [];
+
+      const formattedRevisions = revisions.map(rev => {
+        const trafficMatch = traffic.find(t => t.revisionName === rev.name);
+        return {
+          name: rev.name,
+          active: rev.properties?.active || false,
+          createdTime: rev.properties?.createdTime || null,
+          trafficWeight: trafficMatch ? trafficMatch.weight : 0,
+          latestRevision: rev.properties?.latest || false
+        };
+      });
+
+      res.json({
+        success: true,
+        activeRevisionsMode,
+        revisions: formattedRevisions,
+        traffic
+      });
+    } catch (error) {
+      console.error('[AppController] getRevisions failed:', error);
+      res.status(500).json({ message: 'Failed to fetch Container App revisions.', error: error.message });
+    }
+  },
+
+  /**
+   * POST /api/apps/:name/traffic
+   * Update active traffic routing splits (ACA).
+   */
+  updateTraffic: async (req, res) => {
+    try {
+      const { name } = req.params;
+      const { traffic, organizationId: bodyOrgId } = req.body;
+      const orgId = bodyOrgId || req.user?.organization_id || 'estevia';
+
+      if (!traffic || !Array.isArray(traffic)) {
+        return res.status(400).json({ message: 'Missing or invalid traffic parameter.' });
+      }
+
+      const totalWeight = traffic.reduce((sum, item) => sum + (parseInt(item.weight) || 0), 0);
+      if (totalWeight !== 100) {
+        return res.status(400).json({ message: `Total traffic split weight must equal 100. Current sum: ${totalWeight}` });
+      }
+
+      const [rows] = await db.query(
+        'SELECT id, app_type FROM applications WHERE organization_id = ? AND name = ?',
+        [orgId, name]
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ message: `Resource "${name}" not found.` });
+      }
+
+      const isDevMode = !process.env.AZURE_CLIENT_ID;
+
+      if (isDevMode) {
+        console.log(`[MOCK updateTraffic] Setting traffic split for ACA '${name}':`, traffic);
+        return res.json({ success: true, message: `[MOCK] Traffic routing updated successfully.` });
+      }
+
+      const orgSettings = await appController._getOrgSettings(orgId);
+      const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+      const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+
+      const credential = await getAzureCredential(orgId);
+      const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
+
+      const appEnvelope = await containerClient.containerApps.get(resourceGroup, name);
+      if (!appEnvelope.configuration) appEnvelope.configuration = {};
+      if (!appEnvelope.configuration.ingress) appEnvelope.configuration.ingress = {};
+
+      appEnvelope.configuration.ingress.traffic = traffic.map(t => ({
+        revisionName: t.revisionName,
+        weight: parseInt(t.weight),
+        latestRevision: !!t.latestRevision
+      }));
+
+      const poller = await containerClient.containerApps.beginCreateOrUpdate(resourceGroup, name, appEnvelope);
+      await poller.pollUntilDone();
+
+      res.json({ success: true, message: `Traffic routing split updated successfully for Container App "${name}".` });
+    } catch (error) {
+      console.error('[AppController] updateTraffic failed:', error);
+      res.status(500).json({ message: 'Failed to update traffic splitting configuration.', error: error.message });
+    }
+  },
+
+  /**
+   * POST /api/apps/:name/revision-mode
+   * Set active revisions mode between Single and Multiple (ACA).
+   */
+  updateRevisionMode: async (req, res) => {
+    try {
+      const { name } = req.params;
+      const { mode, organizationId: bodyOrgId } = req.body;
+      const orgId = bodyOrgId || req.user?.organization_id || 'estevia';
+
+      if (!mode || !['Single', 'Multiple'].includes(mode)) {
+        return res.status(400).json({ message: 'Invalid or missing mode parameter. Must be "Single" or "Multiple".' });
+      }
+
+      const [rows] = await db.query(
+        'SELECT id, app_type FROM applications WHERE organization_id = ? AND name = ?',
+        [orgId, name]
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ message: `Resource "${name}" not found.` });
+      }
+
+      const isDevMode = !process.env.AZURE_CLIENT_ID;
+
+      if (isDevMode) {
+        console.log(`[MOCK updateRevisionMode] Setting revision mode for ACA '${name}' to: ${mode}`);
+        return res.json({ success: true, message: `[MOCK] Revision mode updated to "${mode}" successfully.`, activeRevisionsMode: mode });
+      }
+
+      const orgSettings = await appController._getOrgSettings(orgId);
+      const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+      const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+
+      const credential = await getAzureCredential(orgId);
+      const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
+
+      const appEnvelope = await containerClient.containerApps.get(resourceGroup, name);
+      if (!appEnvelope.configuration) appEnvelope.configuration = {};
+      appEnvelope.configuration.activeRevisionsMode = mode;
+
+      if (mode === 'Single' && appEnvelope.configuration.ingress) {
+        appEnvelope.configuration.ingress.traffic = [
+          {
+            latestRevision: true,
+            weight: 100
+          }
+        ];
+      }
+
+      const poller = await containerClient.containerApps.beginCreateOrUpdate(resourceGroup, name, appEnvelope);
+      await poller.pollUntilDone();
+
+      res.json({ success: true, message: `Revision mode successfully updated to "${mode}".`, activeRevisionsMode: mode });
+    } catch (error) {
+      console.error('[AppController] updateRevisionMode failed:', error);
+      res.status(500).json({ message: 'Failed to update revision mode.', error: error.message });
+    }
+  },
+
+  /**
+   * POST /api/apps/dns-swap
+   * Swap custom domain DNS records (CNAME) between two apps (SWA fallback blue/green).
+   */
+  dnsSwap: async (req, res) => {
+    try {
+      const { app1Name, app2Name, organizationId: bodyOrgId } = req.body;
+      const orgId = bodyOrgId || req.user?.organization_id || 'estevia';
+
+      if (!app1Name || !app2Name) {
+        return res.status(400).json({ message: 'Missing app1Name or app2Name parameters.' });
+      }
+
+      // Fetch both applications
+      const [rows] = await db.query(
+        'SELECT id, name, app_type, azure_resource_details, godaddy_dns_details FROM applications WHERE organization_id = ? AND name IN (?, ?)',
+        [orgId, app1Name, app2Name]
+      );
+
+      if (rows.length < 2) {
+        return res.status(400).json({ message: 'Could not retrieve details for both applications in the database.' });
+      }
+
+      const app1 = rows.find(r => r.name === app1Name);
+      const app2 = rows.find(r => r.name === app2Name);
+
+      const dns1 = typeof app1.godaddy_dns_details === 'string' ? JSON.parse(app1.godaddy_dns_details || 'null') : app1.godaddy_dns_details;
+      const dns2 = typeof app2.godaddy_dns_details === 'string' ? JSON.parse(app2.godaddy_dns_details || 'null') : app2.godaddy_dns_details;
+
+      if (!dns1 || !dns2) {
+        return res.status(400).json({ message: 'Both applications must have mapped GoDaddy domains to swap DNS.' });
+      }
+
+      const details1 = typeof app1.azure_resource_details === 'string' ? JSON.parse(app1.azure_resource_details || '{}') : app1.azure_resource_details;
+      const details2 = typeof app2.azure_resource_details === 'string' ? JSON.parse(app2.azure_resource_details || '{}') : app2.azure_resource_details;
+
+      const isDevMode = !process.env.AZURE_CLIENT_ID;
+
+      if (isDevMode) {
+        console.log(`[MOCK dnsSwap] Swapping DNS mappings between ${app1Name} and ${app2Name}`);
+        await db.query('UPDATE applications SET godaddy_dns_details = ? WHERE id = ?', [JSON.stringify(dns2), app1.id]);
+        await db.query('UPDATE applications SET godaddy_dns_details = ? WHERE id = ?', [JSON.stringify(dns1), app2.id]);
+        return res.json({ success: true, message: `[MOCK] DNS swap completed successfully between "${app1Name}" and "${app2Name}".` });
+      }
+
+      const orgSettings = await appController._getOrgSettings(orgId);
+      const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+      const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+
+      const godaddySecrets = await credentialController.getDecryptedCredentialsInternal(orgId, 'godaddy');
+      if (!godaddySecrets || !godaddySecrets.apiKey || !godaddySecrets.apiSecret) {
+        return res.status(400).json({ message: 'GoDaddy integration credentials not found or incomplete for organization.' });
+      }
+
+      const credential = await getAzureCredential(orgId);
+      const webClient = new WebSiteManagementClient(credential, subscriptionId);
+
+      // 1. Swap custom domains in Azure SWA (if they are type 'frontend')
+      if (app1.app_type === 'frontend') {
+        console.log(`[dnsSwap] Unbinding custom domain ${dns1.fqdn} from ${app1Name}`);
+        await webClient.staticSites.beginDeleteStaticSiteCustomDomainAndWait(resourceGroup, app1Name, dns1.fqdn);
+      }
+      if (app2.app_type === 'frontend') {
+        console.log(`[dnsSwap] Unbinding custom domain ${dns2.fqdn} from ${app2Name}`);
+        await webClient.staticSites.beginDeleteStaticSiteCustomDomainAndWait(resourceGroup, app2Name, dns2.fqdn);
+      }
+
+      // 2. Swap DNS records on GoDaddy
+      const godaddyUrl1 = `https://api.godaddy.com/v1/domains/${dns1.domain}/records/CNAME/${dns1.subdomain}`;
+      const body1 = [{ data: details2.hostname, ttl: 3600 }];
+      console.log(`[dnsSwap] Updating GoDaddy CNAME: ${dns1.fqdn} -> ${details2.hostname}`);
+      await axios.put(godaddyUrl1, body1, {
+        headers: {
+          'Authorization': `sso-key ${godaddySecrets.apiKey}:${godaddySecrets.apiSecret}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const godaddyUrl2 = `https://api.godaddy.com/v1/domains/${dns2.domain}/records/CNAME/${dns2.subdomain}`;
+      const body2 = [{ data: details1.hostname, ttl: 3600 }];
+      console.log(`[dnsSwap] Updating GoDaddy CNAME: ${dns2.fqdn} -> ${details1.hostname}`);
+      await axios.put(godaddyUrl2, body2, {
+        headers: {
+          'Authorization': `sso-key ${godaddySecrets.apiKey}:${godaddySecrets.apiSecret}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      // 3. Bind custom domains in Azure SWA
+      if (app1.app_type === 'frontend') {
+        console.log(`[dnsSwap] Binding custom domain ${dns2.fqdn} to ${app1Name}`);
+        await webClient.staticSites.beginCreateOrUpdateStaticSiteCustomDomainAndWait(
+          resourceGroup,
+          app1Name,
+          dns2.fqdn,
+          { domainName: dns2.fqdn }
+        );
+      }
+      if (app2.app_type === 'frontend') {
+        console.log(`[dnsSwap] Binding custom domain ${dns1.fqdn} to ${app2Name}`);
+        await webClient.staticSites.beginCreateOrUpdateStaticSiteCustomDomainAndWait(
+          resourceGroup,
+          app2Name,
+          dns1.fqdn,
+          { domainName: dns1.fqdn }
+        );
+      }
+
+      const newDns1 = { ...dns2, mappedAt: new Date() };
+      const newDns2 = { ...dns1, mappedAt: new Date() };
+
+      await db.query('UPDATE applications SET godaddy_dns_details = ? WHERE id = ?', [JSON.stringify(newDns1), app1.id]);
+      await db.query('UPDATE applications SET godaddy_dns_details = ? WHERE id = ?', [JSON.stringify(newDns2), app2.id]);
+
+      res.json({
+        success: true,
+        message: `DNS swap completed successfully between "${app1Name}" and "${app2Name}". ${dns1.fqdn} now targets ${app2Name}, ${dns2.fqdn} targets ${app1Name}.`
+      });
+    } catch (error) {
+      console.error('[AppController] dnsSwap failed:', error);
+      res.status(500).json({ message: 'Failed to perform DNS swap.', error: error.message });
+    }
   }
 };
 

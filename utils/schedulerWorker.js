@@ -105,6 +105,12 @@ async function notifyScaleTransition(orgId, appName, newState, minReplicas, maxR
         costNote = isSleeping
             ? 'Traffic routing simulated offline. No bandwidth costs are being incurred.'
             : 'App serving traffic normally.';
+    } else if (appType === 'vm') {
+        appTypeLabel = 'Virtual Machine';
+        stateLabel = isSleeping ? 'Stopped (Deallocated)' : 'Running';
+        costNote = isSleeping
+            ? 'Compute allocation deallocated. Compute pricing is paused.'
+            : 'Compute allocation restarted. VM is running.';
     } else {
         appTypeLabel = 'Container App';
         stateLabel = isSleeping ? 'Scaled Down (Sleep Mode)' : 'Scaled Up (Active)';
@@ -217,11 +223,69 @@ async function checkSchedules() {
                         console.log(`[MOCK SWA SleepScheduler] SWA '${app.name}' transitioned to state: ${targetState} (Traffic routing simulated/Mocked)`);
                         await notifyScaleTransition(orgId, app.name, targetState, 0, 0, 'frontend');
                     }
+                } else if (app.app_type === 'vm') {
+                    if (shouldBeSleep && rules.autoStopVm) {
+                        await setVirtualMachinePowerState(orgId, app.name, 'stop');
+                    } else {
+                        await setVirtualMachinePowerState(orgId, app.name, 'start');
+                    }
                 }
             }
         }
     } catch (err) {
         console.error('[SleepScheduler] Worker execution error:', err.message);
+    }
+}
+
+// Helper to control VM power state inside sleep schedules
+async function setVirtualMachinePowerState(orgId, vmName, action) {
+    const isStopping = action === 'stop';
+    const targetState = isStopping ? 'sleep' : 'active';
+    const cacheKey = `${orgId}:${vmName}`;
+    const prevState = scaleStateCache.get(cacheKey);
+
+    // Apply self-preservation block
+    const nameLower = vmName.toLowerCase();
+    if (isStopping && (nameLower.includes('evaops') || nameLower.includes('devops-backend') || nameLower.includes('devops-frontend'))) {
+        console.warn(`[SleepScheduler] Skipping stop action for critical platform VM: ${vmName}`);
+        return;
+    }
+
+    try {
+        const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [orgId]);
+        const subId = orgs[0]?.azure_subscription_id || SUBSCRIPTION_ID;
+        const rg = orgs[0]?.azure_resource_group || RESOURCE_GROUP;
+
+        if (!process.env.AZURE_CLIENT_ID) {
+            console.log(`[MOCK SleepScheduler] VM '${vmName}' power status changed to: ${action === 'stop' ? 'Stopped (Deallocated)' : 'Running'} (Dry run/Dev mode)`);
+            if (prevState !== targetState) {
+                scaleStateCache.set(cacheKey, targetState);
+                await notifyScaleTransition(orgId, vmName, targetState, 0, 0, 'vm');
+                await db.query('UPDATE applications SET status = ? WHERE organization_id = ? AND name = ?', [action === 'stop' ? 'stopped' : 'running', orgId, vmName]);
+            }
+            return;
+        }
+
+        console.log(`[SleepScheduler] Connecting to Azure VM: ${vmName} to perform action: ${action}...`);
+        const credential = await getAzureCredential(orgId);
+        const tokenRes = await credential.getToken("https://management.azure.com/.default");
+        const token = tokenRes.token;
+
+        const azureAction = action === 'stop' ? 'deallocate' : 'start';
+        const url = `https://management.azure.com/subscriptions/${subId}/resourceGroups/${rg}/providers/Microsoft.Compute/virtualMachines/${vmName}/${azureAction}?api-version=2023-09-01`;
+
+        await axios.post(url, {}, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        console.log(`[SleepScheduler] Successfully performed action '${action}' on VM '${vmName}'`);
+
+        if (prevState !== targetState) {
+            scaleStateCache.set(cacheKey, targetState);
+            await notifyScaleTransition(orgId, vmName, targetState, 0, 0, 'vm');
+            await db.query('UPDATE applications SET status = ? WHERE organization_id = ? AND name = ?', [action === 'stop' ? 'stopped' : 'running', orgId, vmName]);
+        }
+    } catch (err) {
+        console.error(`[SleepScheduler] Failed to adjust VM power state for ${vmName}:`, err.message);
     }
 }
 
