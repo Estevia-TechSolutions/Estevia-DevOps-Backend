@@ -173,14 +173,24 @@ const appController = {
                         console.warn(`[AppController] Failed to fetch instance view for VM ${vm.name}:`, err.message);
                     }
 
+                    let repositoryUrl = '';
+                    let hostname = '';
+                    const nameLower = vm.name.toLowerCase();
+                    if (nameLower.includes('ml')) {
+                        repositoryUrl = `https://github.com/${githubOwner}/estevia-ml-setup`;
+                        hostname = `ml.${defaultDomain}`;
+                    } else {
+                        hostname = `${vm.name}.${defaultDomain}`;
+                    }
+
                     apps.push({
                         name: vm.name,
                         type: 'vm',
                         location: vm.location,
-                        hostname: '',
+                        hostname: hostname,
                         resourceId: vm.id,
                         status: status,
-                        repositoryUrl: ''
+                        repositoryUrl: repositoryUrl
                     });
                 }
             } catch (err) {
@@ -190,10 +200,10 @@ const appController = {
                         name: 'estevia-ml-vm-dev',
                         type: 'vm',
                         location: 'eastus2',
-                        hostname: '',
+                        hostname: `ml.${defaultDomain}`,
                         resourceId: `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/virtualMachines/estevia-ml-vm-dev`,
                         status: 'running',
-                        repositoryUrl: ''
+                        repositoryUrl: `https://github.com/${githubOwner}/estevia-ml-setup`
                     });
                 }
             }
@@ -320,6 +330,14 @@ const appController = {
                         subdomain: matchingCname.name,
                         domain: defaultDomain,
                         fqdn: `${matchingCname.name}.${defaultDomain}`,
+                        mappedAt: new Date()
+                    };
+                }
+                if (!matchedDns.fqdn && app.type === 'vm' && app.hostname) {
+                    matchedDns = {
+                        subdomain: app.hostname.split('.')[0],
+                        domain: defaultDomain,
+                        fqdn: app.hostname,
                         mappedAt: new Date()
                     };
                 }
@@ -1968,8 +1986,8 @@ const appController = {
 
             // Self-preservation check
             const nameLower = name.toLowerCase();
-            if (action === 'stop' && (nameLower.includes('evaops') || nameLower.includes('devops-backend') || nameLower.includes('devops-frontend'))) {
-                return res.status(400).json({ message: 'Action "stop" is not allowed on critical EvaOps platform infrastructure (self-preservation rule).' });
+            if (nameLower.includes('evaops') || nameLower.includes('devops-backend') || nameLower.includes('devops-frontend')) {
+                return res.status(400).json({ message: `Action "${action}" is not allowed on critical EvaOps platform infrastructure (self-preservation rule).` });
             }
 
             // Fetch app from database
