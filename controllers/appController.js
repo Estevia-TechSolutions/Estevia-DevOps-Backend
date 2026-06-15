@@ -42,26 +42,37 @@ const appController = {
         return rows[0];
     },
     /**
-     * Resolve target branch git ref based on the app's name,
-     * cross-referencing against the repo's branches list to ensure exact match.
-     */
     _resolveBranchFromAppName(name, availableBranches = []) {
         const n = name.toLowerCase();
-        let targetSimpleName = 'main';
-        if (n.includes('-dev') || n.endsWith('-dev') || n.includes('-dev-')) targetSimpleName = 'dev';
-        else if (n.includes('-qa') || n.endsWith('-qa') || n.includes('-qa-')) targetSimpleName = 'qa';
-        else if (n.includes('-prod') || n.endsWith('-prod') || n.includes('-prod-')) targetSimpleName = 'main';
         
-        // Find if any branch matches the target simple name
-        const match = availableBranches.find(b => {
-            const bName = b.name.toLowerCase();
-            return bName === targetSimpleName || 
-                   (targetSimpleName === 'main' && bName === 'master') ||
-                   (targetSimpleName === 'dev' && bName === 'development');
-        });
+        let envType = 'prod';
+        if (n.includes('-dev') || n.endsWith('-dev') || n.includes('-dev-')) {
+            envType = 'dev';
+        } else if (n.includes('-qa') || n.endsWith('-qa') || n.includes('-qa-')) {
+            envType = 'qa';
+        }
         
-        const branchName = match ? match.name : targetSimpleName;
-        return `refs/heads/${branchName}`;
+        const candidates = {
+            dev: ['dev', 'development', 'dev-main', 'dev-master'],
+            qa: ['qa', 'test', 'testing', 'staging'],
+            prod: ['main', 'master', 'prod', 'production', 'release']
+        };
+        
+        const candidateList = candidates[envType];
+        
+        const matchedCandidate = candidateList.find(cand => 
+            availableBranches.some(b => b.name.toLowerCase() === cand)
+        );
+        
+        let resolvedBranchName;
+        if (matchedCandidate) {
+            resolvedBranchName = availableBranches.find(b => b.name.toLowerCase() === matchedCandidate).name;
+        } else {
+            const defaultBranch = availableBranches.find(b => b.default || b.isDefault);
+            resolvedBranchName = defaultBranch ? defaultBranch.name : candidateList[0];
+        }
+        
+        return `refs/heads/${resolvedBranchName}`;
     },
     /**
      * Resolve dynamic DB host based on server name
