@@ -418,7 +418,7 @@ const appController = {
                         const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
                         
                         const resolvedBranch = appController._resolveBranchFromAppName(app.name, app.branches || []);
-                        const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&api-version=7.1`;
+                        const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&$top=1&api-version=7.1`;
                         
                         console.log(`[AppController] Fetching runs for pipeline ${matchedPipelineId} branch ${resolvedBranch} from ${buildsUrl}`);
                         const runRes = await axios.get(buildsUrl, {
@@ -2005,6 +2005,62 @@ const appController = {
                 finishTime: latestRun.finishTime || null,
                 stages: []
             };
+
+            // Also fetch timeline to populate Stage -> Job -> Task hierarchy
+            try {
+                const timelineUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds/${latestRun.id}/timeline?api-version=7.1`;
+                const tlRes = await axios.get(timelineUrl, {
+                    headers: { 'Authorization': authHeader, 'Accept': 'application/json' },
+                    timeout: 6000
+                });
+                if (tlRes.data && Array.isArray(tlRes.data.records)) {
+                    const allRecords = tlRes.data.records;
+                    const stages = allRecords.filter(r => r.type === 'Stage').sort((a, b) => (a.order || 0) - (b.order || 0));
+                    const jobs = allRecords.filter(r => r.type === 'Job');
+                    const phases = allRecords.filter(r => r.type === 'Phase');
+                    pipelineRun.stages = stages.map(stage => {
+                        const stageJobs = jobs.filter(job => {
+                            if (job.parentId === stage.id) return true;
+                            const parentPhase = phases.find(p => p.id === job.parentId);
+                            return parentPhase && parentPhase.parentId === stage.id;
+                        }).sort((a, b) => (a.order || 0) - (b.order || 0))
+                          .map(j => ({
+                            id: j.id,
+                            name: j.name,
+                            displayName: j.displayName || j.name,
+                            state: j.state,
+                            result: j.result,
+                            startTime: j.startTime || null,
+                            finishTime: j.finishTime || null,
+                            steps: allRecords
+                                .filter(r => r.type === 'Task' && r.parentId === j.id)
+                                .sort((a, b) => (a.order || 0) - (b.order || 0))
+                                .map(t => ({
+                                    id: t.id,
+                                    name: t.name,
+                                    displayName: t.displayName || t.name,
+                                    state: t.state,
+                                    result: t.result,
+                                    startTime: t.startTime || null,
+                                    finishTime: t.finishTime || null,
+                                    logId: t.log ? t.log.id : null
+                                }))
+                        }));
+                        return {
+                            id: stage.id,
+                            name: stage.name,
+                            displayName: stage.displayName || stage.name,
+                            state: stage.state,
+                            result: stage.result,
+                            startTime: stage.startTime || null,
+                            finishTime: stage.finishTime || null,
+                            jobs: stageJobs
+                        };
+                    });
+                }
+            } catch (tlErr) {
+                console.warn(`[AppController] getLatestPipelineBuild: Failed to fetch timeline for build ${latestRun.id}:`, tlErr.message);
+            }
 
             res.json({ success: true, pipelineRun });
         } catch (error) {
