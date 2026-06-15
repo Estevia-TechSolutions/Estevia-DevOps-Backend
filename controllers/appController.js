@@ -474,7 +474,8 @@ const appController = {
                                                        state: t.state,
                                                        result: t.result,
                                                        startTime: t.startTime || null,
-                                                       finishTime: t.finishTime || null
+                                                       finishTime: t.finishTime || null,
+                                                       logId: t.log ? t.log.id : null
                                                    }));
                                                return {
                                                    id: j.id,
@@ -1741,6 +1742,49 @@ const appController = {
             }
         });
         return response.data;
+    },
+
+    /**
+     * Get live console logs for a pipeline build task step from Azure DevOps.
+     */
+    getPipelineLogs: async (req, res) => {
+        try {
+            const { organizationId = 'estevia', buildId, logId } = req.query;
+
+            if (!buildId || !logId) {
+                return res.status(400).json({ message: 'Missing parameters (buildId, logId).' });
+            }
+
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
+            const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
+
+            const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
+            if (!devopsSecrets || !devopsSecrets.pat) {
+                return res.status(400).json({ message: 'Azure DevOps integration credentials not found for organization.' });
+            }
+
+            const logUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds/${buildId}/logs/${logId}?api-version=7.1`;
+            console.log(`[AppController] Fetching task logs from: ${logUrl}`);
+
+            const response = await axios.get(logUrl, {
+                headers: {
+                    'Authorization': `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`,
+                    'Accept': 'text/plain, */*'
+                },
+                responseType: 'text',
+                timeout: 10000
+            });
+
+            res.json({ success: true, logs: response.data });
+        } catch (error) {
+            console.error('[AppController] getPipelineLogs failed:', error.message);
+            res.status(500).json({ 
+                success: false, 
+                message: 'Failed to fetch build task logs from Azure DevOps.', 
+                error: error.message 
+            });
+        }
     },
 
     /**

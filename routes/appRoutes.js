@@ -24,6 +24,9 @@ router.get('/default-yml', appController.getDefaultYml);
 // Create CI/CD pipeline in Azure DevOps
 router.post('/pipeline', restrictTo('owner', 'admin', 'contributor'), appController.createPipeline);
 
+// Get live build task logs from Azure DevOps
+router.get('/pipeline/logs', appController.getPipelineLogs);
+
 // Commit a default azure-pipelines.yml to GitHub repo, then register pipeline
 router.post('/create-pipeline-yml', restrictTo('owner', 'admin', 'contributor'), appController.createPipelineYml);
 
