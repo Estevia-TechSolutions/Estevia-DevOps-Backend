@@ -30,6 +30,9 @@ router.get('/pipeline/logs', appController.getPipelineLogs);
 // Get live build run state and timeline breakdown from Azure DevOps
 router.get('/pipeline/timeline', appController.getPipelineTimeline);
 
+// Get the most recent build run for a given pipeline definition ID (for new-build discovery)
+router.get('/pipeline/latest', appController.getLatestPipelineBuild);
+
 // Commit a default azure-pipelines.yml to GitHub repo, then register pipeline
 router.post('/create-pipeline-yml', restrictTo('owner', 'admin', 'contributor'), appController.createPipelineYml);
 

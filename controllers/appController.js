@@ -1948,6 +1948,65 @@ const appController = {
     },
 
     /**
+     * Get the latest build run for a given pipeline definition ID.
+     * Used by the frontend to discover newly triggered builds without waiting
+     * for the full 5-minute resource scan to complete.
+     */
+    getLatestPipelineBuild: async (req, res) => {
+        try {
+            const { organizationId = 'estevia', pipelineId } = req.query;
+
+            if (!pipelineId) {
+                return res.status(400).json({ success: false, message: 'Missing parameter (pipelineId).' });
+            }
+
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
+            const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
+
+            const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
+            if (!devopsSecrets || !devopsSecrets.pat) {
+                return res.status(400).json({ success: false, message: 'Azure DevOps credentials not found.' });
+            }
+
+            const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
+
+            // Fetch latest 1 build for this pipeline definition
+            const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&$top=1&api-version=7.1`;
+            const buildsRes = await axios.get(buildsUrl, {
+                headers: { 'Authorization': authHeader, 'Accept': 'application/json' },
+                timeout: 6000
+            });
+
+            const builds = buildsRes.data?.value || [];
+            if (builds.length === 0) {
+                return res.json({ success: true, pipelineRun: null });
+            }
+
+            const latestRun = builds[0];
+            const pipelineRun = {
+                id: latestRun.id,
+                name: latestRun.buildNumber,
+                state: latestRun.status,
+                result: latestRun.result || null,
+                webUrl: latestRun._links?.web?.href || '',
+                startTime: latestRun.startTime || null,
+                finishTime: latestRun.finishTime || null,
+                stages: []
+            };
+
+            res.json({ success: true, pipelineRun });
+        } catch (error) {
+            console.error('[AppController] getLatestPipelineBuild failed:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to fetch latest pipeline build.',
+                error: error.message
+            });
+        }
+    },
+
+    /**
      * Create CI/CD pipeline in Azure DevOps using decrypted credentials.
      * First checks if azure-pipelines.yml exists in the GitHub repo.
      * If missing, returns a YML_MISSING code so the frontend can prompt to create it.
