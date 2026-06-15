@@ -125,6 +125,97 @@ const credentialController = {
             console.error(`[CredentialController] Internal decryption failed for ${provider}:`, error);
             throw error;
         }
+    },
+
+    /**
+     * Decrypt and test connection health of credentials for a given provider
+     */
+    validateCredentials: async (req, res) => {
+        try {
+            const { organizationId, provider } = req.body;
+            if (!organizationId || !provider) {
+                return res.status(400).json({ message: 'Missing organizationId or provider parameter.' });
+            }
+
+            const secrets = await credentialController.getDecryptedCredentialsInternal(organizationId, provider);
+            if (!secrets) {
+                return res.status(404).json({ message: `No saved credentials found for "${provider}".` });
+            }
+
+            const axios = require('axios');
+
+            if (provider === 'github') {
+                const token = secrets.token || secrets.pat || secrets.accessToken || Object.values(secrets)[0];
+                if (!token) return res.status(400).json({ message: 'Invalid GitHub credentials structure.' });
+                
+                try {
+                    const response = await axios.get('https://api.github.com/user', {
+                        headers: {
+                            'Authorization': `token ${token}`,
+                            'User-Agent': 'EvaOps-DevOps-Platform'
+                        }
+                    });
+                    return res.json({ success: true, message: `GitHub connection healthy. Connected as user: ${response.data.login}` });
+                } catch (err) {
+                    const msg = err.response?.data?.message || err.message;
+                    return res.status(400).json({ message: `GitHub authentication failed: ${msg}` });
+                }
+            } 
+            
+            else if (provider === 'azure_devops') {
+                const pat = secrets.pat || Object.values(secrets)[0];
+                if (!pat) return res.status(400).json({ message: 'Invalid Azure DevOps credentials structure.' });
+                
+                // Fetch DevOps Org URL from organization settings
+                const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [organizationId]);
+                if (orgs.length === 0) {
+                    return res.status(404).json({ message: `Organization "${organizationId}" not found.` });
+                }
+                const orgUrl = orgs[0].azure_devops_org_url || 'https://dev.azure.com/esteviatech';
+                const cleanOrgUrl = orgUrl.replace(/\/$/, '');
+                
+                const tokenBase64 = Buffer.from(`:${pat}`).toString('base64');
+                try {
+                    const response = await axios.get(`${cleanOrgUrl}/_apis/projects?api-version=6.0`, {
+                        headers: {
+                            'Authorization': `Basic ${tokenBase64}`,
+                            'User-Agent': 'EvaOps-DevOps-Platform'
+                        }
+                    });
+                    const count = response.data.count || 0;
+                    return res.json({ success: true, message: `Azure DevOps connection healthy. Discovered ${count} projects.` });
+                } catch (err) {
+                    const msg = err.response?.data?.message || err.message;
+                    return res.status(400).json({ message: `Azure DevOps PAT invalid: ${msg}` });
+                }
+            }
+
+            else if (provider === 'godaddy') {
+                const apiKey = secrets.apiKey;
+                const apiSecret = secrets.apiSecret;
+                if (!apiKey || !apiSecret) {
+                    return res.status(400).json({ message: 'Invalid GoDaddy credentials structure.' });
+                }
+
+                try {
+                    const response = await axios.get('https://api.godaddy.com/v1/domains/suggest?query=estevia', {
+                        headers: {
+                            'Authorization': `sso-key ${apiKey}:${apiSecret}`,
+                            'User-Agent': 'EvaOps-DevOps-Platform'
+                        }
+                    });
+                    return res.json({ success: true, message: 'GoDaddy API connection healthy. Keys authenticated successfully.' });
+                } catch (err) {
+                    const msg = err.response?.data?.message || err.message;
+                    return res.status(400).json({ message: `GoDaddy keys invalid: ${msg}` });
+                }
+            }
+
+            return res.status(400).json({ message: `Provider "${provider}" validation not supported.` });
+        } catch (error) {
+            console.error('[CredentialController] Validation failed:', error);
+            res.status(500).json({ message: 'Validation failed.', error: error.message });
+        }
     }
 };
 

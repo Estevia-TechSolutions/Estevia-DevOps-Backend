@@ -9,6 +9,9 @@ router.post('/', restrictTo('owner', 'admin'), credentialController.saveCredenti
 // Decrypt credentials
 router.get('/decrypt', restrictTo('owner', 'admin'), credentialController.getDecryptedCredentials);
 
+// Test/validate credentials health
+router.post('/validate', restrictTo('owner', 'admin'), credentialController.validateCredentials);
+
 // List credentials (metadata only)
 router.get('/', restrictTo('owner', 'admin'), credentialController.getCredentialsList);
 
