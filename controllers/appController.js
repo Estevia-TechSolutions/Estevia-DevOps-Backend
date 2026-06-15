@@ -2990,7 +2990,7 @@ const appController = {
                     id: r.id || rName,
                     name: rName,
                     type: type,
-                    status: 'active',
+                    status: matchedApp?.status || 'active',
                     resourceCost: appCost,
                     dnsCost: dnsCost,
                     totalCost: appCost + dnsCost,
