@@ -1965,7 +1965,7 @@ const appController = {
      */
     getLatestPipelineBuild: async (req, res) => {
         try {
-            const { organizationId = 'estevia', pipelineId } = req.query;
+            const { organizationId = 'estevia', pipelineId, branchName } = req.query;
 
             if (!pipelineId) {
                 return res.status(400).json({ success: false, message: 'Missing parameter (pipelineId).' });
@@ -1982,8 +1982,9 @@ const appController = {
 
             const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
 
-            // Fetch latest 1 build for this pipeline definition
-            const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&$top=1&api-version=7.1`;
+            // Fetch latest 1 build for this pipeline definition, optionally filtered by branchName
+            const branchFilter = branchName ? `&branchName=${encodeURIComponent(branchName)}` : '';
+            const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&$top=1${branchFilter}&api-version=7.1`;
             const buildsRes = await axios.get(buildsUrl, {
                 headers: { 'Authorization': authHeader, 'Accept': 'application/json' },
                 timeout: 6000
