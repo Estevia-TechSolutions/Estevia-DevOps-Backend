@@ -6,6 +6,11 @@ const { ContainerAppsAPIClient } = require('@azure/arm-appcontainers');
 const { ResourceManagementClient } = require('@azure/arm-resources');
 const axios = require('axios');
 
+function getUserAgent(orgId) {
+    const cleanId = (typeof orgId === 'string' ? orgId : (orgId?.id || orgId?.organizationId)) || 'global';
+    return `EvaOps-DevOps-Hub/${cleanId}`;
+}
+
 // Default Fallbacks
 const SUBSCRIPTION_ID = 'a812e8e3-34f9-4773-82ee-6398869533b0';
 const RESOURCE_GROUP = 'Estevia-Prod-RG';
@@ -79,9 +84,20 @@ const appController = {
     /**
      * Resolve dynamic DB host based on server name
      */
-    _resolveDbHost(serverName) {
+    _resolveDbHost(serverName, orgSettings = {}) {
         if (!serverName) return process.env.DB_HOST || '10.0.0.4';
         const sName = serverName.toLowerCase();
+
+        // 1. Check custom organization settings first
+        if (sName.includes('dev') && orgSettings.dev_db_host) {
+            return orgSettings.dev_db_host;
+        }
+        if (sName.includes('qa') && orgSettings.qa_db_host) {
+            return orgSettings.qa_db_host;
+        }
+        if ((sName.includes('prod') || sName.includes('db')) && orgSettings.prod_db_host) {
+            return orgSettings.prod_db_host;
+        }
 
         // If configured to connect directly (e.g. in deployment)
         if (process.env.DB_CONNECT_DIRECT === 'true') {
@@ -314,7 +330,7 @@ const appController = {
                 for (const app of apps) {
                     if (app.repositoryUrl && !repoBranchesMap.has(app.repositoryUrl)) {
                         const githubRepo = app.repositoryUrl.replace('https://github.com/', '').replace(/\/$/, '');
-                        const branchList = await appController._getGithubBranchesInternal(githubToken, githubRepo);
+                        const branchList = await appController._getGithubBranchesInternal(githubToken, githubRepo, organizationId);
                         repoBranchesMap.set(app.repositoryUrl, branchList);
                     }
                 }
@@ -681,8 +697,12 @@ const appController = {
                 const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
                 console.log(`[AppController] Provisioning Container App: ${name} in ${targetLocation} under RG: ${targetResourceGroup}...`);
                 
-                // If a managed environment resource ID is not supplied, build it
-                const selectedEnvId = managedEnvironment || `/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.App/managedEnvironments/${(name.toLowerCase().includes('prod') || name.toLowerCase().includes('production')) ? 'estevia-prod-env' : 'estevia-dev-env'}`;
+                // If a managed environment resource ID is not supplied, build or resolve it
+                const devEnv = orgSettings.dev_managed_env_id || `/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.App/managedEnvironments/${organizationId}-dev-env`;
+                const prodEnv = orgSettings.prod_managed_env_id || `/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.App/managedEnvironments/${organizationId}-prod-env`;
+                const defaultEnv = (name.toLowerCase().includes('prod') || name.toLowerCase().includes('production')) ? prodEnv : devEnv;
+                const selectedEnvId = managedEnvironment || defaultEnv;
+                
                 const targetPortVal = parseInt(req.body.targetPort || 5005, 10);
 
                 const containerAppEnvelope = {
@@ -931,7 +951,7 @@ const appController = {
                         headers: {
                             'Authorization': `token ${githubToken}`,
                             'Accept': 'application/vnd.github.v3+json',
-                            'User-Agent': 'DevOps-Hub'
+                            'User-Agent': getUserAgent(organizationId)
                         }
                     });
                     if (dfRes.data && dfRes.data.sha) {
@@ -951,7 +971,7 @@ const appController = {
                 }
             }
 
-            const ymlStatus = await appController._checkYmlExists(githubToken, githubRepo, branch || 'main');
+            const ymlStatus = await appController._checkYmlExists(githubToken, githubRepo, branch || 'main', organizationId);
             res.json({ exists: ymlStatus.exists, sha: ymlStatus.sha, githubRepo });
         } catch (error) {
             console.error('[AppController] checkYml failed:', error);
@@ -970,14 +990,14 @@ const appController = {
      * Internal helper – check whether azure-pipelines.yml exists in the given GitHub repo
      * Returns { exists: bool, sha: string|null }
      */
-    async _checkYmlExists(githubToken, githubRepo, branch = 'main') {
+    async _checkYmlExists(githubToken, githubRepo, branch = 'main', organizationId) {
         const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/azure-pipelines.yml?ref=${encodeURIComponent(branch)}`;
         try {
             const res = await axios.get(contentsUrl, {
                 headers: {
                     'Authorization': `token ${githubToken}`,
                     'Accept': 'application/vnd.github.v3+json',
-                    'User-Agent': 'Estevia-DevOps-Hub'
+                    'User-Agent': getUserAgent(organizationId)
                 }
             });
             return { exists: true, sha: res.data.sha || null };
@@ -1032,7 +1052,7 @@ const appController = {
                     headers: {
                         'Authorization': `token ${githubToken}`,
                         'Accept': 'application/vnd.github.v3+json',
-                        'User-Agent': 'Estevia-DevOps-Hub'
+                        'User-Agent': getUserAgent(orgSettings)
                     }
                 });
                 if (Array.isArray(branchesRes.data)) {
@@ -1049,7 +1069,7 @@ const appController = {
                     headers: {
                         'Authorization': `token ${githubToken}`,
                         'Accept': 'application/vnd.github.v3+json',
-                        'User-Agent': 'Estevia-DevOps-Hub'
+                        'User-Agent': getUserAgent(orgSettings)
                     }
                 });
 
@@ -1119,7 +1139,7 @@ const appController = {
                     headers: {
                         'Authorization': `token ${githubToken}`,
                         'Accept': 'application/vnd.github.v3+json',
-                        'User-Agent': 'Estevia-DevOps-Hub'
+                        'User-Agent': getUserAgent(orgSettings)
                     }
                 });
                 if (pjRes.data && pjRes.data.content) {
@@ -1538,7 +1558,7 @@ const appController = {
             headers: {
                 'Authorization': `token ${githubToken}`,
                 'Accept': 'application/vnd.github.v3+json',
-                'User-Agent': 'DevOps-Hub',
+                'User-Agent': getUserAgent(orgSettings),
                 'Content-Type': 'application/json'
             }
         });
@@ -1548,14 +1568,14 @@ const appController = {
     /**
      * Internal helper – fetch branches for a repository from GitHub
      */
-    async _getGithubBranchesInternal(githubToken, githubRepo) {
+    async _getGithubBranchesInternal(githubToken, githubRepo, organizationId) {
         try {
             console.log(`[AppController] Fetching branches internally for: ${githubRepo}`);
             const response = await axios.get(`https://api.github.com/repos/${githubRepo}/branches?per_page=100`, {
                 headers: {
                     'Authorization': `token ${githubToken}`,
                     'Accept': 'application/vnd.github.v3+json',
-                    'User-Agent': 'DevOps-Hub'
+                    'User-Agent': getUserAgent(organizationId)
                 }
             });
             return response.data.map(b => ({
@@ -2147,7 +2167,7 @@ const appController = {
                             headers: {
                                 'Authorization': `token ${githubToken}`,
                                 'Accept': 'application/vnd.github.v3+json',
-                                'User-Agent': 'DevOps-Hub'
+                                'User-Agent': getUserAgent(organizationId)
                             }
                         });
                         if (dfRes.data && dfRes.data.sha) {
@@ -2167,7 +2187,7 @@ const appController = {
                     }
                 }
 
-                const ymlStatus = await appController._checkYmlExists(githubToken, githubRepo, branch || 'main');
+                const ymlStatus = await appController._checkYmlExists(githubToken, githubRepo, branch || 'main', organizationId);
                 if (!ymlStatus.exists) {
                     console.log(`[AppController] azure-pipelines.yml NOT found in ${githubRepo}. Returning YML_MISSING.`);
                     return res.status(200).json({
@@ -2259,7 +2279,7 @@ const appController = {
             }
 
             // 2. Check if file already exists (to get sha for update)
-            const ymlStatus = await appController._checkYmlExists(githubToken, githubRepo, branch || 'main');
+            const ymlStatus = await appController._checkYmlExists(githubToken, githubRepo, branch || 'main', organizationId);
 
             // Fetch organization dynamic settings
             const orgSettings = await appController._getOrgSettings(organizationId);
@@ -2693,7 +2713,13 @@ const appController = {
                 azureDevopsServiceConnection,
                 dockerRegistryServiceConnection,
                 teamsWebhookUrl,
-                logAnalyticsWorkspaceId
+                logAnalyticsWorkspaceId,
+                azureKeyVaultUrl,
+                devDbHost,
+                qaDbHost,
+                prodDbHost,
+                devManagedEnvId,
+                prodManagedEnvId
             } = req.body;
 
             if (!organizationId) {
@@ -2748,7 +2774,13 @@ const appController = {
                     azure_devops_service_connection = ?,
                     docker_registry_service_connection = ?,
                     teams_webhook_url = ?,
-                    log_analytics_workspace_id = ?
+                    log_analytics_workspace_id = ?,
+                    azure_key_vault_url = ?,
+                    dev_db_host = ?,
+                    qa_db_host = ?,
+                    prod_db_host = ?,
+                    dev_managed_env_id = ?,
+                    prod_managed_env_id = ?
                 WHERE id = ?
             `, [
                 azureSubscriptionId || null,
@@ -2763,6 +2795,12 @@ const appController = {
                 dockerRegistryServiceConnection || null,
                 teamsWebhookUrl !== undefined ? (teamsWebhookUrl || null) : null,
                 resolvedWorkspaceId,
+                azureKeyVaultUrl || null,
+                devDbHost || null,
+                qaDbHost || null,
+                prodDbHost || null,
+                devManagedEnvId || null,
+                prodManagedEnvId || null,
                 organizationId
             ]);
 
@@ -2828,6 +2866,106 @@ const appController = {
             console.error('[AppController] discoverWorkspace failed:', error);
             res.status(500).json({ success: false, message: error.message });
         }
+    },
+
+    /**
+     * GET /api/apps/discover-azure-resources
+     */
+    discoverAzureResources: async (req, res) => {
+        try {
+            const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const subscriptionId = orgSettings.azure_subscription_id;
+            const resourceGroup = orgSettings.azure_resource_group;
+
+            if (!subscriptionId || !resourceGroup) {
+                return res.status(400).json({ success: false, message: 'Azure Subscription ID and Resource Group must be configured first under the Azure tab.' });
+            }
+
+            const credential = await getAzureCredential(organizationId);
+            const discovered = await appController._discoverAzureResourcesInternal(subscriptionId, resourceGroup, credential);
+
+            res.json({
+                success: true,
+                message: 'Azure resources discovered successfully.',
+                resources: discovered
+            });
+        } catch (error) {
+            console.error('[AppController] discoverAzureResources failed:', error);
+            res.status(500).json({ success: false, message: error.message });
+        }
+    },
+
+    /**
+     * Helper to discover MySQL hosts and Container App environments in Azure
+     */
+    async _discoverAzureResourcesInternal(subscriptionId, resourceGroup, credential) {
+        let devDbHost = null;
+        let qaDbHost = null;
+        let prodDbHost = null;
+        let devManagedEnvId = null;
+        let prodManagedEnvId = null;
+
+        // 1. Discover MySQL Flexible Servers
+        try {
+            const tokenRes = await credential.getToken("https://management.azure.com/.default");
+            const token = tokenRes.token;
+            const url = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.DBforMySQL/flexibleServers?api-version=2021-05-01`;
+            const response = await axios.get(url, {
+                headers: { 
+                    'Authorization': `Bearer ${token}`,
+                    'User-Agent': getUserAgent('discovery')
+                }
+            });
+            const servers = response.data?.value || [];
+            for (const server of servers) {
+                const name = server.name.toLowerCase();
+                const host = server.properties?.fullyQualifiedDomainName || `${server.name}.mysql.database.azure.com`;
+                if (name.includes('dev')) {
+                    devDbHost = host;
+                } else if (name.includes('qa') || name.includes('test') || name.includes('stage') || name.includes('staging')) {
+                    qaDbHost = host;
+                } else if (name.includes('prod') || name.includes('production')) {
+                    prodDbHost = host;
+                } else {
+                    // Fallback heuristics
+                    if (!devDbHost) devDbHost = host;
+                    else if (!qaDbHost) qaDbHost = host;
+                    else if (!prodDbHost) prodDbHost = host;
+                }
+            }
+        } catch (dbErr) {
+            console.warn('[AppController] Discovery MySQL Flexible Servers failed:', dbErr.message);
+        }
+
+        // 2. Discover Container App Managed Environments
+        try {
+            const { ContainerAppsAPIClient } = require('@azure/arm-appcontainers');
+            const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
+            for await (const env of containerClient.managedEnvironments.listByResourceGroup(resourceGroup)) {
+                const name = env.name.toLowerCase();
+                const envId = env.id;
+                if (name.includes('dev')) {
+                    devManagedEnvId = envId;
+                } else if (name.includes('prod') || name.includes('production')) {
+                    prodManagedEnvId = envId;
+                } else {
+                    // Fallback heuristics
+                    if (!devManagedEnvId) devManagedEnvId = envId;
+                    else if (!prodManagedEnvId) prodManagedEnvId = envId;
+                }
+            }
+        } catch (envErr) {
+            console.warn('[AppController] Discovery Container App Managed Environments failed:', envErr.message);
+        }
+
+        return {
+            devDbHost,
+            qaDbHost,
+            prodDbHost,
+            devManagedEnvId,
+            prodManagedEnvId
+        };
     },
 
     /**
@@ -2965,7 +3103,7 @@ const appController = {
                     headers: {
                         'Authorization': `token ${githubToken}`,
                         'Accept': 'application/vnd.github.v3+json',
-                        'User-Agent': 'DevOps-Hub'
+                        'User-Agent': getUserAgent(organizationId)
                     }
                 });
                 repos = response.data;
@@ -2975,7 +3113,7 @@ const appController = {
                     headers: {
                         'Authorization': `token ${githubToken}`,
                         'Accept': 'application/vnd.github.v3+json',
-                        'User-Agent': 'DevOps-Hub'
+                        'User-Agent': getUserAgent(organizationId)
                     }
                 });
                 repos = response.data;
@@ -3015,7 +3153,7 @@ const appController = {
                 headers: {
                     'Authorization': `token ${githubToken}`,
                     'Accept': 'application/vnd.github.v3+json',
-                    'User-Agent': 'DevOps-Hub'
+                    'User-Agent': getUserAgent(organizationId)
                 }
             });
             const branches = response.data.map(b => ({
@@ -3053,7 +3191,7 @@ const appController = {
                     headers: {
                         'Authorization': `token ${githubToken}`,
                         'Accept': 'application/vnd.github.v3+json',
-                        'User-Agent': 'Estevia-DevOps-Hub'
+                        'User-Agent': getUserAgent(organizationId)
                     }
                 });
                 
@@ -3528,14 +3666,14 @@ const appController = {
             const formatted = servers.map(s => {
                 const sName = s.name.toLowerCase();
                 let resolvedHost = s.properties?.fullyQualifiedDomainName || `${s.name}.mysql.database.azure.com`;
-                let privateNetwork = false;
+                let privateNetwork = s.properties?.network?.publicNetworkAccess === 'Disabled';
                 
                 if (sName.includes('dev')) {
-                    resolvedHost = 'estevia-dev-db.mysql.database.azure.com';
+                    resolvedHost = orgSettings.dev_db_host || resolvedHost;
                 } else if (sName.includes('qa')) {
-                    resolvedHost = 'estevia-qa-dn.mysql.database.azure.com';
+                    resolvedHost = orgSettings.qa_db_host || resolvedHost;
                 } else if (sName.includes('prod') || sName.includes('db')) {
-                    resolvedHost = 'estevia-prod-db-v2.estevia-prod-db.private.mysql.database.azure.com';
+                    resolvedHost = orgSettings.prod_db_host || resolvedHost;
                     privateNetwork = true;
                 }
 
@@ -3549,7 +3687,7 @@ const appController = {
                     privateNetwork,
                     sku: s.sku?.name || 'Standard_B1ms',
                     tier: s.sku?.tier || 'Burstable',
-                    administratorLogin: s.properties?.administratorLogin || 'estevia',
+                    administratorLogin: s.properties?.administratorLogin || 'admin',
                     password: process.env.DB_PASSWORD || 'Ewco26INCP'
                 };
             });
@@ -3557,9 +3695,56 @@ const appController = {
             res.json({ success: true, servers: formatted });
         } catch (error) {
             console.error('[AppController] getDbServers failed:', error.message);
-            res.json({
-                success: true,
-                servers: [
+            const fallbackServers = [];
+            
+            if (orgSettings.dev_db_host) {
+                fallbackServers.push({
+                    id: 'db-server-dev',
+                    name: orgSettings.dev_db_host.split('.')[0],
+                    location: 'Central US',
+                    version: '8.0.21',
+                    state: 'Ready',
+                    host: orgSettings.dev_db_host,
+                    privateNetwork: false,
+                    sku: 'Standard_B1ms',
+                    tier: 'Burstable',
+                    administratorLogin: 'admin',
+                    password: process.env.DB_PASSWORD || 'Ewco26INCP'
+                });
+            }
+            if (orgSettings.qa_db_host) {
+                fallbackServers.push({
+                    id: 'db-server-qa',
+                    name: orgSettings.qa_db_host.split('.')[0],
+                    location: 'Central US',
+                    version: '8.0.21',
+                    state: 'Ready',
+                    host: orgSettings.qa_db_host,
+                    privateNetwork: false,
+                    sku: 'Standard_B1ms',
+                    tier: 'Burstable',
+                    administratorLogin: 'admin',
+                    password: process.env.DB_PASSWORD || 'Ewco26INCP'
+                });
+            }
+            if (orgSettings.prod_db_host) {
+                fallbackServers.push({
+                    id: 'db-server-prod',
+                    name: orgSettings.prod_db_host.split('.')[0],
+                    location: 'Central US',
+                    version: '8.0.21',
+                    state: 'Ready',
+                    host: orgSettings.prod_db_host,
+                    privateNetwork: true,
+                    sku: 'Standard_D2ads_v5',
+                    tier: 'GeneralPurpose',
+                    administratorLogin: 'admin',
+                    password: process.env.DB_PASSWORD || 'Ewco26INCP'
+                });
+            }
+
+            if (fallbackServers.length === 0) {
+                fallbackServers.push(
                     {
                         id: 'db-server-dev',
                         name: 'estevia-dev-db',
@@ -3599,8 +3784,10 @@ const appController = {
                         administratorLogin: 'estevia',
                         password: process.env.DB_PASSWORD || 'Ewco26INCP'
                     }
-                ]
-            });
+                );
+            }
+
+            res.json({ success: true, servers: fallbackServers });
         }
     },
 
@@ -3609,14 +3796,15 @@ const appController = {
      * Lists databases inside a specific MySQL Flexible Server.
      */
     getDatabases: async (req, res) => {
+        const organizationId = req.query.organizationId || 'estevia';
+        let orgSettings = {};
         try {
             const { serverName } = req.query;
-            const organizationId = req.query.organizationId || 'estevia';
             if (!serverName) {
                 return res.status(400).json({ message: 'Missing serverName parameter.' });
             }
 
-            const orgSettings = await appController._getOrgSettings(organizationId);
+            orgSettings = await appController._getOrgSettings(organizationId);
             const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
             const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
 
@@ -3645,7 +3833,7 @@ const appController = {
             console.warn('[AppController] getDatabases via Azure failed, falling back to direct SQL query:', error.message);
             try {
                 const { serverName } = req.query;
-                const resolvedHost = appController._resolveDbHost(serverName);
+                const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
                 const mysql = require('mysql2/promise');
                 const conn = await mysql.createConnection({
                     host: resolvedHost,
@@ -3729,12 +3917,13 @@ const appController = {
     getDatabaseSchema: async (req, res) => {
         try {
             const { serverName, dbName } = req.query;
+            const organizationId = req.query.organizationId || 'estevia';
             if (!serverName || !dbName) {
                 return res.status(400).json({ message: 'Missing serverName or dbName parameters.' });
             }
 
-            // Query the actual Azure MySQL server via dynamic host connection
-            const resolvedHost = appController._resolveDbHost(serverName);
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
             const conn = await mysql.createConnection({
                 host: resolvedHost,
@@ -3792,11 +3981,13 @@ const appController = {
     executeQuery: async (req, res) => {
         try {
             const { serverName, dbName, query } = req.body;
+            const organizationId = req.body.organizationId || req.user?.organization_id || 'estevia';
             if (!serverName || !dbName || !query) {
                 return res.status(400).json({ message: 'Missing serverName, dbName, or query parameters.' });
             }
 
-            const resolvedHost = appController._resolveDbHost(serverName);
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
             
             const conn = await mysql.createConnection({
@@ -4060,7 +4251,7 @@ const appController = {
                     headers: {
                         'Authorization': `token ${githubToken}`,
                         'Accept': 'application/vnd.github.v3+json',
-                        'User-Agent': 'DevOps-Hub'
+                        'User-Agent': getUserAgent(organizationId)
                     }
                 });
                 if (checkRes.data && checkRes.data.sha) {
@@ -4082,7 +4273,7 @@ const appController = {
                 headers: {
                     'Authorization': `token ${githubToken}`,
                     'Accept': 'application/vnd.github.v3+json',
-                    'User-Agent': 'DevOps-Hub',
+                    'User-Agent': getUserAgent(organizationId),
                     'Content-Type': 'application/json'
                 }
             });
@@ -4120,7 +4311,7 @@ const appController = {
           headers: {
             'Authorization': `token ${githubToken}`,
             'Accept': 'application/vnd.github.v3+json',
-            'User-Agent': 'Estevia-DevOps-Hub'
+            'User-Agent': getUserAgent(organizationId)
           }
         });
         
@@ -4169,7 +4360,7 @@ const appController = {
           headers: {
             'Authorization': `token ${githubToken}`,
             'Accept': 'application/vnd.github.v3+json',
-            'User-Agent': 'Estevia-DevOps-Hub'
+            'User-Agent': getUserAgent(organizationId)
           }
         });
         if (checkRes.data && checkRes.data.sha) existingSha = checkRes.data.sha;
@@ -4188,7 +4379,7 @@ const appController = {
         headers: {
           'Authorization': `token ${githubToken}`,
           'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'Estevia-DevOps-Hub',
+          'User-Agent': getUserAgent(organizationId),
           'Content-Type': 'application/json'
         }
       });

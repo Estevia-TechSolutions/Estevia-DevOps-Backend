@@ -106,6 +106,30 @@ const orgController = {
                 [subscriptionId, resourceGroup, pipelineVariableGroup, organizationId]
             );
 
+            // Auto-discover infrastructure resources (DB servers & environments)
+            try {
+                const appController = require('./appController');
+                const credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+                const discovered = await appController._discoverAzureResourcesInternal(subscriptionId, resourceGroup, credential);
+                
+                await db.query(
+                    `UPDATE organizations 
+                     SET dev_db_host = ?, qa_db_host = ?, prod_db_host = ?, dev_managed_env_id = ?, prod_managed_env_id = ?
+                     WHERE id = ?`,
+                    [
+                        discovered.devDbHost || null,
+                        discovered.qaDbHost || null,
+                        discovered.prodDbHost || null,
+                        discovered.devManagedEnvId || null,
+                        discovered.prodManagedEnvId || null,
+                        organizationId
+                    ]
+                );
+                console.log(`[OrgController] Onboarding Step 2: Auto-discovered and updated infra settings for organization: ${organizationId}`);
+            } catch (discoveryErr) {
+                console.warn(`[OrgController] Onboarding Step 2: Auto-discovery failed:`, discoveryErr.message);
+            }
+
             res.json({ success: true, message: 'Azure credentials configured successfully.' });
         } catch (error) {
             console.error('[OrgController] setupAzure failed:', error);

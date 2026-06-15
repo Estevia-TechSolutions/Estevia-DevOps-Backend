@@ -59,6 +59,9 @@ router.post('/setup-teams-service-hook', restrictTo('owner', 'admin'), appContro
 // Force discover Log Analytics workspace ID from Azure
 router.post('/discover-workspace', restrictTo('owner', 'admin'), appController.discoverWorkspace);
 
+// Auto-discover Azure databases and managed environments
+router.get('/discover-azure-resources', restrictTo('owner', 'admin'), appController.discoverAzureResources);
+
 // Fetch organization GitHub repos dynamically
 router.get('/github-repos', appController.getGithubRepos);
 

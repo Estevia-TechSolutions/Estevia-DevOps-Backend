@@ -63,6 +63,12 @@ async function main() {
                 teams_webhook_url VARCHAR(500) DEFAULT NULL,
                 teams_webhook_token VARCHAR(64) DEFAULT NULL,
                 log_analytics_workspace_id VARCHAR(100) DEFAULT NULL,
+                azure_key_vault_url VARCHAR(255) DEFAULT NULL,
+                dev_db_host VARCHAR(255) DEFAULT NULL,
+                qa_db_host VARCHAR(255) DEFAULT NULL,
+                prod_db_host VARCHAR(255) DEFAULT NULL,
+                dev_managed_env_id VARCHAR(500) DEFAULT NULL,
+                prod_managed_env_id VARCHAR(500) DEFAULT NULL,
                 created_by VARCHAR(255) NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -87,6 +93,30 @@ async function main() {
         if (!orgColNames.includes('log_analytics_workspace_id')) {
             console.log('Adding column log_analytics_workspace_id to organizations...');
             await connection.query('ALTER TABLE organizations ADD COLUMN log_analytics_workspace_id VARCHAR(100) DEFAULT NULL');
+        }
+        if (!orgColNames.includes('azure_key_vault_url')) {
+            console.log('Adding column azure_key_vault_url to organizations...');
+            await connection.query('ALTER TABLE organizations ADD COLUMN azure_key_vault_url VARCHAR(255) DEFAULT NULL');
+        }
+        if (!orgColNames.includes('dev_db_host')) {
+            console.log('Adding column dev_db_host to organizations...');
+            await connection.query('ALTER TABLE organizations ADD COLUMN dev_db_host VARCHAR(255) DEFAULT NULL');
+        }
+        if (!orgColNames.includes('qa_db_host')) {
+            console.log('Adding column qa_db_host to organizations...');
+            await connection.query('ALTER TABLE organizations ADD COLUMN qa_db_host VARCHAR(255) DEFAULT NULL');
+        }
+        if (!orgColNames.includes('prod_db_host')) {
+            console.log('Adding column prod_db_host to organizations...');
+            await connection.query('ALTER TABLE organizations ADD COLUMN prod_db_host VARCHAR(255) DEFAULT NULL');
+        }
+        if (!orgColNames.includes('dev_managed_env_id')) {
+            console.log('Adding column dev_managed_env_id to organizations...');
+            await connection.query('ALTER TABLE organizations ADD COLUMN dev_managed_env_id VARCHAR(500) DEFAULT NULL');
+        }
+        if (!orgColNames.includes('prod_managed_env_id')) {
+            console.log('Adding column prod_managed_env_id to organizations...');
+            await connection.query('ALTER TABLE organizations ADD COLUMN prod_managed_env_id VARCHAR(500) DEFAULT NULL');
         }
 
         // Generate unique teams_webhook_token for organizations currently lacking one

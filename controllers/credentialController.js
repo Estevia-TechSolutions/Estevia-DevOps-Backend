@@ -14,14 +14,41 @@ const credentialController = {
             }
 
             // Verify organization exists
-            const [orgs] = await db.query('SELECT id FROM organizations WHERE id = ?', [organizationId]);
+            const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [organizationId]);
             if (orgs.length === 0) {
                 return res.status(404).json({ message: `Organization "${organizationId}" not found.` });
             }
 
-            // Encrypt the secrets
+            const keyVaultUrl = orgs[0]?.azure_key_vault_url;
             const secretsString = typeof secrets === 'string' ? secrets : JSON.stringify(secrets);
-            const { encrypted, iv, authTag } = encrypt(secretsString);
+            
+            let encrypted, iv, authTag;
+
+            if (keyVaultUrl) {
+                try {
+                    const { SecretClient } = require('@azure/keyvault-secrets');
+                    const { DefaultAzureCredential } = require('@azure/identity');
+                    const credential = new DefaultAzureCredential();
+                    const client = new SecretClient(keyVaultUrl, credential);
+                    const secretName = `${organizationId}-${provider}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+                    
+                    console.log(`[CredentialController] Writing secret '${secretName}' to Azure Key Vault: ${keyVaultUrl}`);
+                    await client.setSecret(secretName, secretsString);
+                    
+                    encrypted = 'stored-in-azure-key-vault';
+                    iv = 'kv';
+                    authTag = 'kv';
+                } catch (kvErr) {
+                    console.error('[CredentialController] Failed to write secret to Azure Key Vault:', kvErr.message);
+                    return res.status(500).json({ message: `Azure Key Vault storage failed: ${kvErr.message}` });
+                }
+            } else {
+                // Encrypt the secrets locally
+                const encResult = encrypt(secretsString);
+                encrypted = encResult.encrypted;
+                iv = encResult.iv;
+                authTag = encResult.authTag;
+            }
 
             // Check if credentials for this organization and provider already exist
             const [existing] = await db.query(
@@ -107,6 +134,27 @@ const credentialController = {
      */
     getDecryptedCredentialsInternal: async (organizationId, provider) => {
         try {
+            // Check if organization has Key Vault URL
+            const [orgs] = await db.query('SELECT azure_key_vault_url FROM organizations WHERE id = ?', [organizationId]);
+            const keyVaultUrl = orgs[0]?.azure_key_vault_url;
+
+            if (keyVaultUrl) {
+                try {
+                    const { SecretClient } = require('@azure/keyvault-secrets');
+                    const { DefaultAzureCredential } = require('@azure/identity');
+                    const credential = new DefaultAzureCredential();
+                    const client = new SecretClient(keyVaultUrl, credential);
+                    const secretName = `${organizationId}-${provider}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+                    
+                    console.log(`[CredentialController] Fetching secret '${secretName}' from Azure Key Vault: ${keyVaultUrl}`);
+                    const secret = await client.getSecret(secretName);
+                    return JSON.parse(secret.value);
+                } catch (kvErr) {
+                    console.warn(`[CredentialController] Key Vault fetch failed for '${provider}' secret, falling back to local DB:`, kvErr.message);
+                }
+            }
+
+            // Fallback: local DB decryption
             const [rows] = await db.query(
                 `SELECT encrypted_secrets, iv, auth_tag 
                  FROM integration_credentials 
@@ -119,6 +167,13 @@ const credentialController = {
             }
 
             const { encrypted_secrets, iv, auth_tag } = rows[0];
+            
+            // If it's a placeholder but the real vault fetch failed or vault url was deleted
+            if (encrypted_secrets === 'stored-in-azure-key-vault') {
+                console.error(`[CredentialController] Credentials placeholder found but Key Vault fetch was unsuccessful.`);
+                return null;
+            }
+
             const decryptedString = decrypt(encrypted_secrets, iv, auth_tag);
             return JSON.parse(decryptedString);
         } catch (error) {

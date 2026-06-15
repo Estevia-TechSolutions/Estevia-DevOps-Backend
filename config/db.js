@@ -45,6 +45,30 @@ async function runAutoMigration() {
             console.log('[DevOps DB] Adding column docker_registry_service_connection to organizations...');
             await pool.query(`ALTER TABLE organizations ADD COLUMN docker_registry_service_connection VARCHAR(100) DEFAULT NULL`);
         }
+        if (!columnNames.includes('azure_key_vault_url')) {
+            console.log('[DevOps DB] Adding column azure_key_vault_url to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN azure_key_vault_url VARCHAR(255) DEFAULT NULL`);
+        }
+        if (!columnNames.includes('dev_db_host')) {
+            console.log('[DevOps DB] Adding column dev_db_host to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN dev_db_host VARCHAR(255) DEFAULT NULL`);
+        }
+        if (!columnNames.includes('qa_db_host')) {
+            console.log('[DevOps DB] Adding column qa_db_host to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN qa_db_host VARCHAR(255) DEFAULT NULL`);
+        }
+        if (!columnNames.includes('prod_db_host')) {
+            console.log('[DevOps DB] Adding column prod_db_host to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN prod_db_host VARCHAR(255) DEFAULT NULL`);
+        }
+        if (!columnNames.includes('dev_managed_env_id')) {
+            console.log('[DevOps DB] Adding column dev_managed_env_id to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN dev_managed_env_id VARCHAR(500) DEFAULT NULL`);
+        }
+        if (!columnNames.includes('prod_managed_env_id')) {
+            console.log('[DevOps DB] Adding column prod_managed_env_id to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN prod_managed_env_id VARCHAR(500) DEFAULT NULL`);
+        }
         
         console.log('[DevOps DB] Seeding admin_email for estevia organization...');
         await pool.query(`

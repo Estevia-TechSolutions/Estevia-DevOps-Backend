@@ -16,9 +16,11 @@ const dbHubController = {
 
             console.log(`[DBHub] Comparing schema structure: [${sourceServerName}].\`${sourceDb}\` -> [${targetServerName}].\`${targetDb}\`...`);
 
+            const organizationId = req.body.organizationId || req.user?.organization_id || 'estevia';
             const appController = require('./appController');
-            const sourceHost = appController._resolveDbHost(sourceServerName);
-            const targetHost = appController._resolveDbHost(targetServerName);
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const sourceHost = appController._resolveDbHost(sourceServerName, orgSettings);
+            const targetHost = appController._resolveDbHost(targetServerName, orgSettings);
             
             const mysql = require('mysql2/promise');
             
@@ -164,8 +166,10 @@ const dbHubController = {
 
             console.log(`[DBHub] Step 2/4: Executing ${statements.length} DDL statements...`);
             
+            const organizationId = req.body.organizationId || req.user?.organization_id || 'estevia';
             const appController = require('./appController');
-            const resolvedHost = appController._resolveDbHost(targetServerName);
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const resolvedHost = appController._resolveDbHost(targetServerName, orgSettings);
             const mysql = require('mysql2/promise');
             const conn = await mysql.createConnection({
                 host: resolvedHost,
@@ -250,11 +254,13 @@ const dbHubController = {
 
             console.log(`[DBHub] Starting data migration: [${sourceServerName}].${sourceDb} -> [${targetServerName}].${targetDb} — ${tables.length} tables`);
 
+            const organizationId = req.body.organizationId || req.user?.organization_id || 'estevia';
             const appController = require('./appController');
+            const orgSettings = await appController._getOrgSettings(organizationId);
             const mysql = require('mysql2/promise');
 
             const sourceConn = await mysql.createConnection({
-                host: appController._resolveDbHost(sourceServerName),
+                host: appController._resolveDbHost(sourceServerName, orgSettings),
                 user: process.env.DB_USER || 'estevia',
                 password: process.env.DB_PASSWORD || 'Ewco26INCP',
                 database: sourceDb,
@@ -264,7 +270,7 @@ const dbHubController = {
             });
 
             const targetConn = await mysql.createConnection({
-                host: appController._resolveDbHost(targetServerName),
+                host: appController._resolveDbHost(targetServerName, orgSettings),
                 user: process.env.DB_USER || 'estevia',
                 password: process.env.DB_PASSWORD || 'Ewco26INCP',
                 database: targetDb,
@@ -369,8 +375,10 @@ const dbHubController = {
                 return res.status(400).json({ success: false, message: 'Missing serverName or dbName parameters.' });
             }
 
+            const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
             const appController = require('./appController');
-            const resolvedHost = appController._resolveDbHost(serverName);
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
             const conn = await mysql.createConnection({
                 host: resolvedHost,
