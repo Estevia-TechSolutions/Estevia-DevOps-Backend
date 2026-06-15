@@ -420,7 +420,7 @@ const appController = {
                         const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
                         
                         const resolvedBranch = appController._resolveBranchFromAppName(app.name, app.branches || []);
-                        const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=all&$top=1&api-version=7.1`;
+                        const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=InProgress,Completed,NotStarted&$top=1&api-version=7.1`;
                         
                         console.log(`[AppController] Fetching runs for pipeline ${matchedPipelineId} branch ${resolvedBranch} from ${buildsUrl}`);
                         const runRes = await axios.get(buildsUrl, {
@@ -1986,7 +1986,7 @@ const appController = {
 
             // Fetch latest 1 build for this pipeline definition, optionally filtered by branchName
             const branchFilter = branchName ? `&branchName=${encodeURIComponent(branchName)}` : '';
-            const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=all&$top=1${branchFilter}&api-version=7.1`;
+            const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=InProgress,Completed,NotStarted&$top=1${branchFilter}&api-version=7.1`;
             const buildsRes = await axios.get(buildsUrl, {
                 headers: { 'Authorization': authHeader, 'Accept': 'application/json' },
                 timeout: 6000
