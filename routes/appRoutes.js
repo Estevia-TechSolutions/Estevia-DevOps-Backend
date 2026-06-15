@@ -27,6 +27,9 @@ router.post('/pipeline', restrictTo('owner', 'admin', 'contributor'), appControl
 // Get live build task logs from Azure DevOps
 router.get('/pipeline/logs', appController.getPipelineLogs);
 
+// Get live build run state and timeline breakdown from Azure DevOps
+router.get('/pipeline/timeline', appController.getPipelineTimeline);
+
 // Commit a default azure-pipelines.yml to GitHub repo, then register pipeline
 router.post('/create-pipeline-yml', restrictTo('owner', 'admin', 'contributor'), appController.createPipelineYml);
 

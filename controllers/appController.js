@@ -1788,6 +1788,124 @@ const appController = {
     },
 
     /**
+     * Get live pipeline build run state and timeline breakdown.
+     */
+    getPipelineTimeline: async (req, res) => {
+        try {
+            const { organizationId = 'estevia', buildId } = req.query;
+
+            if (!buildId) {
+                return res.status(400).json({ message: 'Missing parameter (buildId).' });
+            }
+
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
+            const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
+
+            const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
+            if (!devopsSecrets || !devopsSecrets.pat) {
+                return res.status(400).json({ message: 'Azure DevOps credentials not found.' });
+            }
+
+            const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
+
+            // 1. Fetch Build Details
+            const buildUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds/${buildId}?api-version=7.1`;
+            console.log(`[AppController] Fetching build details from: ${buildUrl}`);
+            const buildRes = await axios.get(buildUrl, {
+                headers: { 'Authorization': authHeader, 'Accept': 'application/json' },
+                timeout: 5000
+            });
+            const buildData = buildRes.data;
+
+            const pipelineRun = {
+                id: buildData.id,
+                name: buildData.buildNumber,
+                state: buildData.status, // completed, inProgress, etc.
+                result: buildData.result, // succeeded, failed, etc.
+                webUrl: buildData._links?.web?.href || '',
+                startTime: buildData.startTime || null,
+                finishTime: buildData.finishTime || null,
+                stages: []
+            };
+
+            // 2. Fetch Timeline Stages/Jobs/Steps breakdown
+            try {
+                const timelineUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds/${buildId}/timeline?api-version=7.1`;
+                console.log(`[AppController] Fetching timeline from: ${timelineUrl}`);
+                const tlRes = await axios.get(timelineUrl, {
+                    headers: { 'Authorization': authHeader, 'Accept': 'application/json' },
+                    timeout: 5000
+                });
+
+                if (tlRes.data && Array.isArray(tlRes.data.records)) {
+                    const allRecords = tlRes.data.records;
+                    const stages = allRecords
+                        .filter(r => r.type === 'Stage')
+                        .sort((a, b) => (a.order || 0) - (b.order || 0));
+                    const jobs = allRecords.filter(r => r.type === 'Job');
+                    const phases = allRecords.filter(r => r.type === 'Phase');
+
+                    pipelineRun.stages = stages.map(stage => {
+                        const stageJobs = jobs.filter(job => {
+                            if (job.parentId === stage.id) return true;
+                            const parentPhase = phases.find(p => p.id === job.parentId);
+                            return parentPhase && parentPhase.parentId === stage.id;
+                        }).sort((a, b) => (a.order || 0) - (b.order || 0))
+                          .map(j => {
+                              const jobTasks = allRecords
+                                  .filter(r => r.type === 'Task' && r.parentId === j.id)
+                                  .sort((a, b) => (a.order || 0) - (b.order || 0))
+                                  .map(t => ({
+                                      id: t.id,
+                                      name: t.name,
+                                      displayName: t.displayName || t.name,
+                                      state: t.state,
+                                      result: t.result,
+                                      startTime: t.startTime || null,
+                                      finishTime: t.finishTime || null,
+                                      logId: t.log ? t.log.id : null
+                                  }));
+                              return {
+                                  id: j.id,
+                                  name: j.name,
+                                  displayName: j.displayName || j.name,
+                                  state: j.state,
+                                  result: j.result,
+                                  startTime: j.startTime || null,
+                                  finishTime: j.finishTime || null,
+                                  steps: jobTasks
+                              };
+                          });
+
+                        return {
+                            id: stage.id,
+                            name: stage.name,
+                            displayName: stage.displayName || stage.name,
+                            state: stage.state,
+                            result: stage.result,
+                            startTime: stage.startTime || null,
+                            finishTime: stage.finishTime || null,
+                            jobs: stageJobs
+                        };
+                    });
+                }
+            } catch (tlErr) {
+                console.warn(`[AppController] Failed to fetch timeline records for build ${buildId}:`, tlErr.message);
+            }
+
+            res.json({ success: true, pipelineRun });
+        } catch (error) {
+            console.error('[AppController] getPipelineTimeline failed:', error.message);
+            res.status(500).json({ 
+                success: false, 
+                message: 'Failed to fetch pipeline build timeline.', 
+                error: error.message 
+            });
+        }
+    },
+
+    /**
      * Create CI/CD pipeline in Azure DevOps using decrypted credentials.
      * First checks if azure-pipelines.yml exists in the GitHub repo.
      * If missing, returns a YML_MISSING code so the frontend can prompt to create it.
