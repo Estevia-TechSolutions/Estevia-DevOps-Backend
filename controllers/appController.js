@@ -45,10 +45,12 @@ const appController = {
     _resolveBranchFromAppName(name, availableBranches = []) {
         const n = name.toLowerCase();
         
+        const hasEnvSegment = (str, seg) => new RegExp(`-${seg}(-|$)`).test(str);
+        
         let envType = 'prod';
-        if (n.includes('-dev') || n.endsWith('-dev') || n.includes('-dev-')) {
+        if (hasEnvSegment(n, 'dev') || hasEnvSegment(n, 'development')) {
             envType = 'dev';
-        } else if (n.includes('-qa') || n.endsWith('-qa') || n.includes('-qa-')) {
+        } else if (hasEnvSegment(n, 'qa') || hasEnvSegment(n, 'staging') || hasEnvSegment(n, 'test') || hasEnvSegment(n, 'testing')) {
             envType = 'qa';
         }
         
@@ -418,7 +420,7 @@ const appController = {
                         const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
                         
                         const resolvedBranch = appController._resolveBranchFromAppName(app.name, app.branches || []);
-                        const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&$top=1&api-version=7.1`;
+                        const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=all&$top=1&api-version=7.1`;
                         
                         console.log(`[AppController] Fetching runs for pipeline ${matchedPipelineId} branch ${resolvedBranch} from ${buildsUrl}`);
                         const runRes = await axios.get(buildsUrl, {
@@ -1984,7 +1986,7 @@ const appController = {
 
             // Fetch latest 1 build for this pipeline definition, optionally filtered by branchName
             const branchFilter = branchName ? `&branchName=${encodeURIComponent(branchName)}` : '';
-            const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&$top=1${branchFilter}&api-version=7.1`;
+            const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=all&$top=1${branchFilter}&api-version=7.1`;
             const buildsRes = await axios.get(buildsUrl, {
                 headers: { 'Authorization': authHeader, 'Accept': 'application/json' },
                 timeout: 6000
