@@ -1556,8 +1556,27 @@ const appController = {
                 }
             });
             if (!listRes.data || listRes.data.count === 0) {
-                console.warn(`[AppController] Variable group '${groupName}' not found in Azure DevOps.`);
-                return false;
+                console.log(`[AppController] Variable group '${groupName}' not found. Auto-creating in Azure DevOps...`);
+                const createUrl = `${cleanOrgUrl}/${devopsProject}/_apis/distributedtask/variablegroups?api-version=7.1-preview.1`;
+                const createPayload = {
+                    name: groupName,
+                    description: 'EvaOps pipeline variable group',
+                    type: 'Vsts',
+                    variables: {
+                        [varName]: {
+                            value: varValue,
+                            isSecret: true
+                        }
+                    }
+                };
+                await axios.post(createUrl, createPayload, {
+                    headers: {
+                        'Authorization': `Basic ${Buffer.from(':' + pat).toString('base64')}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                console.log(`[AppController] Variable group '${groupName}' created successfully.`);
+                return true;
             }
             const group = listRes.data.value[0];
             const groupId = group.id;
@@ -1720,6 +1739,29 @@ const appController = {
      * Internal helper – actually register the pipeline in Azure DevOps
      */
     async _registerAzureDevOpsPipeline(pat, cleanOrgUrl, devopsProject, githubRepo, appName) {
+        // Try to fetch GitHub service connection dynamically
+        let connectionId = '30a6bcfb-1a79-47fe-9eb9-e70e32d9181a'; // default fallback
+        try {
+            const devopsUrl = `${cleanOrgUrl}/${devopsProject}/_apis/serviceendpoint/endpoints?api-version=7.1-preview.4`;
+            const devRes = await axios.get(devopsUrl, {
+                headers: {
+                    'Authorization': `Basic ${Buffer.from(':' + pat).toString('base64')}`
+                }
+            });
+            if (devRes.data && Array.isArray(devRes.data.value)) {
+                // Find endpoint of type 'github'
+                const githubEndpoint = devRes.data.value.find(endpoint => endpoint.type?.toLowerCase() === 'github');
+                if (githubEndpoint) {
+                    connectionId = githubEndpoint.id;
+                    console.log(`[AppController] Found GitHub Service Connection dynamically: ${githubEndpoint.name} (${connectionId})`);
+                } else {
+                    console.warn(`[AppController] No GitHub Service Connection found in Azure DevOps. Using default fallback: ${connectionId}`);
+                }
+            }
+        } catch (err) {
+            console.warn('[AppController] Failed to query service connections for GitHub connection ID:', err.message);
+        }
+
         const pipelineApiUrl = `${cleanOrgUrl}/${devopsProject}/_apis/pipelines?api-version=7.1-preview.1`;
         const repoName = githubRepo.split('/').pop() || appName;
         const payload = {
@@ -1729,7 +1771,7 @@ const appController = {
                 path: 'azure-pipelines.yml',
                 repository: {
                     fullName: githubRepo,
-                    connection: { id: '30a6bcfb-1a79-47fe-9eb9-e70e32d9181a' },
+                    connection: { id: connectionId },
                     type: 'gitHub'
                 }
             }
