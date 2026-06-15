@@ -420,19 +420,31 @@ const appController = {
                         const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
                         
                         const resolvedBranch = appController._resolveBranchFromAppName(app.name, app.branches || []);
-                        const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=InProgress,Completed,NotStarted&$top=1&api-version=7.1`;
-                        
-                        console.log(`[AppController] Fetching runs for pipeline ${matchedPipelineId} branch ${resolvedBranch} from ${buildsUrl}`);
-                        const runRes = await axios.get(buildsUrl, {
-                            headers: { 
-                                'Authorization': `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`,
-                                'Accept': 'application/json'
-                            },
-                            timeout: 5000
-                        });
+                        const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
 
-                        if (runRes.data && Array.isArray(runRes.data.value) && runRes.data.value.length > 0) {
-                            const latestRun = runRes.data.value[0];
+                        // Fetch InProgress, NotStarted, and Completed in parallel due to Azure DevOps API limitation
+                        const urlInProgress = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=InProgress&$top=1&api-version=7.1`;
+                        const urlNotStarted = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=NotStarted&$top=1&api-version=7.1`;
+                        const urlCompleted  = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=Completed&$top=1&api-version=7.1`;
+
+                        console.log(`[AppController] Fetching runs in parallel for pipeline ${matchedPipelineId} branch ${resolvedBranch}`);
+                        const [resInProgress, resNotStarted, resCompleted] = await Promise.all([
+                            axios.get(urlInProgress, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(e => { console.warn(`[AppController] Failed to fetch InProgress builds: ${e.message}`); return { data: { value: [] } }; }),
+                            axios.get(urlNotStarted, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(e => { console.warn(`[AppController] Failed to fetch NotStarted builds: ${e.message}`); return { data: { value: [] } }; }),
+                            axios.get(urlCompleted,  { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(e => { console.warn(`[AppController] Failed to fetch Completed builds: ${e.message}`); return { data: { value: [] } }; })
+                        ]);
+
+                        const builds = [
+                            resInProgress.data?.value?.[0],
+                            resNotStarted.data?.value?.[0],
+                            resCompleted.data?.value?.[0]
+                        ].filter(Boolean);
+
+                        // Sort by ID descending to get the absolute latest build
+                        builds.sort((a, b) => b.id - a.id);
+                        const latestRun = builds[0];
+
+                        if (latestRun) {
                             app.pipelineRun = {
                                 id: latestRun.id,
                                 name: latestRun.buildNumber,
@@ -1986,18 +1998,32 @@ const appController = {
 
             // Fetch latest 1 build for this pipeline definition, optionally filtered by branchName
             const branchFilter = branchName ? `&branchName=${encodeURIComponent(branchName)}` : '';
-            const buildsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=InProgress,Completed,NotStarted&$top=1${branchFilter}&api-version=7.1`;
-            const buildsRes = await axios.get(buildsUrl, {
-                headers: { 'Authorization': authHeader, 'Accept': 'application/json' },
-                timeout: 6000
-            });
+            
+            // Fetch InProgress, NotStarted, and Completed in parallel due to Azure DevOps API limitation
+            const urlInProgress = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=InProgress&$top=1${branchFilter}&api-version=7.1`;
+            const urlNotStarted = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=NotStarted&$top=1${branchFilter}&api-version=7.1`;
+            const urlCompleted  = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=Completed&$top=1${branchFilter}&api-version=7.1`;
 
-            const builds = buildsRes.data?.value || [];
-            if (builds.length === 0) {
+            console.log(`[AppController] getLatestPipelineBuild: Fetching runs in parallel for pipeline ${pipelineId} branch ${branchName || 'all'}`);
+            const [resInProgress, resNotStarted, resCompleted] = await Promise.all([
+                axios.get(urlInProgress, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 6000 }).catch(e => { console.warn(`[AppController] getLatestPipelineBuild: Failed to fetch InProgress: ${e.message}`); return { data: { value: [] } }; }),
+                axios.get(urlNotStarted, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 6000 }).catch(e => { console.warn(`[AppController] getLatestPipelineBuild: Failed to fetch NotStarted: ${e.message}`); return { data: { value: [] } }; }),
+                axios.get(urlCompleted,  { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 6000 }).catch(e => { console.warn(`[AppController] getLatestPipelineBuild: Failed to fetch Completed: ${e.message}`); return { data: { value: [] } }; })
+            ]);
+
+            const builds = [
+                resInProgress.data?.value?.[0],
+                resNotStarted.data?.value?.[0],
+                resCompleted.data?.value?.[0]
+            ].filter(Boolean);
+
+            // Sort by ID descending to get the absolute latest build
+            builds.sort((a, b) => b.id - a.id);
+            const latestRun = builds[0];
+
+            if (!latestRun) {
                 return res.json({ success: true, pipelineRun: null });
             }
-
-            const latestRun = builds[0];
             const pipelineRun = {
                 id: latestRun.id,
                 name: latestRun.buildNumber,
