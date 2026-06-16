@@ -253,7 +253,7 @@ const credentialController = {
                 }
 
                 try {
-                    const response = await axios.get('https://api.godaddy.com/v1/domains/suggest?query=estevia', {
+                    const response = await axios.get('https://api.godaddy.com/v1/domains?limit=1', {
                         headers: {
                             'Authorization': `sso-key ${apiKey}:${apiSecret}`,
                             'User-Agent': 'EvaOps-DevOps-Platform'
