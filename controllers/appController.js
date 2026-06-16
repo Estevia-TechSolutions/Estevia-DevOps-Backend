@@ -588,7 +588,79 @@ const appController = {
                 }
             }
 
-            res.json({ success: true, count: apps.length, apps });
+            // 6. Check environment integrity (GitHub, GoDaddy, Azure)
+            const integrity = {
+                github: { success: false, message: 'Not configured.' },
+                godaddy: { success: false, message: 'Not configured.' },
+                azure: { success: false, message: 'Not configured.' }
+            };
+
+            // 6.1. GitHub connection check
+            try {
+                const githubSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+                const ghToken = githubSecrets && (githubSecrets.token || githubSecrets.pat || githubSecrets.accessToken || Object.values(githubSecrets)[0]);
+                if (ghToken) {
+                    try {
+                        const response = await axios.get('https://api.github.com/user', {
+                            headers: {
+                                'Authorization': `token ${ghToken}`,
+                                'User-Agent': 'EvaOps-DevOps-Platform'
+                            },
+                            timeout: 5000
+                        });
+                        integrity.github = { success: true, message: `Connected as: ${response.data.login}` };
+                    } catch (err) {
+                        const msg = err.response?.data?.message || err.message;
+                        integrity.github = { success: false, message: `GitHub authentication failed: ${msg}` };
+                    }
+                }
+            } catch (err) {
+                console.error('[AppController] GitHub integrity check error:', err.message);
+                integrity.github = { success: false, message: `Error checking GitHub: ${err.message}` };
+            }
+
+            // 6.2. GoDaddy connection check
+            try {
+                const godaddySecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'godaddy');
+                if (godaddySecrets && godaddySecrets.apiKey && godaddySecrets.apiSecret) {
+                    try {
+                        const response = await axios.get('https://api.godaddy.com/v1/domains?limit=1', {
+                            headers: {
+                                'Authorization': `sso-key ${godaddySecrets.apiKey}:${godaddySecrets.apiSecret}`,
+                                'User-Agent': 'EvaOps-DevOps-Platform'
+                            },
+                            timeout: 5000
+                        });
+                        integrity.godaddy = { success: true, message: 'GoDaddy API connection healthy. Keys authenticated.' };
+                    } catch (err) {
+                        const msg = err.response?.data?.message || err.message;
+                        integrity.godaddy = { success: false, message: `GoDaddy connection failed: ${msg}` };
+                    }
+                }
+            } catch (err) {
+                console.error('[AppController] GoDaddy integrity check error:', err.message);
+                integrity.godaddy = { success: false, message: `Error checking GoDaddy: ${err.message}` };
+            }
+
+            // 6.3. Azure connection check
+            try {
+                const azureCred = await getAzureCredential(organizationId);
+                try {
+                    const tokenRes = await azureCred.getToken("https://management.azure.com/.default");
+                    if (tokenRes && tokenRes.token) {
+                        integrity.azure = { success: true, message: 'Azure subscription authenticated successfully.' };
+                    } else {
+                        integrity.azure = { success: false, message: 'Azure authentication failed: did not return token.' };
+                    }
+                } catch (err) {
+                    integrity.azure = { success: false, message: `Azure authentication failed: ${err.message}` };
+                }
+            } catch (err) {
+                console.error('[AppController] Azure integrity check error:', err.message);
+                integrity.azure = { success: false, message: `Error checking Azure: ${err.message}` };
+            }
+
+            res.json({ success: true, count: apps.length, apps, integrity });
         } catch (error) {
             console.error('[AppController] Scan failed:', error);
             res.status(500).json({ message: 'Internal server error scanning apps.', error: error.message });
