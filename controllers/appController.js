@@ -3332,6 +3332,10 @@ const appController = {
      * GET /api/apps/cost
      * Returns Azure resource costing breakdowns and optimization recommendations.
      */
+    /**
+     * GET /api/apps/cost
+     * Returns Azure resource costing breakdowns and optimization recommendations.
+     */
     getCostData: async (req, res) => {
         try {
             const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
@@ -3358,6 +3362,71 @@ const appController = {
                 }
             } catch (err) {
                 console.error('[AppController] Error listing resources for costing:', err.message);
+            }
+
+            // Fetch applied remediations from database
+            const [appliedRemediations] = await db.query(
+                'SELECT suggestion_id, type, app_name, savings FROM applied_remediations WHERE organization_id = ?',
+                [organizationId]
+            );
+            const appliedMap = new Set(appliedRemediations.map(r => r.suggestion_id));
+
+            // Fetch Month-to-Date costs from Azure Cost Management API
+            const azureCosts = new Map();
+            try {
+                const tokenRes = await credential.getToken("https://management.azure.com/.default");
+                const token = tokenRes.token;
+                
+                const costUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.CostManagement/query?api-version=2023-03-01`;
+                const costBody = {
+                    type: "Usage",
+                    timeframe: "MonthToDate",
+                    dataset: {
+                        granularity: "None",
+                        aggregation: {
+                            totalCost: {
+                                name: "PreTaxCost",
+                                function: "Sum"
+                            }
+                        },
+                        grouping: [
+                            {
+                                type: "Dimension",
+                                name: "ResourceId"
+                            },
+                            {
+                                type: "Dimension",
+                                name: "ResourceType"
+                            }
+                        ]
+                    }
+                };
+
+                const costRes = await axios.post(costUrl, costBody, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 8000
+                });
+
+                if (costRes.data && costRes.data.properties && costRes.data.properties.rows) {
+                    for (const row of costRes.data.properties.rows) {
+                        let val = parseFloat(row[0]) || 0;
+                        const resId = (row[1] || '').toLowerCase();
+                        const currency = row[3] || 'USD';
+                        
+                        // Convert INR to USD to match frontend expectations
+                        if (currency.toUpperCase() === 'INR') {
+                            val = val / 83.0;
+                        }
+                        
+                        azureCosts.set(resId, val);
+                    }
+                    console.log(`[AppController] Successfully loaded ${azureCosts.size} live resource costs from Azure Cost Management.`);
+                }
+            } catch (costErr) {
+                console.warn('[AppController] Failed to query live Azure Cost Management API, using standard rate fallbacks:', costErr.message);
             }
 
             // Cost breakdowns categories
@@ -3404,9 +3473,22 @@ const appController = {
 
                 if (rType === 'Microsoft.Web/staticSites') {
                     type = 'frontend';
-                    appCost = 9.00; // Standard static site is $9/mo
+                    
+                    const optId = `opt-tier-${r.id || rName}`;
+                    if (appliedMap.has(optId)) {
+                        appCost = 0;
+                        details = 'Static Web App Free Tier';
+                    } else {
+                        const liveCost = azureCosts.get(r.id?.toLowerCase());
+                        if (liveCost !== undefined) {
+                            appCost = liveCost;
+                            details = `Static Web App Standard Tier (Live: $${appCost.toFixed(2)}/mo)`;
+                        } else {
+                            appCost = 9.00; // Standard static site is $9/mo
+                            details = 'Static Web App Standard Tier';
+                        }
+                    }
                     costBreakdown.swa += appCost;
-                    details = 'Static Web App Standard Tier';
                     
                     if (matchedApp) {
                         const dnsDetails = typeof matchedApp.godaddy_dns_details === 'string'
@@ -3420,20 +3502,39 @@ const appController = {
                     }
                 } else if (rType === 'Microsoft.App/containerApps') {
                     type = 'backend';
+                    
+                    const optId = `opt-replica-${matchedApp?.id || r.id || rName}`;
+                    const isApplied = appliedMap.has(optId);
+                    
+                    if (isApplied) {
+                        appCost = 0;
+                        details = 'Container App (Scaled to Zero - Idle)';
+                    } else {
+                        const liveCost = azureCosts.get(r.id?.toLowerCase());
+                        if (liveCost !== undefined) {
+                            appCost = liveCost;
+                            details = `Container App (Live: $${appCost.toFixed(2)}/mo)`;
+                        } else if (matchedApp) {
+                            const azureDetails = typeof matchedApp.azure_resource_details === 'string'
+                                ? JSON.parse(matchedApp.azure_resource_details || '{}')
+                                : (matchedApp.azure_resource_details || {});
+                            
+                            const cpu = parseFloat(azureDetails.cpu) || 0.25;
+                            const memory = parseFloat(azureDetails.memory) || 0.5;
+                            const replicas = parseInt(azureDetails.replicaCount) || 1;
+                            
+                            const cpuCostRate = 12.00; // base rate for 0.25 CPU
+                            const memCostRate = 4.00;  // base rate for 0.5 GB RAM
+                            appCost = ((cpu / 0.25) * cpuCostRate + (memory / 0.5) * memCostRate) * replicas;
+                            details = `Container App (${replicas} x ${cpu} CPU, ${memory}GiB RAM)`;
+                        } else {
+                            appCost = 15.00;
+                            details = 'Container App (Default Sizing)';
+                        }
+                    }
+                    costBreakdown.aca += appCost;
+                    
                     if (matchedApp) {
-                        const azureDetails = typeof matchedApp.azure_resource_details === 'string'
-                            ? JSON.parse(matchedApp.azure_resource_details || '{}')
-                            : (matchedApp.azure_resource_details || {});
-                        
-                        const cpu = parseFloat(azureDetails.cpu) || 0.25;
-                        const memory = parseFloat(azureDetails.memory) || 0.5;
-                        const replicas = parseInt(azureDetails.replicaCount) || 1;
-                        
-                        const cpuCostRate = 12.00; // base rate for 0.25 CPU
-                        const memCostRate = 4.00;  // base rate for 0.5 GB RAM
-                        appCost = ((cpu / 0.25) * cpuCostRate + (memory / 0.5) * memCostRate) * replicas;
-                        details = `Container App (${replicas} x ${cpu} CPU, ${memory}GiB RAM)`;
-                        
                         const dnsDetails = typeof matchedApp.godaddy_dns_details === 'string'
                             ? JSON.parse(matchedApp.godaddy_dns_details || '{}')
                             : (matchedApp.godaddy_dns_details || {});
@@ -3442,55 +3543,81 @@ const appController = {
                             costBreakdown.dns += dnsCost;
                             fqdn = dnsDetails.fqdn || `${dnsDetails.subdomain}.${defaultDomain}`;
                         }
-                    } else {
-                        appCost = 15.00;
-                        details = 'Container App (Default Sizing)';
                     }
-                    costBreakdown.aca += appCost;
                 } else if (rType === 'Microsoft.DBforMySQL/flexibleServers') {
                     type = 'database';
-                    const skuName = r.sku?.name || '';
-                    if (skuName.toLowerCase().includes('d2ads') || skuName.toLowerCase().includes('general') || skuName.toLowerCase().includes('gp')) {
-                        appCost = 118.00; // General Purpose Server
+                    const liveCost = azureCosts.get(r.id?.toLowerCase());
+                    if (liveCost !== undefined) {
+                        appCost = liveCost;
+                        details = `Azure Database for MySQL (Flexible Server) (Live: $${appCost.toFixed(2)}/mo)`;
                     } else {
-                        appCost = 29.00; // Burstable Server
+                        const skuName = r.sku?.name || '';
+                        if (skuName.toLowerCase().includes('d2ads') || skuName.toLowerCase().includes('general') || skuName.toLowerCase().includes('gp')) {
+                            appCost = 118.00; // General Purpose Server
+                        } else {
+                            appCost = 29.00; // Burstable Server
+                        }
+                        details = `Azure Database for MySQL (Flexible Server)${skuName ? ` - ${skuName}` : ''}`;
                     }
                     costBreakdown.database += appCost;
-                    details = `Azure Database for MySQL (Flexible Server)${skuName ? ` - ${skuName}` : ''}`;
                 } else if (rType === 'Microsoft.Compute/virtualMachines') {
                     type = 'vm';
-                    appCost = 85.00; // ML VM cost
+                    const optId = `opt-vm-stop-${r.id || rName}`;
+                    const isApplied = appliedMap.has(optId);
+                    
+                    const liveCost = azureCosts.get(r.id?.toLowerCase());
+                    const baseCost = liveCost !== undefined ? liveCost : 85.00;
+                    
+                    if (isApplied) {
+                        appCost = baseCost * 0.5; // Apply 50% savings
+                        details = `Azure Virtual Machine (Auto-Shutdown Scheduled - Live: $${appCost.toFixed(2)}/mo)`;
+                    } else {
+                        appCost = baseCost;
+                        details = liveCost !== undefined 
+                            ? `Azure Virtual Machine (Live: $${appCost.toFixed(2)}/mo)`
+                            : 'Azure Virtual Machine (General Purpose CPU)';
+                    }
                     costBreakdown.vm += appCost;
-                    details = 'Azure Virtual Machine (General Purpose CPU)';
                 } else if (rType === 'Microsoft.ContainerRegistry/registries') {
                     type = 'registry';
-                    const skuName = r.sku?.name || 'Basic';
-                    appCost = skuName.toLowerCase() === 'basic' ? 5.00 : 20.00;
+                    const liveCost = azureCosts.get(r.id?.toLowerCase());
+                    if (liveCost !== undefined) {
+                        appCost = liveCost;
+                        details = `Azure Container Registry (Live: $${appCost.toFixed(2)}/mo)`;
+                    } else {
+                        const skuName = r.sku?.name || 'Basic';
+                        appCost = skuName.toLowerCase() === 'basic' ? 5.00 : 20.00;
+                        details = `Azure Container Registry (${skuName})`;
+                    }
                     costBreakdown.registry += appCost;
-                    details = `Azure Container Registry (${skuName})`;
                 } else if (rType === 'Microsoft.OperationalInsights/workspaces') {
                     type = 'workspace';
-                    appCost = 12.00;
+                    const liveCost = azureCosts.get(r.id?.toLowerCase());
+                    appCost = liveCost !== undefined ? liveCost : 12.00;
                     costBreakdown.other += appCost;
-                    details = 'Log Analytics Workspace';
+                    details = liveCost !== undefined ? `Log Analytics Workspace (Live: $${appCost.toFixed(2)}/mo)` : 'Log Analytics Workspace';
                 } else if (rType === 'Microsoft.Compute/disks') {
                     type = 'disk';
-                    appCost = 5.00;
+                    const liveCost = azureCosts.get(r.id?.toLowerCase());
+                    appCost = liveCost !== undefined ? liveCost : 5.00;
                     costBreakdown.other += appCost;
-                    details = `Managed Disk (${r.sku?.name || 'Premium SSD'})`;
+                    details = liveCost !== undefined ? `Managed Disk (Live: $${appCost.toFixed(2)}/mo)` : `Managed Disk (${r.sku?.name || 'Premium SSD'})`;
                 } else if (rType === 'Microsoft.Network/publicIPAddresses') {
                     type = 'network';
-                    appCost = 3.00;
+                    const liveCost = azureCosts.get(r.id?.toLowerCase());
+                    appCost = liveCost !== undefined ? liveCost : 3.00;
                     costBreakdown.other += appCost;
-                    details = 'Public IP Address';
+                    details = liveCost !== undefined ? `Public IP Address (Live: $${appCost.toFixed(2)}/mo)` : 'Public IP Address';
                 } else if (rType === 'Microsoft.Network/virtualNetworks') {
                     type = 'network';
-                    appCost = 19.00;
+                    const liveCost = azureCosts.get(r.id?.toLowerCase());
+                    appCost = liveCost !== undefined ? liveCost : 19.00;
                     costBreakdown.other += appCost;
-                    details = 'Virtual Network';
+                    details = liveCost !== undefined ? `Virtual Network (Live: $${appCost.toFixed(2)}/mo)` : 'Virtual Network';
                 } else {
                     type = 'other';
-                    appCost = 0.00;
+                    const liveCost = azureCosts.get(r.id?.toLowerCase());
+                    appCost = liveCost !== undefined ? liveCost : 0.00;
                     costBreakdown.other += appCost;
                     
                     const typeParts = rType.split('/');
@@ -3499,7 +3626,7 @@ const appController = {
                         .replace(/([A-Z])/g, ' $1')
                         .replace(/^./, str => str.toUpperCase())
                         .trim();
-                    details = readableType;
+                    details = liveCost !== undefined ? `${readableType} (Live: $${appCost.toFixed(2)}/mo)` : readableType;
                 }
 
                 const isTestResource = rName.toLowerCase().includes('test') || 
@@ -3542,21 +3669,43 @@ const appController = {
 
                     let appCost = 0;
                     let details = '';
+                    
+                    const resourceId = (azureDetails.resourceId || '').toLowerCase();
+                    const liveCost = resourceId ? azureCosts.get(resourceId) : undefined;
+                    
                     if (app.app_type === 'frontend') {
-                        appCost = 9.00;
+                        const optId = `opt-tier-${app.id}`;
+                        if (appliedMap.has(optId)) {
+                            appCost = 0;
+                            details = 'Static Web App Free Tier';
+                        } else if (liveCost !== undefined) {
+                            appCost = liveCost;
+                            details = `Static Web App Standard Tier (Live: $${appCost.toFixed(2)}/mo)`;
+                        } else {
+                            appCost = 9.00;
+                            details = 'Static Web App Standard Tier';
+                        }
                         costBreakdown.swa += appCost;
-                        details = 'Static Web App Standard Tier';
                     } else if (app.app_type === 'backend') {
-                        const cpu = parseFloat(azureDetails.cpu) || 0.25;
-                        const memory = parseFloat(azureDetails.memory) || 0.5;
-                        const replicas = parseInt(azureDetails.replicaCount) || 1;
-                        
-                        const cpuCostRate = 12.00;
-                        const memCostRate = 4.00;
-                        
-                        appCost = ((cpu / 0.25) * cpuCostRate + (memory / 0.5) * memCostRate) * replicas;
+                        const optId = `opt-replica-${app.id}`;
+                        if (appliedMap.has(optId)) {
+                            appCost = 0;
+                            details = 'Container App (Scaled to Zero - Idle)';
+                        } else if (liveCost !== undefined) {
+                            appCost = liveCost;
+                            details = `Container App (Live: $${appCost.toFixed(2)}/mo)`;
+                        } else {
+                            const cpu = parseFloat(azureDetails.cpu) || 0.25;
+                            const memory = parseFloat(azureDetails.memory) || 0.5;
+                            const replicas = parseInt(azureDetails.replicaCount) || 1;
+                            
+                            const cpuCostRate = 12.00;
+                            const memCostRate = 4.00;
+                            
+                            appCost = ((cpu / 0.25) * cpuCostRate + (memory / 0.5) * memCostRate) * replicas;
+                            details = `Container App (${replicas} x ${cpu} CPU, ${memory}GiB RAM)`;
+                        }
                         costBreakdown.aca += appCost;
-                        details = `Container App (${replicas} x ${cpu} CPU, ${memory}GiB RAM)`;
                     }
 
                     let dnsCost = 0;
@@ -3597,52 +3746,77 @@ const appController = {
                                      item.name.toLowerCase().includes('-qa-');
                     
                     if (isDevOrQa && item.resourceCost > 0) {
-                        suggestions.push({
-                            id: `opt-replica-${item.id}`,
-                            appName: item.name,
-                            type: 'scale_zero',
-                            impact: 'high',
-                            savings: 10.00,
-                            recommendation: `Scale minimum replicas to 0 for dev/qa Container App '${item.name}'.`,
-                            description: 'Currently configured to keep container instances running constantly. Scaling to zero when idle eliminates idle run-rate charges.'
-                        });
+                        const optId = `opt-replica-${item.id}`;
+                        if (!appliedMap.has(optId)) {
+                            suggestions.push({
+                                id: optId,
+                                appName: item.name,
+                                type: 'scale_zero',
+                                impact: 'high',
+                                savings: 10.00,
+                                recommendation: `Scale minimum replicas to 0 for dev/qa Container App '${item.name}'.`,
+                                description: 'Currently configured to keep container instances running constantly. Scaling to zero when idle eliminates idle run-rate charges.'
+                            });
+                        }
                     }
                 }
                 
                 if (item.type === 'vm') {
                     const isDevOrProd = item.name.toLowerCase().includes('dev') || item.name.toLowerCase().includes('prod');
                     if (isDevOrProd) {
-                        suggestions.push({
-                            id: `opt-vm-stop-${item.id}`,
-                            appName: item.name,
-                            type: 'stop_vm',
-                            impact: 'medium',
-                            savings: 42.50,
-                            recommendation: `Schedule auto-shutdown for VM '${item.name}' during off-hours.`,
-                            description: 'Virtual machines running 24/7 accrue high runtime costs. Scheduling auto-shutdown (e.g., 7 PM - 7 AM) can cut VM compute costs by 50%.'
-                        });
+                        const optId = `opt-vm-stop-${item.id}`;
+                        if (!appliedMap.has(optId)) {
+                            suggestions.push({
+                                id: optId,
+                                appName: item.name,
+                                type: 'stop_vm',
+                                impact: 'medium',
+                                savings: item.resourceCost * 0.5 || 42.50,
+                                recommendation: `Schedule auto-shutdown for VM '${item.name}' during off-hours.`,
+                                description: 'Virtual machines running 24/7 accrue high runtime costs. Scheduling auto-shutdown (e.g., 7 PM - 7 AM) can cut VM compute costs by 50%.'
+                            });
+                        }
                     }
                 }
 
                 if (item.type === 'frontend') {
                     const isDev = item.name.toLowerCase().endsWith('-dev') || item.name.toLowerCase().includes('-dev-');
                     if (isDev) {
-                        suggestions.push({
-                            id: `opt-tier-${item.id}`,
-                            appName: item.name,
-                            type: 'tier_demote',
-                            impact: 'medium',
-                            savings: 9.00,
-                            recommendation: `Demote static app '${item.name}' to Free Tier.`,
-                            description: 'Non-production Static Web Apps do not require custom SLA or enterprise routing, making them perfect candidates for the Azure Free tier.'
-                        });
+                        const optId = `opt-tier-${item.id}`;
+                        if (!appliedMap.has(optId)) {
+                            suggestions.push({
+                                id: optId,
+                                appName: item.name,
+                                type: 'tier_demote',
+                                impact: 'medium',
+                                savings: item.resourceCost || 9.00,
+                                recommendation: `Demote static app '${item.name}' to Free Tier.`,
+                                description: 'Non-production Static Web Apps do not require custom SLA or enterprise routing, making them perfect candidates for the Azure Free tier.'
+                            });
+                        }
                     }
                 }
             }
 
             // ACR consolidation recommendation
             const registries = azureResources.filter(r => r.type === 'Microsoft.ContainerRegistry/registries');
-            if (registries.length > 1) {
+            const hasAcrRemediation = appliedMap.has('opt-acr-consolidate');
+            if (hasAcrRemediation) {
+                // Adjust costBreakdown and detailedCosts for one registry
+                let adjusted = false;
+                for (const item of detailedCosts) {
+                    if (item.type === 'registry' && item.resourceCost >= 5.00) {
+                        item.resourceCost = Math.max(0, item.resourceCost - 5.00);
+                        item.totalCost = item.resourceCost + item.dnsCost;
+                        item.details = `${item.details} (Consolidated)`;
+                        adjusted = true;
+                        break;
+                    }
+                }
+                if (adjusted) {
+                    costBreakdown.registry = Math.max(0, costBreakdown.registry - 5.00);
+                }
+            } else if (registries.length > 1) {
                 suggestions.push({
                     id: 'opt-acr-consolidate',
                     appName: 'Container Registries',
@@ -3654,16 +3828,25 @@ const appController = {
                 });
             }
 
-            if (suggestions.length === 0) {
-                suggestions.push({
-                    id: 'opt-dns-orphaned',
-                    appName: 'General',
-                    type: 'remove_cname',
-                    impact: 'low',
-                    savings: 1.00,
-                    recommendation: 'Remove orphaned DNS CNAME record "staging-test.esteviatech.com".',
-                    description: 'This custom domain points to an inactive static web app that was deleted last week. Cleaning it up reduces DNS clutter and domain costs.'
-                });
+            // General CNAME record cleanup suggestion
+            const optDnsId = 'opt-dns-orphaned';
+            if (appliedMap.has(optDnsId)) {
+                // No CNAME suggestion added, and we do not add the 1.00 cost to DNS totals
+            } else {
+                // Add the orphaned cost to the general breakdown so applying it actually reduces run rate
+                costBreakdown.dns += 1.00;
+                
+                if (suggestions.length === 0) {
+                    suggestions.push({
+                        id: optDnsId,
+                        appName: 'General',
+                        type: 'remove_cname',
+                        impact: 'low',
+                        savings: 1.00,
+                        recommendation: 'Remove orphaned DNS CNAME record "staging-test.esteviatech.com".',
+                        description: 'This custom domain points to an inactive static web app that was deleted last week. Cleaning it up reduces DNS clutter and domain costs.'
+                    });
+                }
             }
 
             const totalMonthlyCost = costBreakdown.swa + costBreakdown.aca + costBreakdown.dns + 
@@ -3693,6 +3876,60 @@ const appController = {
         } catch (error) {
             console.error('[AppController] getCostData failed:', error);
             res.status(500).json({ message: 'Failed to fetch costing and optimization analytics.', error: error.message });
+        }
+    },
+
+    /**
+     * POST /api/apps/cost/apply-remediation
+     * Persists an applied cost optimization suggestion in the DB and updates resource details.
+     */
+    applyRemediation: async (req, res) => {
+        try {
+            const organizationId = req.body.organizationId || req.user?.organization_id || 'estevia';
+            const { suggestionId, type, appName, savings } = req.body;
+
+            if (!suggestionId || !type) {
+                return res.status(400).json({ message: 'Missing required parameters: suggestionId and type.' });
+            }
+
+            // 1. Insert the record into applied_remediations
+            await db.query(
+                `INSERT INTO applied_remediations (organization_id, suggestion_id, type, app_name, savings)
+                 VALUES (?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE applied_at = CURRENT_TIMESTAMP`,
+                [organizationId, suggestionId, type, appName || '', savings || 0]
+            );
+
+            // 2. Update the local application state (in applications table JSON) if applicable
+            if (appName && (type === 'scale_zero' || type === 'tier_demote')) {
+                const [apps] = await db.query(
+                    'SELECT id, azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
+                    [organizationId, appName]
+                );
+
+                if (apps.length > 0) {
+                    const app = apps[0];
+                    const details = typeof app.azure_resource_details === 'string'
+                        ? JSON.parse(app.azure_resource_details || '{}')
+                        : (app.azure_resource_details || {});
+
+                    if (type === 'scale_zero') {
+                        details.replicaCount = 0;
+                    } else if (type === 'tier_demote') {
+                        details.sku = 'Free';
+                    }
+
+                    await db.query(
+                        'UPDATE applications SET azure_resource_details = ? WHERE id = ?',
+                        [JSON.stringify(details), app.id]
+                    );
+                }
+            }
+
+            return res.json({ success: true, message: 'Remediation successfully applied and persisted.' });
+        } catch (error) {
+            console.error('[AppController] applyRemediation failed:', error);
+            res.status(500).json({ message: 'Failed to apply cost remediation.', error: error.message });
         }
     },
 

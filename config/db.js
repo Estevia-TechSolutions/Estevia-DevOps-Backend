@@ -93,6 +93,22 @@ async function runAutoMigration() {
             )
         `);
 
+        // Create applied_remediations table if not exists
+        console.log('[DevOps DB] Checking applied_remediations table...');
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS applied_remediations (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                organization_id VARCHAR(50) NOT NULL,
+                suggestion_id VARCHAR(100) NOT NULL,
+                type VARCHAR(50) NOT NULL,
+                app_name VARCHAR(100) NOT NULL,
+                savings DECIMAL(10, 2) NOT NULL,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY unique_suggestion (organization_id, suggestion_id),
+                FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+            )
+        `);
+
         // Seed initial directory users and roles
         console.log('[DevOps DB] Seeding initial directory users...');
         const initialUsers = [

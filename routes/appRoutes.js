@@ -42,6 +42,9 @@ router.get('/organization-settings', appController.getOrgSettings);
 // Fetch Azure resource costs and optimizations
 router.get('/cost', appController.getCostData);
 
+// Apply cost optimization remediation suggestion
+router.post('/cost/apply-remediation', restrictTo('owner', 'admin', 'contributor'), appController.applyRemediation);
+
 // Fetch billing invoices history
 router.get('/billing', appController.getBillingHistory);
 router.get('/billing/forecast', appController.getBillingForecast);

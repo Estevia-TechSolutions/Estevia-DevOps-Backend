@@ -237,15 +237,18 @@ async function main() {
             )
         `);
 
-        // 5.8 Create key_vault_mappings table
-        console.log('Creating key_vault_mappings table...');
+        // 5.9 Create applied_remediations table
+        console.log('Creating applied_remediations table...');
         await connection.query(`
-            CREATE TABLE IF NOT EXISTS key_vault_mappings (
+            CREATE TABLE IF NOT EXISTS applied_remediations (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 organization_id VARCHAR(50) NOT NULL,
-                secret_name VARCHAR(150) NOT NULL,
-                mapped_to_variable_group VARCHAR(150) NOT NULL,
-                active BOOLEAN DEFAULT TRUE,
+                suggestion_id VARCHAR(100) NOT NULL,
+                type VARCHAR(50) NOT NULL,
+                app_name VARCHAR(100) NOT NULL,
+                savings DECIMAL(10, 2) NOT NULL,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY unique_suggestion (organization_id, suggestion_id),
                 FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
             )
         `);
