@@ -98,14 +98,14 @@ async function testTeamsConnection(webhookUrl) {
         '@type': 'MessageCard',
         '@context': 'http://schema.org/extensions',
         themeColor: '0078D4',
-        summary: 'EvaOps Connection Test',
+        summary: 'EvaOps Connection Test (CloudOps Management & Governance)',
         sections: [
             {
-                activityTitle: '**✅ EvaOps — Connection Test Successful**',
+                activityTitle: '**✅ EvaOps — Connection Test Successful (CloudOps Management & Governance)**',
                 activityText: 'Your Microsoft Teams webhook integration is configured and working correctly. You will now receive real-time DevOps lifecycle alerts in this channel.',
                 facts: [
                     { name: 'Status', value: 'Connected' },
-                    { name: 'Triggered by', value: 'EvaOps Control Centre' },
+                    { name: 'Triggered by', value: 'EvaOps Control Centre (CloudOps Management & Governance)' },
                     { name: 'Timestamp', value: new Date().toISOString() }
                 ],
                 markdown: true

@@ -514,7 +514,7 @@ const updateUserRole = async (req, res) => {
                 const roleLabel = role.charAt(0).toUpperCase() + role.slice(1).toLowerCase();
                 await sendTeamsNotification(orgId, {
                     title: '🔒 User Role Updated — Security Alert',
-                    text:  `A user's authorization role was changed in **EvaOps Control Centre**.`,
+                    text:  `A user's authorization role was changed in **EvaOps Control Centre (CloudOps Management & Governance)**.`,
                     themeColor: 'FFA500',
                     facts: [
                         { name: 'Affected User',  value: targetUser.email || userId },
