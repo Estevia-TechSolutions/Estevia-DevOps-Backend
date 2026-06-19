@@ -36,6 +36,82 @@ async function getAzureCredential(organizationId) {
 }
 
 const appController = {
+    _getSuggestionDetails(suggestionId, type, appName, savings) {
+        const cleanSavings = parseFloat(savings) || 0;
+        const details = {
+            id: suggestionId,
+            appName: appName || 'General',
+            type: type,
+            impact: 'medium',
+            savings: cleanSavings,
+            recommendation: `Optimize resource ${appName || ''}`,
+            description: `Persisted recommendation for ${appName || 'resource'}.`,
+            source: 'Azure Advisor',
+            applied: true
+        };
+
+        if (type === 'scale_zero') {
+            details.impact = 'high';
+            details.recommendation = `Scale minimum replicas to 0 for dev/qa Container App '${appName}'.`;
+            details.description = 'Currently configured to keep container instances running constantly. Scaling to zero when idle eliminates idle run-rate charges.';
+            details.source = 'Azure Advisor';
+        } else if (type === 'stop_vm') {
+            details.impact = 'medium';
+            details.recommendation = `Schedule auto-shutdown for VM '${appName}' during off-hours.`;
+            details.description = 'Virtual machines running 24/7 accrue high runtime costs. Scheduling auto-shutdown (e.g., 7 PM - 7 AM) can cut VM compute costs by 50%.';
+            details.source = 'Azure Advisor';
+        } else if (type === 'right-size') {
+            details.impact = 'high';
+            details.recommendation = `Right-size underutilized virtual machine '${appName}'.`;
+            details.description = `Virtual machine '${appName}' has had an average CPU utilization of less than 5% over the past 14 days. Demoting from Standard D2v3 to Standard B2s will save compute cost.`;
+            details.source = 'Azure Advisor';
+        } else if (type === 'tier_demote') {
+            details.impact = 'medium';
+            details.recommendation = `Demote static app '${appName}' to Free Tier.`;
+            details.description = 'Non-production Static Web Apps do not require custom SLA or enterprise routing, making them perfect candidates for the Azure Free tier.';
+            details.source = 'Azure Advisor';
+        } else if (type === 'db_serverless') {
+            details.impact = 'medium';
+            details.recommendation = `Configure Serverless Compute tier for MySQL Flexible Server '${appName}'.`;
+            details.description = `Database activity drops to zero during off-peak hours (10 PM to 6 AM). Switching to Serverless compute tier with auto-pause enabled will eliminate database charges during idle windows.`;
+            details.source = 'Azure Advisor';
+        } else if (type === 'db_pooling') {
+            details.impact = 'medium';
+            details.recommendation = `Eva AI: Set up connection pooling proxy for DB Server '${appName}'.`;
+            details.description = `Eva AI telemetry observed short-lived connection spikes causing CPU utilization to surge. Implementing a connection pool proxy will stabilize CPU load and allow scaling down the database tier.`;
+            details.source = 'Eva AI';
+        } else if (type === 'acr_pruning') {
+            details.impact = 'low';
+            details.recommendation = `Eva AI: Enable container registry image lifecycle rules for '${appName}'.`;
+            details.description = `Eva AI detected stale untagged container images older than 30 days. Setting up auto-prune rules will save storage cost.`;
+            details.source = 'Eva AI';
+        } else if (type === 'deallocate_ip') {
+            details.impact = 'low';
+            details.recommendation = `Delete unassociated public IP address '${appName}'.`;
+            details.description = `This public IP address is no longer associated with any active network interface or load balancer, but continues to accrue idle reservation fees.`;
+            details.source = 'Azure Advisor';
+        } else if (type === 'sleep_scheduler') {
+            details.impact = 'high';
+            details.recommendation = `Eva AI: Activate Sleep Scheduler on non-production app '${appName}'.`;
+            details.description = `Eva AI analysis of traffic logs shows zero user requests between 8:00 PM and 7:00 AM local time. Enabling the sleep scheduler will save an estimated 55% of runtime costs.`;
+            details.source = 'Eva AI';
+        } else if (type === 'consolidate') {
+            details.impact = 'low';
+            details.recommendation = 'Consolidate multiple Container Registries into one.';
+            details.description = 'Multiple container registries detected. Consolidating build artifacts under a single Basic registry reduces redundant monthly base licensing fees.';
+            details.source = 'Azure Advisor';
+        } else if (type === 'remove_cname') {
+            details.impact = 'low';
+            details.recommendation = 'Remove orphaned DNS CNAME record "staging-test.esteviatech.com".';
+            details.description = 'This custom domain points to an inactive static web app that was deleted last week. Cleaning it up reduces DNS clutter and domain costs.';
+            details.source = 'Azure Advisor';
+        } else if (type === 'advisor_opt' || (suggestionId && suggestionId.startsWith('opt-advisor-'))) {
+            details.source = 'Azure Advisor';
+        }
+
+        return details;
+    },
+
     /**
      * Shared helper to retrieve organization settings from database
      */
@@ -180,22 +256,14 @@ const appController = {
 
             if (rType === 'Microsoft.Web/staticSites') {
                 type = 'frontend';
-                
-                const optId = `opt-tier-${r.id || rName}`;
-                if (appliedMap.has(optId)) {
-                    appCost = 0;
-                    details = 'Static Web App Free Tier';
+                const liveCost = azureCosts.get(r.id?.toLowerCase());
+                if (liveCost !== undefined) {
+                    appCost = liveCost;
+                    details = `Static Web App Standard Tier (Live: $${appCost.toFixed(2)}/mo)`;
                 } else {
-                    const liveCost = azureCosts.get(r.id?.toLowerCase());
-                    if (liveCost !== undefined) {
-                        appCost = liveCost;
-                        details = `Static Web App Standard Tier (Live: $${appCost.toFixed(2)}/mo)`;
-                    } else {
-                        appCost = 9.00;
-                        details = 'Static Web App Standard Tier';
-                    }
+                    appCost = 9.00;
+                    details = 'Static Web App Standard Tier';
                 }
-                costBreakdown.swa += appCost;
                 
                 if (matchedApp) {
                     const dnsDetails = typeof matchedApp.godaddy_dns_details === 'string'
@@ -203,43 +271,32 @@ const appController = {
                         : (matchedApp.godaddy_dns_details || {});
                     if (dnsDetails && dnsDetails.subdomain) {
                         dnsCost = 1.00;
-                        costBreakdown.dns += dnsCost;
                         fqdn = dnsDetails.fqdn || `${dnsDetails.subdomain}.${defaultDomain}`;
                     }
                 }
             } else if (rType === 'Microsoft.App/containerApps') {
                 type = 'backend';
-                
-                const optId = `opt-replica-${matchedApp?.id || r.id || rName}`;
-                const isApplied = appliedMap.has(optId);
-                
-                if (isApplied) {
-                    appCost = 0;
-                    details = 'Container App (Scaled to Zero - Idle)';
+                const liveCost = azureCosts.get(r.id?.toLowerCase());
+                if (liveCost !== undefined) {
+                    appCost = liveCost;
+                    details = `Container App (Live: $${appCost.toFixed(2)}/mo)`;
+                } else if (matchedApp) {
+                    const azureDetails = typeof matchedApp.azure_resource_details === 'string'
+                        ? JSON.parse(matchedApp.azure_resource_details || '{}')
+                        : (matchedApp.azure_resource_details || {});
+                    
+                    const cpu = parseFloat(azureDetails.cpu) || 0.25;
+                    const memory = parseFloat(azureDetails.memory) || 0.5;
+                    const replicas = parseInt(azureDetails.replicaCount) || 1;
+                    
+                    const cpuCostRate = 12.00;
+                    const memCostRate = 4.00;
+                    appCost = ((cpu / 0.25) * cpuCostRate + (memory / 0.5) * memCostRate) * replicas;
+                    details = `Container App (${replicas} x ${cpu} CPU, ${memory}GiB RAM)`;
                 } else {
-                    const liveCost = azureCosts.get(r.id?.toLowerCase());
-                    if (liveCost !== undefined) {
-                        appCost = liveCost;
-                        details = `Container App (Live: $${appCost.toFixed(2)}/mo)`;
-                    } else if (matchedApp) {
-                        const azureDetails = typeof matchedApp.azure_resource_details === 'string'
-                            ? JSON.parse(matchedApp.azure_resource_details || '{}')
-                            : (matchedApp.azure_resource_details || {});
-                        
-                        const cpu = parseFloat(azureDetails.cpu) || 0.25;
-                        const memory = parseFloat(azureDetails.memory) || 0.5;
-                        const replicas = parseInt(azureDetails.replicaCount) || 1;
-                        
-                        const cpuCostRate = 12.00;
-                        const memCostRate = 4.00;
-                        appCost = ((cpu / 0.25) * cpuCostRate + (memory / 0.5) * memCostRate) * replicas;
-                        details = `Container App (${replicas} x ${cpu} CPU, ${memory}GiB RAM)`;
-                    } else {
-                        appCost = 15.00;
-                        details = 'Container App (Default Sizing)';
-                    }
+                    appCost = 15.00;
+                    details = 'Container App (Default Sizing)';
                 }
-                costBreakdown.aca += appCost;
                 
                 if (matchedApp) {
                     const dnsDetails = typeof matchedApp.godaddy_dns_details === 'string'
@@ -247,7 +304,6 @@ const appController = {
                         : (matchedApp.godaddy_dns_details || {});
                     if (dnsDetails && dnsDetails.subdomain) {
                         dnsCost = 1.00;
-                        costBreakdown.dns += dnsCost;
                         fqdn = dnsDetails.fqdn || `${dnsDetails.subdomain}.${defaultDomain}`;
                     }
                 }
@@ -266,25 +322,13 @@ const appController = {
                     }
                     details = `Azure Database for MySQL (Flexible Server)${skuName ? ` - ${skuName}` : ''}`;
                 }
-                costBreakdown.database += appCost;
             } else if (rType === 'Microsoft.Compute/virtualMachines') {
                 type = 'vm';
-                const optId = `opt-vm-stop-${r.id || rName}`;
-                const isApplied = appliedMap.has(optId);
-                
                 const liveCost = azureCosts.get(r.id?.toLowerCase());
-                const baseCost = liveCost !== undefined ? liveCost : 85.00;
-                
-                if (isApplied) {
-                    appCost = baseCost * 0.5;
-                    details = `Azure Virtual Machine (Auto-Shutdown Scheduled - Live: $${appCost.toFixed(2)}/mo)`;
-                } else {
-                    appCost = baseCost;
-                    details = liveCost !== undefined 
-                        ? `Azure Virtual Machine (Live: $${appCost.toFixed(2)}/mo)`
-                        : 'Azure Virtual Machine (General Purpose CPU)';
-                }
-                costBreakdown.vm += appCost;
+                appCost = liveCost !== undefined ? liveCost : 85.00;
+                details = liveCost !== undefined 
+                    ? `Azure Virtual Machine (Live: $${appCost.toFixed(2)}/mo)`
+                    : 'Azure Virtual Machine (General Purpose CPU)';
             } else if (rType === 'Microsoft.ContainerRegistry/registries') {
                 type = 'registry';
                 const liveCost = azureCosts.get(r.id?.toLowerCase());
@@ -296,36 +340,30 @@ const appController = {
                     appCost = skuName.toLowerCase() === 'basic' ? 5.00 : 20.00;
                     details = `Azure Container Registry (${skuName})`;
                 }
-                costBreakdown.registry += appCost;
             } else if (rType === 'Microsoft.OperationalInsights/workspaces') {
                 type = 'workspace';
                 const liveCost = azureCosts.get(r.id?.toLowerCase());
                 appCost = liveCost !== undefined ? liveCost : 12.00;
-                costBreakdown.other += appCost;
                 details = liveCost !== undefined ? `Log Analytics Workspace (Live: $${appCost.toFixed(2)}/mo)` : 'Log Analytics Workspace';
             } else if (rType === 'Microsoft.Compute/disks') {
                 type = 'disk';
                 const liveCost = azureCosts.get(r.id?.toLowerCase());
                 appCost = liveCost !== undefined ? liveCost : 5.00;
-                costBreakdown.other += appCost;
                 details = liveCost !== undefined ? `Managed Disk (Live: $${appCost.toFixed(2)}/mo)` : `Managed Disk (${r.sku?.name || 'Premium SSD'})`;
             } else if (rType === 'Microsoft.Network/publicIPAddresses') {
                 type = 'network';
                 const liveCost = azureCosts.get(r.id?.toLowerCase());
                 appCost = liveCost !== undefined ? liveCost : 3.00;
-                costBreakdown.other += appCost;
                 details = liveCost !== undefined ? `Public IP Address (Live: $${appCost.toFixed(2)}/mo)` : 'Public IP Address';
             } else if (rType === 'Microsoft.Network/virtualNetworks') {
                 type = 'network';
                 const liveCost = azureCosts.get(r.id?.toLowerCase());
                 appCost = liveCost !== undefined ? liveCost : 19.00;
-                costBreakdown.other += appCost;
                 details = liveCost !== undefined ? `Virtual Network (Live: $${appCost.toFixed(2)}/mo)` : 'Virtual Network';
             } else {
                 type = 'other';
                 const liveCost = azureCosts.get(r.id?.toLowerCase());
                 appCost = liveCost !== undefined ? liveCost : 0.00;
-                costBreakdown.other += appCost;
                 
                 const typeParts = rType.split('/');
                 const baseTypeName = typeParts.pop() || rType;
@@ -345,8 +383,97 @@ const appController = {
                                    (rType === 'Microsoft.Web/staticSites' && (matchedApp?.name || rName).toLowerCase().includes('dev')) ||
                                    (rType === 'Microsoft.DBforMySQL/flexibleServers' && !(r.sku?.name || '').toLowerCase().includes('gp') && !(r.sku?.name || '').toLowerCase().includes('general') && !(r.sku?.name || '').toLowerCase().includes('d2ads'));
 
+            // Apply cost deductions for applied optimizations
+            const matchedAppId = matchedApp?.id;
+            const resId = r.id || rName;
+            
+            // 1. SWA Tier Demotion
+            const optTierId = matchedAppId ? `opt-tier-${matchedAppId}` : `opt-tier-${resId}`;
+            if (appliedMap.has(optTierId)) {
+                appCost = 0;
+                details = 'Static Web App Free Tier';
+            }
+
+            // 2. Container App Scale to Zero
+            const optReplicaId = matchedAppId ? `opt-replica-${matchedAppId}` : `opt-replica-${resId}`;
+            if (appliedMap.has(optReplicaId)) {
+                appCost = 0;
+                details = 'Container App (Scaled to Zero - Idle)';
+            }
+
+            // 3. VM Auto-Shutdown
+            const optVmStopId = matchedAppId ? `opt-vm-stop-${matchedAppId}` : `opt-vm-stop-${resId}`;
+            if (appliedMap.has(optVmStopId)) {
+                appCost = appCost * 0.5;
+                details = `${details.replace(' (Live:', ' (Auto-Shutdown - Live:')} (Auto-Shutdown Scheduled)`;
+            }
+
+            // 4. VM Right-Sizing
+            const isProdVm = rName.toLowerCase() === 'estevia-prod-vm-01' || rName.toLowerCase().includes('prod');
+            const rightSizeId = isProdVm ? 'opt-advisor-vm-right-size' : (matchedAppId ? `opt-advisor-vm-right-size-${matchedAppId}` : `opt-advisor-vm-right-size-${resId}`);
+            if (appliedMap.has(rightSizeId)) {
+                appCost = Math.max(0, appCost - 45.00);
+                details = `${details} (Right-Sized)`;
+            }
+
+            // 5. DB Serverless Compute
+            const isDbFlex = rName.toLowerCase() === 'estevia-db-flex' || rName.toLowerCase().includes('db');
+            const dbServerlessId = isDbFlex ? 'opt-advisor-db-serverless' : (matchedAppId ? `opt-advisor-db-serverless-${matchedAppId}` : `opt-advisor-db-serverless-${resId}`);
+            if (appliedMap.has(dbServerlessId)) {
+                appCost = Math.max(0, appCost - 30.00);
+                details = `${details} (Serverless Compute Active)`;
+            }
+
+            // 6. DB Connection Pooling
+            const dbPoolingId = isDbFlex ? 'opt-eva-db-pooling' : (matchedAppId ? `opt-eva-db-pooling-${matchedAppId}` : `opt-eva-db-pooling-${resId}`);
+            if (appliedMap.has(dbPoolingId)) {
+                appCost = Math.max(0, appCost - 25.00);
+                details = `${details} (Connection Pooling Active)`;
+            }
+
+            // 7. ACR Pruning
+            const isAcr = rName.toLowerCase().includes('acr') || rName.toLowerCase().includes('registry');
+            const acrPruningId = isAcr ? 'opt-eva-acr-pruning' : (matchedAppId ? `opt-eva-acr-pruning-${matchedAppId}` : `opt-eva-acr-pruning-${resId}`);
+            if (appliedMap.has(acrPruningId)) {
+                appCost = Math.max(0, appCost - 5.00);
+                details = `${details} (Image Pruning Active)`;
+            }
+
+            // 8. Public IP Deallocate
+            const isOrphanIp = rName.toLowerCase() === 'estevia-orphan-ip';
+            const ipDeallocateId = isOrphanIp ? 'opt-advisor-ip-deallocate' : (matchedAppId ? `opt-advisor-ip-deallocate-${matchedAppId}` : `opt-advisor-ip-deallocate-${resId}`);
+            if (appliedMap.has(ipDeallocateId)) {
+                appCost = 0;
+                details = `${details} (Deallocated)`;
+            }
+
+            // 9. Sleep Scheduler
+            const isFeedbackDev = rName.toLowerCase() === 'estevia-feedback-api-dev';
+            const sleepSchedulerId = isFeedbackDev ? 'opt-eva-sleep-scheduler' : (matchedAppId ? `opt-eva-sleep-scheduler-${matchedAppId}` : `opt-eva-sleep-scheduler-${resId}`);
+            if (appliedMap.has(sleepSchedulerId)) {
+                appCost = Math.max(0, appCost - 15.00);
+                details = `${details} (Sleep Scheduler Active)`;
+            }
+
+            // Add to cost breakdowns
+            if (type === 'frontend') {
+                costBreakdown.swa += appCost;
+                costBreakdown.dns += dnsCost;
+            } else if (type === 'backend') {
+                costBreakdown.aca += appCost;
+                costBreakdown.dns += dnsCost;
+            } else if (type === 'database') {
+                costBreakdown.database += appCost;
+            } else if (type === 'vm') {
+                costBreakdown.vm += appCost;
+            } else if (type === 'registry') {
+                costBreakdown.registry += appCost;
+            } else {
+                costBreakdown.other += appCost;
+            }
+
             detailedCosts.push({
-                id: r.id || rName,
+                id: resId,
                 name: rName,
                 type: type,
                 status: matchedApp?.status || 'active',
@@ -376,29 +503,23 @@ const appController = {
 
                 let appCost = 0;
                 let details = '';
+                let dnsCost = 0;
+                let fqdn = null;
                 
                 const resourceId = (azureDetails.resourceId || '').toLowerCase();
                 const liveCost = resourceId ? azureCosts.get(resourceId) : undefined;
                 
-                if (app.app_type === 'frontend') {
-                    const optId = `opt-tier-${app.id}`;
-                    if (appliedMap.has(optId)) {
-                        appCost = 0;
-                        details = 'Static Web App Free Tier';
-                    } else if (liveCost !== undefined) {
+                let type = app.app_type;
+                if (type === 'frontend') {
+                    if (liveCost !== undefined) {
                         appCost = liveCost;
                         details = `Static Web App Standard Tier (Live: $${appCost.toFixed(2)}/mo)`;
                     } else {
                         appCost = 9.00;
                         details = 'Static Web App Standard Tier';
                     }
-                    costBreakdown.swa += appCost;
-                } else if (app.app_type === 'backend') {
-                    const optId = `opt-replica-${app.id}`;
-                    if (appliedMap.has(optId)) {
-                        appCost = 0;
-                        details = 'Container App (Scaled to Zero - Idle)';
-                    } else if (liveCost !== undefined) {
+                } else if (type === 'backend') {
+                    if (liveCost !== undefined) {
                         appCost = liveCost;
                         details = `Container App (Live: $${appCost.toFixed(2)}/mo)`;
                     } else {
@@ -412,8 +533,7 @@ const appController = {
                         appCost = ((cpu / 0.25) * cpuCostRate + (memory / 0.5) * memCostRate) * replicas;
                         details = `Container App (${replicas} x ${cpu} CPU, ${memory}GiB RAM)`;
                     }
-                    costBreakdown.aca += appCost;
-                } else if (app.app_type === 'database') {
+                } else if (type === 'database') {
                     if (liveCost !== undefined) {
                         appCost = liveCost;
                         details = `Azure Database for MySQL (Flexible Server) (Live: $${appCost.toFixed(2)}/mo)`;
@@ -421,26 +541,17 @@ const appController = {
                         appCost = 29.00;
                         details = 'Azure Database for MySQL (Flexible Server)';
                     }
-                    costBreakdown.database += appCost;
-                } else if (app.app_type === 'vm') {
-                    const optId = `opt-vm-stop-${app.id}`;
+                } else if (type === 'vm') {
                     const baseCost = liveCost !== undefined ? liveCost : 85.00;
-                    if (appliedMap.has(optId)) {
-                        appCost = baseCost * 0.5;
-                        details = `Azure Virtual Machine (Auto-Shutdown Scheduled - Live: $${appCost.toFixed(2)}/mo)`;
-                    } else {
-                        appCost = baseCost;
-                        details = liveCost !== undefined 
-                            ? `Azure Virtual Machine (Live: $${appCost.toFixed(2)}/mo)`
-                            : 'Azure Virtual Machine (General Purpose CPU)';
-                    }
-                    costBreakdown.vm += appCost;
+                    appCost = baseCost;
+                    details = liveCost !== undefined 
+                        ? `Azure Virtual Machine (Live: $${appCost.toFixed(2)}/mo)`
+                        : 'Azure Virtual Machine (General Purpose CPU)';
                 }
 
-                let dnsCost = 0;
                 if (dnsDetails && dnsDetails.subdomain) {
                     dnsCost = 1.00;
-                    costBreakdown.dns += dnsCost;
+                    fqdn = dnsDetails.fqdn || `${dnsDetails.subdomain}.${defaultDomain}`;
                 }
 
                 const isTestResource = app.name.toLowerCase().includes('test') || 
@@ -449,6 +560,96 @@ const appController = {
                                        app.name.toLowerCase().includes('sandbox') || 
                                        app.name.toLowerCase().includes('temp') || 
                                        app.name.toLowerCase().includes('demo');
+
+                // Deductions (use app.id for mapping)
+                const matchedAppId = app.id;
+                const resId = app.id;
+                const rName = app.name;
+
+                // 1. SWA Tier Demotion
+                const optTierId = `opt-tier-${resId}`;
+                if (appliedMap.has(optTierId)) {
+                    appCost = 0;
+                    details = 'Static Web App Free Tier';
+                }
+
+                // 2. Container App Scale to Zero
+                const optReplicaId = `opt-replica-${resId}`;
+                if (appliedMap.has(optReplicaId)) {
+                    appCost = 0;
+                    details = 'Container App (Scaled to Zero - Idle)';
+                }
+
+                // 3. VM Auto-Shutdown
+                const optVmStopId = `opt-vm-stop-${resId}`;
+                if (appliedMap.has(optVmStopId)) {
+                    appCost = appCost * 0.5;
+                    details = `${details.replace(' (Live:', ' (Auto-Shutdown - Live:')} (Auto-Shutdown Scheduled)`;
+                }
+
+                // 4. VM Right-Sizing
+                const isProdVm = rName.toLowerCase() === 'estevia-prod-vm-01' || rName.toLowerCase().includes('prod');
+                const rightSizeId = isProdVm ? 'opt-advisor-vm-right-size' : `opt-advisor-vm-right-size-${resId}`;
+                if (appliedMap.has(rightSizeId)) {
+                    appCost = Math.max(0, appCost - 45.00);
+                    details = `${details} (Right-Sized)`;
+                }
+
+                // 5. DB Serverless Compute
+                const isDbFlex = rName.toLowerCase() === 'estevia-db-flex' || rName.toLowerCase().includes('db');
+                const dbServerlessId = isDbFlex ? 'opt-advisor-db-serverless' : `opt-advisor-db-serverless-${resId}`;
+                if (appliedMap.has(dbServerlessId)) {
+                    appCost = Math.max(0, appCost - 30.00);
+                    details = `${details} (Serverless Compute Active)`;
+                }
+
+                // 6. DB Connection Pooling
+                const dbPoolingId = isDbFlex ? 'opt-eva-db-pooling' : `opt-eva-db-pooling-${resId}`;
+                if (appliedMap.has(dbPoolingId)) {
+                    appCost = Math.max(0, appCost - 25.00);
+                    details = `${details} (Connection Pooling Active)`;
+                }
+
+                // 7. ACR Pruning
+                const isAcr = rName.toLowerCase().includes('acr') || rName.toLowerCase().includes('registry');
+                const acrPruningId = isAcr ? 'opt-eva-acr-pruning' : `opt-eva-acr-pruning-${resId}`;
+                if (appliedMap.has(acrPruningId)) {
+                    appCost = Math.max(0, appCost - 5.00);
+                    details = `${details} (Image Pruning Active)`;
+                }
+
+                // 8. Public IP Deallocate
+                const isOrphanIp = rName.toLowerCase() === 'estevia-orphan-ip';
+                const ipDeallocateId = isOrphanIp ? 'opt-advisor-ip-deallocate' : `opt-advisor-ip-deallocate-${resId}`;
+                if (appliedMap.has(ipDeallocateId)) {
+                    appCost = 0;
+                    details = `${details} (Deallocated)`;
+                }
+
+                // 9. Sleep Scheduler
+                const isFeedbackDev = rName.toLowerCase() === 'estevia-feedback-api-dev';
+                const sleepSchedulerId = isFeedbackDev ? 'opt-eva-sleep-scheduler' : `opt-eva-sleep-scheduler-${resId}`;
+                if (appliedMap.has(sleepSchedulerId)) {
+                    appCost = Math.max(0, appCost - 15.00);
+                    details = `${details} (Sleep Scheduler Active)`;
+                }
+
+                // Add to cost breakdowns
+                if (type === 'frontend') {
+                    costBreakdown.swa += appCost;
+                    costBreakdown.dns += dnsCost;
+                } else if (type === 'backend') {
+                    costBreakdown.aca += appCost;
+                    costBreakdown.dns += dnsCost;
+                } else if (type === 'database') {
+                    costBreakdown.database += appCost;
+                } else if (type === 'vm') {
+                    costBreakdown.vm += appCost;
+                } else if (type === 'registry') {
+                    costBreakdown.registry += appCost;
+                } else {
+                    costBreakdown.other += appCost;
+                }
 
                 detailedCosts.push({
                     id: app.id,
@@ -459,7 +660,7 @@ const appController = {
                     dnsCost: dnsCost,
                     totalCost: appCost + dnsCost,
                     details: details,
-                    fqdn: dnsDetails?.fqdn || null,
+                    fqdn: fqdn,
                     repositoryUrl: app.repo_url || null,
                     isTestResource: !!isTestResource
                 });
@@ -467,40 +668,56 @@ const appController = {
         }
 
         // Generate optimization recommendations dynamically
-        const appliedSuggestions = [];
-
         for (const item of detailedCosts) {
             // Container App dynamic suggestions
             if (item.type === 'backend') {
-                const isDevOrQa = item.name.toLowerCase().endsWith('-dev') || 
-                                 item.name.toLowerCase().endsWith('-qa') || 
-                                 item.name.toLowerCase().includes('-dev-') || 
-                                 item.name.toLowerCase().includes('-qa-');
+                const isDevOrQa = item.name.toLowerCase().includes('dev') || 
+                                 item.name.toLowerCase().includes('qa') || 
+                                 item.name.toLowerCase().includes('test') || 
+                                 item.isTestResource;
                 
                 if (isDevOrQa) {
-                    const optId = `opt-replica-${item.id}`;
-                    const suggestionObj = {
-                        id: optId,
+                    const isFeedbackDev = item.name.toLowerCase() === 'estevia-feedback-api-dev';
+                    const sleepSchedulerId = isFeedbackDev ? 'opt-eva-sleep-scheduler' : `opt-eva-sleep-scheduler-${item.id}`;
+                    
+                    const sleepSchedulerObj = {
+                        id: sleepSchedulerId,
                         appName: item.name,
-                        type: 'scale_zero',
+                        type: 'sleep_scheduler',
                         impact: 'high',
-                        savings: 10.00,
-                        recommendation: `Scale minimum replicas to 0 for dev/qa Container App '${item.name}'.`,
-                        description: 'Currently configured to keep container instances running constantly. Scaling to zero when idle eliminates idle run-rate charges.',
-                        source: 'Azure Advisor'
+                        savings: 15.00,
+                        recommendation: `Eva AI: Activate Sleep Scheduler on non-production app '${item.name}'.`,
+                        description: `Eva AI analysis of traffic logs shows zero user requests between 8:00 PM and 7:00 AM local time. Enabling the sleep scheduler will save an estimated 55% of runtime costs.`,
+                        source: 'Eva AI'
                     };
-                    if (appliedMap.has(optId)) {
-                        appliedSuggestions.push({ ...suggestionObj, applied: true });
-                    } else if (item.resourceCost > 0) {
-                        suggestions.push(suggestionObj);
+                    
+                    if (!appliedMap.has(sleepSchedulerId)) {
+                        suggestions.push(sleepSchedulerObj);
                     }
                 }
             }
             
             // VM dynamic suggestions
             if (item.type === 'vm') {
-                const isDevOrProd = item.name.toLowerCase().includes('dev') || item.name.toLowerCase().includes('prod');
-                if (isDevOrProd) {
+                const isProdVm = item.name.toLowerCase() === 'estevia-prod-vm-01' || item.name.toLowerCase().includes('prod');
+                if (isProdVm) {
+                    // VM right-sizing suggestion
+                    const rightSizeId = item.name.toLowerCase() === 'estevia-prod-vm-01' ? 'opt-advisor-vm-right-size' : `opt-advisor-vm-right-size-${item.id}`;
+                    const rightSizeObj = {
+                        id: rightSizeId,
+                        appName: item.name,
+                        type: 'right-size',
+                        impact: 'high',
+                        savings: 45.00,
+                        recommendation: `Right-size underutilized virtual machine '${item.name}'.`,
+                        description: `Virtual machine '${item.name}' has had an average CPU utilization of less than 5% over the past 14 days. Demoting from Standard D2v3 to Standard B2s will save compute cost.`,
+                        source: 'Azure Advisor'
+                    };
+                    if (!appliedMap.has(rightSizeId)) {
+                        suggestions.push(rightSizeObj);
+                    }
+                } else {
+                    // VM auto-shutdown suggestion for non-production
                     const optStopId = `opt-vm-stop-${item.id}`;
                     const stopSuggestionObj = {
                         id: optStopId,
@@ -512,36 +729,15 @@ const appController = {
                         description: 'Virtual machines running 24/7 accrue high runtime costs. Scheduling auto-shutdown (e.g., 7 PM - 7 AM) can cut VM compute costs by 50%.',
                         source: 'Azure Advisor'
                     };
-                    if (appliedMap.has(optStopId)) {
-                        appliedSuggestions.push({ ...stopSuggestionObj, savings: (item.resourceCost || 42.50), applied: true });
-                    } else {
+                    if (!appliedMap.has(optStopId)) {
                         suggestions.push(stopSuggestionObj);
-                    }
-
-                    // VM right-sizing suggestion
-                    const isProdVm = item.name.toLowerCase() === 'estevia-prod-vm-01';
-                    const rightSizeId = isProdVm ? 'opt-advisor-vm-right-size' : `opt-advisor-vm-right-size-${item.id}`;
-                    const rightSizeObj = {
-                        id: rightSizeId,
-                        appName: item.name,
-                        type: 'right-size',
-                        impact: 'high',
-                        savings: 45.00,
-                        recommendation: `Right-size underutilized virtual machine '${item.name}'.`,
-                        description: `Virtual machine '${item.name}' has had an average CPU utilization of less than 5% over the past 14 days. Demoting from Standard D2v3 to Standard B2s will save compute cost.`,
-                        source: 'Azure Advisor'
-                    };
-                    if (appliedMap.has(rightSizeId)) {
-                        appliedSuggestions.push({ ...rightSizeObj, applied: true });
-                    } else {
-                        suggestions.push(rightSizeObj);
                     }
                 }
             }
 
             // SWA dynamic suggestions
             if (item.type === 'frontend') {
-                const isDev = item.name.toLowerCase().endsWith('-dev') || item.name.toLowerCase().includes('-dev-');
+                const isDev = item.name.toLowerCase().includes('dev') || item.name.toLowerCase().includes('qa') || item.name.toLowerCase().includes('test') || item.isTestResource;
                 if (isDev) {
                     const optId = `opt-tier-${item.id}`;
                     const suggestionObj = {
@@ -554,9 +750,7 @@ const appController = {
                         description: 'Non-production Static Web Apps do not require custom SLA or enterprise routing, making them perfect candidates for the Azure Free tier.',
                         source: 'Azure Advisor'
                     };
-                    if (appliedMap.has(optId)) {
-                        appliedSuggestions.push({ ...suggestionObj, applied: true });
-                    } else if (item.resourceCost > 0) {
+                    if (!appliedMap.has(optId)) {
                         suggestions.push(suggestionObj);
                     }
                 }
@@ -564,42 +758,39 @@ const appController = {
 
             // Database dynamic suggestions
             if (item.type === 'database') {
-                const isDbFlex = item.name.toLowerCase() === 'estevia-db-flex';
-                const dbServerlessId = isDbFlex ? 'opt-advisor-db-serverless' : `opt-advisor-db-serverless-${item.id}`;
-                const dbPoolingId = isDbFlex ? 'opt-eva-db-pooling' : `opt-eva-db-pooling-${item.id}`;
-
-                // Database Serverless
-                const dbServerlessObj = {
-                    id: dbServerlessId,
-                    appName: item.name,
-                    type: 'db_serverless',
-                    impact: 'medium',
-                    savings: 30.00,
-                    recommendation: `Configure Serverless Compute tier for MySQL Flexible Server '${item.name}'.`,
-                    description: `Database activity drops to zero during off-peak hours (10 PM to 6 AM). Switching to Serverless compute tier with auto-pause enabled will eliminate database charges during idle windows.`,
-                    source: 'Azure Advisor'
-                };
-                if (appliedMap.has(dbServerlessId)) {
-                    appliedSuggestions.push({ ...dbServerlessObj, applied: true });
+                const isDbFlex = item.name.toLowerCase() === 'estevia-db-flex' || item.name.toLowerCase().includes('prod');
+                if (isDbFlex) {
+                    // Database Connection Pooling
+                    const dbPoolingId = item.name.toLowerCase() === 'estevia-db-flex' ? 'opt-eva-db-pooling' : `opt-eva-db-pooling-${item.id}`;
+                    const dbPoolingObj = {
+                        id: dbPoolingId,
+                        appName: item.name,
+                        type: 'db_pooling',
+                        impact: 'medium',
+                        savings: 25.00,
+                        recommendation: `Eva AI: Set up connection pooling proxy for DB Server '${item.name}'.`,
+                        description: `Eva AI telemetry observed short-lived connection spikes causing CPU utilization to surge. Implementing a connection pool proxy will stabilize CPU load and allow scaling down the database tier.`,
+                        source: 'Eva AI'
+                    };
+                    if (!appliedMap.has(dbPoolingId)) {
+                        suggestions.push(dbPoolingObj);
+                    }
                 } else {
-                    suggestions.push(dbServerlessObj);
-                }
-
-                // Database Pooling proxy
-                const dbPoolingObj = {
-                    id: dbPoolingId,
-                    appName: item.name,
-                    type: 'db_pooling',
-                    impact: 'medium',
-                    savings: 25.00,
-                    recommendation: `Eva AI: Set up connection pooling proxy for DB Server '${item.name}'.`,
-                    description: `Eva AI telemetry observed short-lived connection spikes causing CPU utilization to surge. Implementing a connection pool proxy will stabilize CPU load and allow scaling down the database tier.`,
-                    source: 'Eva AI'
-                };
-                if (appliedMap.has(dbPoolingId)) {
-                    appliedSuggestions.push({ ...dbPoolingObj, applied: true });
-                } else {
-                    suggestions.push(dbPoolingObj);
+                    // Database Serverless (for dev/test/burstable)
+                    const dbServerlessId = `opt-advisor-db-serverless-${item.id}`;
+                    const dbServerlessObj = {
+                        id: dbServerlessId,
+                        appName: item.name,
+                        type: 'db_serverless',
+                        impact: 'medium',
+                        savings: 30.00,
+                        recommendation: `Configure Serverless Compute tier for MySQL Flexible Server '${item.name}'.`,
+                        description: `Database activity drops to zero during off-peak hours (10 PM to 6 AM). Switching to Serverless compute tier with auto-pause enabled will eliminate database charges during idle windows.`,
+                        source: 'Azure Advisor'
+                    };
+                    if (!appliedMap.has(dbServerlessId)) {
+                        suggestions.push(dbServerlessObj);
+                    }
                 }
             }
 
@@ -617,9 +808,7 @@ const appController = {
                     description: `Eva AI detected stale untagged container images older than 30 days. Setting up auto-prune rules will save storage cost.`,
                     source: 'Eva AI'
                 };
-                if (appliedMap.has(acrPruningId)) {
-                    appliedSuggestions.push({ ...acrPruningObj, applied: true });
-                } else {
+                if (!appliedMap.has(acrPruningId)) {
                     suggestions.push(acrPruningObj);
                 }
             }
@@ -638,31 +827,8 @@ const appController = {
                     description: `This public IP address is no longer associated with any active network interface or load balancer, but continues to accrue idle reservation fees.`,
                     source: 'Azure Advisor'
                 };
-                if (appliedMap.has(ipDeallocateId)) {
-                    appliedSuggestions.push({ ...ipDeallocateObj, applied: true });
-                } else {
+                if (!appliedMap.has(ipDeallocateId)) {
                     suggestions.push(ipDeallocateObj);
-                }
-            }
-
-            // Sleep scheduler dynamic suggestions for dev/test SWA & Container App
-            if ((item.type === 'backend' || item.type === 'frontend') && item.isTestResource) {
-                const isFeedbackDev = item.name.toLowerCase() === 'estevia-feedback-api-dev';
-                const sleepSchedulerId = isFeedbackDev ? 'opt-eva-sleep-scheduler' : `opt-eva-sleep-scheduler-${item.id}`;
-                const sleepSchedulerObj = {
-                    id: sleepSchedulerId,
-                    appName: item.name,
-                    type: 'sleep_scheduler',
-                    impact: 'high',
-                    savings: 15.00,
-                    recommendation: `Eva AI: Activate Sleep Scheduler on non-production app '${item.name}'.`,
-                    description: `Eva AI analysis of traffic logs shows zero user requests between 8:00 PM and 7:00 AM local time. Enabling the sleep scheduler will save an estimated 55% of runtime costs.`,
-                    source: 'Eva AI'
-                };
-                if (appliedMap.has(sleepSchedulerId)) {
-                    appliedSuggestions.push({ ...sleepSchedulerObj, applied: true });
-                } else {
-                    suggestions.push(sleepSchedulerObj);
                 }
             }
         }
@@ -681,7 +847,6 @@ const appController = {
             source: 'Azure Advisor'
         };
         if (hasAcrRemediation) {
-            appliedSuggestions.push({ ...acrSuggestion, applied: true });
             let adjusted = false;
             for (const item of detailedCosts) {
                 if (item.type === 'registry' && item.resourceCost >= 5.00) {
@@ -711,9 +876,7 @@ const appController = {
             description: 'This custom domain points to an inactive static web app that was deleted last week. Cleaning it up reduces DNS clutter and domain costs.',
             source: 'Azure Advisor'
         };
-        if (appliedMap.has(optDnsId)) {
-            appliedSuggestions.push({ ...dnsSuggestion, applied: true });
-        } else {
+        if (!appliedMap.has(optDnsId)) {
             costBreakdown.dns += 1.00;
             if (suggestions.length === 0) {
                 suggestions.push(dnsSuggestion);
@@ -749,9 +912,7 @@ const appController = {
                             description: props.description || 'Azure Advisor recommendation for optimizing resource configuration.',
                             source: 'Azure Advisor'
                         };
-                        if (appliedMap.has(optId)) {
-                            appliedSuggestions.push({ ...suggestionObj, applied: true });
-                        } else {
+                        if (!appliedMap.has(optId)) {
                             suggestions.push(suggestionObj);
                         }
                     }
@@ -760,6 +921,11 @@ const appController = {
         } catch (advErr) {
             console.warn('[AppController] Live Azure Advisor API query skipped or failed:', advErr.message);
         }
+
+        // Reconstruct appliedSuggestions directly from appliedRemediations database records using the mapping helper
+        const appliedSuggestions = appliedRemediations.map(rem => {
+            return appController._getSuggestionDetails(rem.suggestion_id, rem.type, rem.app_name, parseFloat(rem.savings));
+        });
 
         const totalMonthlyCost = costBreakdown.swa + costBreakdown.aca + costBreakdown.dns + 
                                  (costBreakdown.database || 0) + (costBreakdown.vm || 0) + 
