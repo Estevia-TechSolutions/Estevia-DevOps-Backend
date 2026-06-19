@@ -9,10 +9,10 @@ if (process.env.NODE_ENV === 'test') {
             if (sqlLower.includes('select column_name')) {
                 return [['azure_container_registry', 'azure_devops_service_connection', 'docker_registry_service_connection', 'azure_key_vault_url', 'dev_db_host', 'qa_db_host', 'prod_db_host', 'dev_managed_env_id', 'prod_managed_env_id'].map(name => ({ COLUMN_NAME: name }))];
             }
-            if (sqlLower.includes('select name, app_type, status, azure_resource_details from applications')) {
+            if (sqlLower.includes('from applications')) {
                 return [[
-                    { name: 'estevia-feedback-api-dev', app_type: 'backend', status: 'deployed', azure_resource_details: '{}' },
-                    { name: 'estevia-db-flex', app_type: 'database', status: 'active', azure_resource_details: '{}' }
+                    { id: 1, name: 'estevia-feedback-api-dev', app_type: 'backend', status: 'deployed', azure_resource_details: '{}' },
+                    { id: 2, name: 'estevia-db-flex', app_type: 'database', status: 'active', azure_resource_details: '{}' }
                 ]];
             }
             if (sqlLower.includes('select * from organizations')) {
