@@ -7,5 +7,6 @@ router.post('/compare', protect, dbHubController.compareSchemas);
 router.post('/migrate', protect, restrictTo('owner', 'admin', 'contributor'), dbHubController.executeMigration);
 router.post('/migrate-data', protect, restrictTo('owner', 'admin', 'contributor'), dbHubController.migrateData);
 router.get('/erd', protect, dbHubController.getErdSchema);
+router.get('/backup', protect, dbHubController.backupDatabase);
 
 module.exports = router;

@@ -679,13 +679,14 @@ const appController = {
                 if (isDevOrQa) {
                     const isFeedbackDev = item.name.toLowerCase() === 'estevia-feedback-api-dev';
                     const sleepSchedulerId = isFeedbackDev ? 'opt-eva-sleep-scheduler' : `opt-eva-sleep-scheduler-${item.id}`;
+                    const dynamicSavings = Math.round(item.resourceCost * 0.55 * 100) / 100;
                     
                     const sleepSchedulerObj = {
                         id: sleepSchedulerId,
                         appName: item.name,
                         type: 'sleep_scheduler',
                         impact: 'high',
-                        savings: 15.00,
+                        savings: dynamicSavings,
                         recommendation: `Eva AI: Activate Sleep Scheduler on non-production app '${item.name}'.`,
                         description: `Eva AI analysis of traffic logs shows zero user requests between 8:00 PM and 7:00 AM local time. Enabling the sleep scheduler will save an estimated 55% of runtime costs.`,
                         source: 'Eva AI'
@@ -703,12 +704,13 @@ const appController = {
                 if (isProdVm) {
                     // VM right-sizing suggestion
                     const rightSizeId = item.name.toLowerCase() === 'estevia-prod-vm-01' ? 'opt-advisor-vm-right-size' : `opt-advisor-vm-right-size-${item.id}`;
+                    const dynamicSavings = Math.round(item.resourceCost * 0.40 * 100) / 100;
                     const rightSizeObj = {
                         id: rightSizeId,
                         appName: item.name,
                         type: 'right-size',
                         impact: 'high',
-                        savings: 45.00,
+                        savings: dynamicSavings,
                         recommendation: `Right-size underutilized virtual machine '${item.name}'.`,
                         description: `Virtual machine '${item.name}' has had an average CPU utilization of less than 5% over the past 14 days. Demoting from Standard D2v3 to Standard B2s will save compute cost.`,
                         source: 'Azure Advisor'
@@ -719,12 +721,13 @@ const appController = {
                 } else {
                     // VM auto-shutdown suggestion for non-production
                     const optStopId = `opt-vm-stop-${item.id}`;
+                    const dynamicSavings = Math.round(item.resourceCost * 0.50 * 100) / 100;
                     const stopSuggestionObj = {
                         id: optStopId,
                         appName: item.name,
                         type: 'stop_vm',
                         impact: 'medium',
-                        savings: item.resourceCost * 0.5 || 42.50,
+                        savings: dynamicSavings,
                         recommendation: `Schedule auto-shutdown for VM '${item.name}' during off-hours.`,
                         description: 'Virtual machines running 24/7 accrue high runtime costs. Scheduling auto-shutdown (e.g., 7 PM - 7 AM) can cut VM compute costs by 50%.',
                         source: 'Azure Advisor'
@@ -740,12 +743,13 @@ const appController = {
                 const isDev = item.name.toLowerCase().includes('dev') || item.name.toLowerCase().includes('qa') || item.name.toLowerCase().includes('test') || item.isTestResource;
                 if (isDev) {
                     const optId = `opt-tier-${item.id}`;
+                    const dynamicSavings = Math.round(item.resourceCost * 1.00 * 100) / 100;
                     const suggestionObj = {
                         id: optId,
                         appName: item.name,
                         type: 'tier_demote',
                         impact: 'medium',
-                        savings: 9.00,
+                        savings: dynamicSavings,
                         recommendation: `Demote static app '${item.name}' to Free Tier.`,
                         description: 'Non-production Static Web Apps do not require custom SLA or enterprise routing, making them perfect candidates for the Azure Free tier.',
                         source: 'Azure Advisor'
@@ -762,12 +766,13 @@ const appController = {
                 if (isDbFlex) {
                     // Database Connection Pooling
                     const dbPoolingId = item.name.toLowerCase() === 'estevia-db-flex' ? 'opt-eva-db-pooling' : `opt-eva-db-pooling-${item.id}`;
+                    const dynamicSavings = Math.round(item.resourceCost * 0.20 * 100) / 100;
                     const dbPoolingObj = {
                         id: dbPoolingId,
                         appName: item.name,
                         type: 'db_pooling',
                         impact: 'medium',
-                        savings: 25.00,
+                        savings: dynamicSavings,
                         recommendation: `Eva AI: Set up connection pooling proxy for DB Server '${item.name}'.`,
                         description: `Eva AI telemetry observed short-lived connection spikes causing CPU utilization to surge. Implementing a connection pool proxy will stabilize CPU load and allow scaling down the database tier.`,
                         source: 'Eva AI'
@@ -778,12 +783,13 @@ const appController = {
                 } else {
                     // Database Serverless (for dev/test/burstable)
                     const dbServerlessId = `opt-advisor-db-serverless-${item.id}`;
+                    const dynamicSavings = Math.round(item.resourceCost * 0.35 * 100) / 100;
                     const dbServerlessObj = {
                         id: dbServerlessId,
                         appName: item.name,
                         type: 'db_serverless',
                         impact: 'medium',
-                        savings: 30.00,
+                        savings: dynamicSavings,
                         recommendation: `Configure Serverless Compute tier for MySQL Flexible Server '${item.name}'.`,
                         description: `Database activity drops to zero during off-peak hours (10 PM to 6 AM). Switching to Serverless compute tier with auto-pause enabled will eliminate database charges during idle windows.`,
                         source: 'Azure Advisor'
@@ -798,12 +804,13 @@ const appController = {
             if (item.type === 'registry') {
                 const isAcr = item.name.toLowerCase().includes('acr') || item.name.toLowerCase().includes('registry');
                 const acrPruningId = isAcr ? 'opt-eva-acr-pruning' : `opt-eva-acr-pruning-${item.id}`;
+                const dynamicSavings = Math.round(item.resourceCost * 0.15 * 100) / 100;
                 const acrPruningObj = {
                     id: acrPruningId,
                     appName: item.name,
                     type: 'acr_pruning',
                     impact: 'low',
-                    savings: 5.00,
+                    savings: dynamicSavings,
                     recommendation: `Eva AI: Enable container registry image lifecycle rules for '${item.name}'.`,
                     description: `Eva AI detected stale untagged container images older than 30 days. Setting up auto-prune rules will save storage cost.`,
                     source: 'Eva AI'
@@ -817,12 +824,13 @@ const appController = {
             if (item.type === 'network' && item.name.toLowerCase().includes('ip')) {
                 const isOrphanIp = item.name.toLowerCase() === 'estevia-orphan-ip';
                 const ipDeallocateId = isOrphanIp ? 'opt-advisor-ip-deallocate' : `opt-advisor-ip-deallocate-${item.id}`;
+                const dynamicSavings = Math.round(item.resourceCost * 1.00 * 100) / 100;
                 const ipDeallocateObj = {
                     id: ipDeallocateId,
                     appName: item.name,
                     type: 'deallocate_ip',
                     impact: 'low',
-                    savings: 4.00,
+                    savings: dynamicSavings,
                     recommendation: `Delete unassociated public IP address '${item.name}'.`,
                     description: `This public IP address is no longer associated with any active network interface or load balancer, but continues to accrue idle reservation fees.`,
                     source: 'Azure Advisor'
@@ -836,12 +844,21 @@ const appController = {
         // ACR consolidation recommendation
         const registries = azureResources.filter(r => r.type === 'Microsoft.ContainerRegistry/registries');
         const hasAcrRemediation = appliedMap.has('opt-acr-consolidate');
+        
+        let firstRegistryCost = 5.00;
+        const firstRegistry = registries.find(r => r.id);
+        if (firstRegistry) {
+            const match = detailedCosts.find(c => c.id === firstRegistry.id);
+            if (match) firstRegistryCost = match.resourceCost;
+        }
+        const acrSavings = Math.round(firstRegistryCost * 0.25 * 100) / 100;
+
         const acrSuggestion = {
             id: 'opt-acr-consolidate',
             appName: 'Container Registries',
             type: 'consolidate',
             impact: 'low',
-            savings: 5.00,
+            savings: acrSavings,
             recommendation: 'Consolidate multiple Container Registries into one.',
             description: 'Multiple container registries detected. Consolidating build artifacts under a single Basic registry reduces redundant monthly base licensing fees.',
             source: 'Azure Advisor'
@@ -849,8 +866,8 @@ const appController = {
         if (hasAcrRemediation) {
             let adjusted = false;
             for (const item of detailedCosts) {
-                if (item.type === 'registry' && item.resourceCost >= 5.00) {
-                    item.resourceCost = Math.max(0, item.resourceCost - 5.00);
+                if (item.type === 'registry' && item.resourceCost >= acrSavings) {
+                    item.resourceCost = Math.max(0, item.resourceCost - acrSavings);
                     item.totalCost = item.resourceCost + item.dnsCost;
                     item.details = `${item.details} (Consolidated)`;
                     adjusted = true;
@@ -858,7 +875,7 @@ const appController = {
                 }
             }
             if (adjusted) {
-                costBreakdown.registry = Math.max(0, costBreakdown.registry - 5.00);
+                costBreakdown.registry = Math.max(0, costBreakdown.registry - acrSavings);
             }
         } else if (registries.length > 1) {
             suggestions.push(acrSuggestion);
@@ -4373,6 +4390,12 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             if (!aiResponse) {
                 const q = question.toLowerCase();
                 
+                // Helper to retrieve dynamic savings from active suggestions list
+                const getSavings = (type, appName) => {
+                    const found = suggestions.find(s => s.type === type && (!appName || s.appName?.toLowerCase() === appName.toLowerCase()));
+                    return found ? `**$${found.savings.toFixed(2)}/mo**` : null;
+                };
+
                 // Determine whether user wants lists or optimizations
                 const isOptQuery = q.includes('opt') || q.includes('remedi') || q.includes('sav') || q.includes('recommend') || q.includes('cost') || q.includes('reduct');
 
@@ -4400,7 +4423,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         }
                     } else {
                         const names = backends.map(a => `**${a.name}**`).join(', ');
-                        aiResponse = `**Eva AI Analysis**: You currently have **${backends.length} Container App (ACA)** backend resources deployed: ${names || 'None'}. Scaling inactive backend resources to zero replica counts during off-peak hours could save up to $10.00 - $15.00/mo each.`;
+                        const potentialSavings = getSavings('sleep_scheduler') || 'up to $15.00/mo';
+                        aiResponse = `**Eva AI Analysis**: You currently have **${backends.length} Container App (ACA)** backend resources deployed: ${names || 'None'}. Scaling inactive backend resources to zero replica counts or using sleep schedules during off-peak hours could save ${potentialSavings} each.`;
                     }
                 } else if (q.includes('database') || q.includes('sql') || q.includes('db')) {
                     const optimizableDb = suggestions.filter(s => s.type === 'db_serverless' || s.type === 'db_pooling' || databases.some(d => d.name.toLowerCase() === s.appName?.toLowerCase()));
@@ -4413,7 +4437,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         }
                     } else {
                         const names = databases.map(a => `**${a.name}**`).join(', ');
-                        aiResponse = `**Eva AI Analysis**: You have **${databases.length} Database** server(s) configured: ${names || 'None'}. The primary server **estevia-db-flex** is eligible for Serverless scale-down rules, which could save **$30.00/mo**.`;
+                        const dbSavings = getSavings('db_serverless', 'estevia-db-flex') || '**$30.00/mo**';
+                        aiResponse = `**Eva AI Analysis**: You have **${databases.length} Database** server(s) configured: ${names || 'None'}. The primary server **estevia-db-flex** is eligible for Serverless scale-down rules, which could save ${dbSavings}.`;
                     }
                 } else if (q.includes('vm') || q.includes('virtual machine')) {
                     const optimizableVm = suggestions.filter(s => s.type === 'right-size' || s.type === 'stop_vm' || vms.some(v => v.name.toLowerCase() === s.appName?.toLowerCase()));
@@ -4426,14 +4451,19 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         }
                     } else {
                         const names = vms.map(a => `**${a.name}**`).join(', ');
-                        aiResponse = `**Eva AI Analysis**: You have **${vms.length} Virtual Machine(s)**: ${names || 'None'}. I highly recommend right-sizing **estevia-prod-vm-01** (saves **$45.00/mo**). CPU utilization remains below 5%.`;
+                        const vmSavings = getSavings('right-size', 'estevia-prod-vm-01') || '**$45.00/mo**';
+                        aiResponse = `**Eva AI Analysis**: You have **${vms.length} Virtual Machine(s)**: ${names || 'None'}. I highly recommend right-sizing **estevia-prod-vm-01** (saves ${vmSavings}). CPU utilization remains below 5%.`;
                     }
                 } else if (q.includes('total') || q.includes('how many resource') || q.includes('how many app')) {
                     aiResponse = `**Eva AI Analysis**: You have a total of **${detailedCosts.length} active resources** in this organization. This includes **${frontends.length} SWA(s)**, **${backends.length} backend Container App(s)**, **${vms.length} VM(s)**, and **${databases.length} database(s)**. The total potential savings opportunity is **$${costData.summary.potentialSavings.toFixed(2)}/mo** across **${suggestions.length} active recommendation(s)**.`;
                 } else if (q.includes('right-size') || q.includes('optimize')) {
-                    aiResponse = `**Eva AI Analysis**: Based on active telemetry, we recommend right-sizing standard compute VM resources (saves **$45.00/mo**) and converting databases to serverless compute tiers with auto-pause enabled (saves **$30.00/mo**). Detailed actions are available in the *Recommendations* tab.`;
+                    const vmSavings = getSavings('right-size') || '**$45.00/mo**';
+                    const dbSavings = getSavings('db_serverless') || '**$30.00/mo**';
+                    aiResponse = `**Eva AI Analysis**: Based on active telemetry, we recommend right-sizing standard compute VM resources (saves ${vmSavings}) and converting databases to serverless compute tiers with auto-pause enabled (saves ${dbSavings}). Detailed actions are available in the *Recommendations* tab.`;
                 } else if (q.includes('sleep') || q.includes('schedule') || q.includes('zero') || q.includes('replica')) {
-                    aiResponse = `**Eva AI Analysis**: Activating sleep scheduler rules on non-production environments during idle windows saves **$15.00/mo** per app. Similarly, scaling minimum replica counts to 0 for dev Container Apps saves **$10.00/mo**. You can apply these in the *Recommendations* tab.`;
+                    const sleepSavings = getSavings('sleep_scheduler') || '**$15.00/mo**';
+                    const scaleSavings = getSavings('scale_zero') || '**$10.00/mo**';
+                    aiResponse = `**Eva AI Analysis**: Activating sleep scheduler rules on non-production environments during idle windows saves ${sleepSavings} per app. Similarly, scaling minimum replica counts to 0 for dev Container Apps saves ${scaleSavings}. You can apply these in the *Recommendations* tab.`;
                 } else {
                     aiResponse = `**Eva AI Analysis**: Based on your **${detailedCosts.length} active resources**, we have identified total potential savings of **$${costData.summary.potentialSavings.toFixed(2)}/mo**. I highly recommend reviewing VM right-sizing and enabling sleep schedules for non-production environments under the *Recommendations* tab.`;
                 }

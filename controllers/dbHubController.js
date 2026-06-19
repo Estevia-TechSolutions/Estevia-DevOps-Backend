@@ -458,6 +458,88 @@ const dbHubController = {
             console.error('[DBHub] ERD fetch failed:', error);
             res.status(500).json({ success: false, message: error.message });
         }
+    },
+
+    /**
+     * GET /api/database-hub/backup
+     * Generates a SQL backup dump of the specified database server/schema purely in JS and downloads it.
+     */
+    backupDatabase: async (req, res) => {
+        try {
+            const { serverName, dbName } = req.query;
+            if (!serverName || !dbName) {
+                return res.status(400).json({ success: false, message: 'Missing serverName or dbName parameters.' });
+            }
+
+            console.log(`[DBHub] Generating pure JS database backup for: server=${serverName}, database=${dbName}...`);
+
+            const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
+            const appController = require('./appController');
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
+            const mysql = require('mysql2/promise');
+            const conn = await mysql.createConnection({
+                host: resolvedHost,
+                user: process.env.DB_USER || 'estevia',
+                password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                database: dbName,
+                port: process.env.DB_PORT || 3306,
+                ssl: { require: true, rejectUnauthorized: false },
+                connectTimeout: 8000
+            });
+
+            try {
+                // 1. Fetch tables list
+                const [tablesResult] = await conn.query('SHOW TABLES');
+                if (tablesResult.length === 0) {
+                    res.setHeader('Content-Type', 'application/sql');
+                    res.setHeader('Content-Disposition', `attachment; filename="${dbName}_backup_${Date.now()}.sql"`);
+                    return res.send(`-- MySQL Dump of Database: ${dbName}\n-- Empty database.`);
+                }
+                const dbNameKey = Object.keys(tablesResult[0])[0];
+                const tables = tablesResult.map(row => row[dbNameKey]);
+
+                let dump = '';
+                dump += `-- MySQL Dump of Database: ${dbName}\n`;
+                dump += `-- Generated dynamically by Estevia DevOps Hub\n`;
+                dump += `-- Date: ${new Date().toISOString()}\n\n`;
+                dump += `SET FOREIGN_KEY_CHECKS = 0;\n\n`;
+
+                for (const table of tables) {
+                    dump += `-- ------------------------------------------------------\n`;
+                    dump += `-- Table structure for table \`${table}\`\n`;
+                    dump += `-- ------------------------------------------------------\n`;
+                    dump += `DROP TABLE IF EXISTS \`${table}\`;\n`;
+                    const [createResult] = await conn.query(`SHOW CREATE TABLE \`${table}\``);
+                    const ddl = createResult[0]['Create Table'];
+                    dump += `${ddl};\n\n`;
+
+                    dump += `-- ------------------------------------------------------\n`;
+                    dump += `-- Table data DML for table \`${table}\`\n`;
+                    dump += `-- ------------------------------------------------------\n`;
+                    const [rows] = await conn.query(`SELECT * FROM \`${table}\``);
+                    if (rows.length > 0) {
+                        const columns = Object.keys(rows[0]).map(c => `\`${c}\``).join(', ');
+                        const values = rows.map(row => 
+                            '(' + Object.values(row).map(v => 
+                                v === null ? 'NULL' : mysql.escape(v)
+                            ).join(', ') + ')'
+                        ).join(',\n');
+                        dump += `INSERT INTO \`${table}\` (${columns}) VALUES\n${values};\n\n`;
+                    }
+                }
+                dump += `SET FOREIGN_KEY_CHECKS = 1;\n`;
+
+                res.setHeader('Content-Type', 'application/sql');
+                res.setHeader('Content-Disposition', `attachment; filename="${dbName}_backup_${Date.now()}.sql"`);
+                res.send(dump);
+            } finally {
+                await conn.end();
+            }
+        } catch (error) {
+            console.error('[DBHub] Backup generation failed:', error);
+            res.status(500).json({ success: false, message: error.message });
+        }
     }
 };
 
