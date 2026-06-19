@@ -3738,6 +3738,8 @@ const appController = {
             }
 
             // Generate optimization recommendations
+            const appliedSuggestions = [];
+
             for (const item of detailedCosts) {
                 if (item.type === 'backend') {
                     const isDevOrQa = item.name.toLowerCase().endsWith('-dev') || 
@@ -3745,18 +3747,21 @@ const appController = {
                                      item.name.toLowerCase().includes('-dev-') || 
                                      item.name.toLowerCase().includes('-qa-');
                     
-                    if (isDevOrQa && item.resourceCost > 0) {
+                    if (isDevOrQa) {
                         const optId = `opt-replica-${item.id}`;
-                        if (!appliedMap.has(optId)) {
-                            suggestions.push({
-                                id: optId,
-                                appName: item.name,
-                                type: 'scale_zero',
-                                impact: 'high',
-                                savings: 10.00,
-                                recommendation: `Scale minimum replicas to 0 for dev/qa Container App '${item.name}'.`,
-                                description: 'Currently configured to keep container instances running constantly. Scaling to zero when idle eliminates idle run-rate charges.'
-                            });
+                        const suggestionObj = {
+                            id: optId,
+                            appName: item.name,
+                            type: 'scale_zero',
+                            impact: 'high',
+                            savings: 10.00,
+                            recommendation: `Scale minimum replicas to 0 for dev/qa Container App '${item.name}'.`,
+                            description: 'Currently configured to keep container instances running constantly. Scaling to zero when idle eliminates idle run-rate charges.'
+                        };
+                        if (appliedMap.has(optId)) {
+                            appliedSuggestions.push({ ...suggestionObj, applied: true });
+                        } else if (item.resourceCost > 0) {
+                            suggestions.push(suggestionObj);
                         }
                     }
                 }
@@ -3765,16 +3770,19 @@ const appController = {
                     const isDevOrProd = item.name.toLowerCase().includes('dev') || item.name.toLowerCase().includes('prod');
                     if (isDevOrProd) {
                         const optId = `opt-vm-stop-${item.id}`;
-                        if (!appliedMap.has(optId)) {
-                            suggestions.push({
-                                id: optId,
-                                appName: item.name,
-                                type: 'stop_vm',
-                                impact: 'medium',
-                                savings: item.resourceCost * 0.5 || 42.50,
-                                recommendation: `Schedule auto-shutdown for VM '${item.name}' during off-hours.`,
-                                description: 'Virtual machines running 24/7 accrue high runtime costs. Scheduling auto-shutdown (e.g., 7 PM - 7 AM) can cut VM compute costs by 50%.'
-                            });
+                        const suggestionObj = {
+                            id: optId,
+                            appName: item.name,
+                            type: 'stop_vm',
+                            impact: 'medium',
+                            savings: item.resourceCost * 0.5 || 42.50,
+                            recommendation: `Schedule auto-shutdown for VM '${item.name}' during off-hours.`,
+                            description: 'Virtual machines running 24/7 accrue high runtime costs. Scheduling auto-shutdown (e.g., 7 PM - 7 AM) can cut VM compute costs by 50%.'
+                        };
+                        if (appliedMap.has(optId)) {
+                            appliedSuggestions.push({ ...suggestionObj, savings: (item.resourceCost || 42.50), applied: true });
+                        } else {
+                            suggestions.push(suggestionObj);
                         }
                     }
                 }
@@ -3783,16 +3791,19 @@ const appController = {
                     const isDev = item.name.toLowerCase().endsWith('-dev') || item.name.toLowerCase().includes('-dev-');
                     if (isDev) {
                         const optId = `opt-tier-${item.id}`;
-                        if (!appliedMap.has(optId)) {
-                            suggestions.push({
-                                id: optId,
-                                appName: item.name,
-                                type: 'tier_demote',
-                                impact: 'medium',
-                                savings: item.resourceCost || 9.00,
-                                recommendation: `Demote static app '${item.name}' to Free Tier.`,
-                                description: 'Non-production Static Web Apps do not require custom SLA or enterprise routing, making them perfect candidates for the Azure Free tier.'
-                            });
+                        const suggestionObj = {
+                            id: optId,
+                            appName: item.name,
+                            type: 'tier_demote',
+                            impact: 'medium',
+                            savings: 9.00,
+                            recommendation: `Demote static app '${item.name}' to Free Tier.`,
+                            description: 'Non-production Static Web Apps do not require custom SLA or enterprise routing, making them perfect candidates for the Azure Free tier.'
+                        };
+                        if (appliedMap.has(optId)) {
+                            appliedSuggestions.push({ ...suggestionObj, applied: true });
+                        } else if (item.resourceCost > 0) {
+                            suggestions.push(suggestionObj);
                         }
                     }
                 }
@@ -3801,7 +3812,17 @@ const appController = {
             // ACR consolidation recommendation
             const registries = azureResources.filter(r => r.type === 'Microsoft.ContainerRegistry/registries');
             const hasAcrRemediation = appliedMap.has('opt-acr-consolidate');
+            const acrSuggestion = {
+                id: 'opt-acr-consolidate',
+                appName: 'Container Registries',
+                type: 'consolidate',
+                impact: 'low',
+                savings: 5.00,
+                recommendation: 'Consolidate multiple Container Registries into one.',
+                description: 'Multiple container registries detected. Consolidating build artifacts under a single Basic registry reduces redundant monthly base licensing fees.'
+            };
             if (hasAcrRemediation) {
+                appliedSuggestions.push({ ...acrSuggestion, applied: true });
                 // Adjust costBreakdown and detailedCosts for one registry
                 let adjusted = false;
                 for (const item of detailedCosts) {
@@ -3817,35 +3838,28 @@ const appController = {
                     costBreakdown.registry = Math.max(0, costBreakdown.registry - 5.00);
                 }
             } else if (registries.length > 1) {
-                suggestions.push({
-                    id: 'opt-acr-consolidate',
-                    appName: 'Container Registries',
-                    type: 'consolidate',
-                    impact: 'low',
-                    savings: 5.00,
-                    recommendation: 'Consolidate multiple Container Registries into one.',
-                    description: 'Multiple container registries detected. Consolidating build artifacts under a single Basic registry reduces redundant monthly base licensing fees.'
-                });
+                suggestions.push(acrSuggestion);
             }
 
             // General CNAME record cleanup suggestion
             const optDnsId = 'opt-dns-orphaned';
+            const dnsSuggestion = {
+                id: optDnsId,
+                appName: 'General',
+                type: 'remove_cname',
+                impact: 'low',
+                savings: 1.00,
+                recommendation: 'Remove orphaned DNS CNAME record "staging-test.esteviatech.com".',
+                description: 'This custom domain points to an inactive static web app that was deleted last week. Cleaning it up reduces DNS clutter and domain costs.'
+            };
             if (appliedMap.has(optDnsId)) {
-                // No CNAME suggestion added, and we do not add the 1.00 cost to DNS totals
+                appliedSuggestions.push({ ...dnsSuggestion, applied: true });
             } else {
                 // Add the orphaned cost to the general breakdown so applying it actually reduces run rate
                 costBreakdown.dns += 1.00;
                 
                 if (suggestions.length === 0) {
-                    suggestions.push({
-                        id: optDnsId,
-                        appName: 'General',
-                        type: 'remove_cname',
-                        impact: 'low',
-                        savings: 1.00,
-                        recommendation: 'Remove orphaned DNS CNAME record "staging-test.esteviatech.com".',
-                        description: 'This custom domain points to an inactive static web app that was deleted last week. Cleaning it up reduces DNS clutter and domain costs.'
-                    });
+                    suggestions.push(dnsSuggestion);
                 }
             }
 
@@ -3871,7 +3885,8 @@ const appController = {
                     breakdown: costBreakdown
                 },
                 detailedCosts: detailedCosts,
-                suggestions: suggestions
+                suggestions: suggestions,
+                appliedSuggestions: appliedSuggestions
             });
         } catch (error) {
             console.error('[AppController] getCostData failed:', error);
