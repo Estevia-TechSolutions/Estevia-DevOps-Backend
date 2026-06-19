@@ -54,6 +54,44 @@ async function auditLogger(req, res, next) {
             } else if (path.includes('/environments/clone')) {
                 actionType = 'ENV_CLONE';
                 target = req.body?.appName ? `${req.body.appName} (${req.body.sourceEnv} -> ${req.body.targetEnv})` : 'Environment';
+            } else if (path.includes('/apps/cost/apply-remediation')) {
+                actionType = 'APPLY_REMEDIATION';
+                target = req.body?.appName ? `${req.body.appName} (${req.body.type || 'Remedy'})` : 'Cost Optimization';
+            } else if (path.includes('/apps/cost/ask-eva')) {
+                actionType = 'EVA_AI_CONSULT';
+                target = req.body?.question ? req.body.question.substring(0, 100) : 'Eva AI Assistant';
+            } else if (path.includes('/keyvault/map')) {
+                actionType = 'KEYVAULT_SECRET_MAP';
+                target = req.body?.secretName || 'KeyVault Secret';
+            } else if (path.includes('/keyvault/mappings/')) {
+                actionType = 'KEYVAULT_SECRET_UNMAP';
+                target = path.split('/').pop() || 'Secret Mapping';
+            } else if (path.includes('/apps/') && path.endsWith('/control')) {
+                actionType = 'RESOURCE_POWER_CONTROL';
+                const parts = path.split('/');
+                const ctrlIdx = parts.indexOf('control');
+                target = (ctrlIdx > 0) ? parts[ctrlIdx - 1] : 'Azure Resource';
+            } else if (path.includes('/apps/pipeline') || path.includes('/apps/create-pipeline-yml')) {
+                actionType = 'PIPELINE_CREATE';
+                target = req.body?.appName || req.body?.repoName || 'CI/CD Pipeline';
+            } else if (path.includes('/apps/databases')) {
+                actionType = 'PROVISION_DB';
+                target = req.body?.dbName || 'Database Instance';
+            } else if (path.includes('/org/setup-azure') || path.includes('/org/setup-devops') || path.includes('/org/setup-dns') || path.includes('/org/complete') || path.includes('/org/register')) {
+                actionType = 'ONBOARDING_SETUP';
+                target = path.split('/').pop() || 'Organization Onboarding';
+            } else if (path.includes('/scheduler/rules')) {
+                actionType = 'SCHEDULER_SAVE';
+                target = req.body?.ruleName || 'Sleep Scheduler Rule';
+            } else if (path.includes('/database-hub/compare')) {
+                actionType = 'DB_SCHEMA_COMPARE';
+                target = req.body?.sourceDb && req.body?.targetDb ? `${req.body.sourceDb} -> ${req.body.targetDb}` : 'Database Hub';
+            } else if (path.includes('/database-hub/migrate')) {
+                actionType = 'DB_SCHEMA_MIGRATE';
+                target = req.body?.targetDb || 'Database Hub Migration';
+            } else if (path.includes('/database-hub/migrate-data')) {
+                actionType = 'DB_DATA_MIGRATE';
+                target = req.body?.targetDb || 'Database Hub Data Migration';
             } else if (method === 'DELETE' && path.startsWith('/api/apps/')) {
                 actionType = 'DELETE_RESOURCES';
                 target = path.split('/').pop() || 'Azure Resource';

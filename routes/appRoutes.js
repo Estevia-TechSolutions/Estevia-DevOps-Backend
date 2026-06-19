@@ -45,6 +45,9 @@ router.get('/cost', appController.getCostData);
 // Apply cost optimization remediation suggestion
 router.post('/cost/apply-remediation', restrictTo('owner', 'admin', 'contributor'), appController.applyRemediation);
 
+// Ask Eva AI about cost optimization
+router.post('/cost/ask-eva', restrictTo('owner', 'admin', 'contributor'), appController.askEva);
+
 // Fetch billing invoices history
 router.get('/billing', appController.getBillingHistory);
 router.get('/billing/forecast', appController.getBillingForecast);

@@ -1,3 +1,4 @@
+process.env.NODE_ENV = 'test';
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
@@ -118,7 +119,7 @@ async function runIntegrationTests() {
         // }
         // console.log('✅ Test 2 Passed.');
 
-        // // Test 3: Request credentials list with valid organizationId
+        // Test 3: Request credentials list with valid organizationId
         // console.log('Test 3: Requesting /api/credentials?organizationId=estevia...');
         // if (process.env.TF_BUILD) {
         //     console.log('Running in Azure DevOps (CI) environment. Skipping Database integration Test 3 to avoid private network ETIMEDOUT.');
@@ -132,6 +133,16 @@ async function runIntegrationTests() {
         //     }
         //     console.log('✅ Test 3 Passed.');
         // }
+
+        // Test 4: Ask Eva AI Analyst
+        console.log('Test 4: Requesting POST /api/apps/cost/ask-eva...');
+        const askEvaRes = await makeRequest('/api/apps/cost/ask-eva', 'POST', { question: 'How can we optimize SQL Database costs?' });
+        console.log('Status Code:', askEvaRes.statusCode);
+        console.log('Response:', askEvaRes.body);
+        if (askEvaRes.statusCode !== 200 || !askEvaRes.body.success || !askEvaRes.body.answer) {
+            throw new Error('Ask Eva AI endpoint failed');
+        }
+        console.log('✅ Test 4 Passed.');
 
         console.log('=== All Integration Tests Passed Successfully! ===');
     } catch (error) {

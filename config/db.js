@@ -1,5 +1,39 @@
 const mysql = require('mysql2/promise');
 
+if (process.env.NODE_ENV === 'test') {
+    console.log('[DevOps DB] Using mock database connection pool for testing mode.');
+    const mockPool = {
+        query: async (sql, params) => {
+            console.log(`[Mock DB] Executing query: ${sql}`);
+            const sqlLower = sql.toLowerCase();
+            if (sqlLower.includes('select column_name')) {
+                return [['azure_container_registry', 'azure_devops_service_connection', 'docker_registry_service_connection', 'azure_key_vault_url', 'dev_db_host', 'qa_db_host', 'prod_db_host', 'dev_managed_env_id', 'prod_managed_env_id'].map(name => ({ COLUMN_NAME: name }))];
+            }
+            if (sqlLower.includes('select name, app_type, status, azure_resource_details from applications')) {
+                return [[
+                    { name: 'estevia-feedback-api-dev', app_type: 'backend', status: 'deployed', azure_resource_details: '{}' },
+                    { name: 'estevia-db-flex', app_type: 'database', status: 'active', azure_resource_details: '{}' }
+                ]];
+            }
+            if (sqlLower.includes('select * from organizations')) {
+                return [[
+                    { id: 'estevia', azure_subscription_id: 'sub-id', azure_resource_group: 'rg', default_dns_domain: 'esteviatech.com' }
+                ]];
+            }
+            if (sqlLower.includes('insert into audit_logs')) {
+                return [{ insertId: 99 }];
+            }
+            return [[]];
+        },
+        getConnection: async () => ({
+            query: async () => [[]],
+            release: () => {}
+        })
+    };
+    module.exports = mockPool;
+    return;
+}
+
 const host = process.env.DB_HOST;
 const user = process.env.DB_USER;
 const password = process.env.DB_PASSWORD;
