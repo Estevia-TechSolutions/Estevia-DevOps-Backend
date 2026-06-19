@@ -99,7 +99,7 @@ async function runAutoMigration() {
             CREATE TABLE IF NOT EXISTS applied_remediations (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 organization_id VARCHAR(50) NOT NULL,
-                suggestion_id VARCHAR(100) NOT NULL,
+                suggestion_id VARCHAR(255) NOT NULL,
                 type VARCHAR(50) NOT NULL,
                 app_name VARCHAR(100) NOT NULL,
                 savings DECIMAL(10, 2) NOT NULL,
@@ -108,6 +108,19 @@ async function runAutoMigration() {
                 FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
             )
         `);
+
+        // Check if suggestion_id in applied_remediations needs modification
+        const [remediationCols] = await pool.query(`
+            SELECT CHARACTER_MAXIMUM_LENGTH 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+              AND TABLE_NAME = 'applied_remediations'
+              AND COLUMN_NAME = 'suggestion_id'
+        `);
+        if (remediationCols.length > 0 && remediationCols[0].CHARACTER_MAXIMUM_LENGTH < 255) {
+            console.log('[DevOps DB] Modifying suggestion_id length to VARCHAR(255) in applied_remediations...');
+            await pool.query(`ALTER TABLE applied_remediations MODIFY COLUMN suggestion_id VARCHAR(255) NOT NULL`);
+        }
 
         // Seed initial directory users and roles
         console.log('[DevOps DB] Seeding initial directory users...');
