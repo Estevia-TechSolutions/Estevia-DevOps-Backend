@@ -1065,6 +1065,7 @@ const appController = {
             const apps = [];
 
             // 1. Fetch Static Web Apps (Frontends)
+            let swaScanSuccess = false;
             try {
                 for await (const site of webClient.staticSites.listStaticSitesByResourceGroup(resourceGroup)) {
                     apps.push({
@@ -1078,11 +1079,13 @@ const appController = {
                         resourceGroup: resourceGroup
                     });
                 }
+                swaScanSuccess = true;
             } catch (err) {
                 console.error('[AppController] Error scanning static sites:', err.message);
             }
 
             // 2. Fetch Container Apps (Backends)
+            let caScanSuccess = false;
             try {
                 for await (const app of containerClient.containerApps.listByResourceGroup(resourceGroup)) {
                     apps.push({
@@ -1096,11 +1099,13 @@ const appController = {
                         resourceGroup: resourceGroup
                     });
                 }
+                caScanSuccess = true;
             } catch (err) {
                 console.error('[AppController] Error scanning container apps:', err.message);
             }
 
             // 2.5. Fetch Virtual Machines (VMs)
+            let vmScanSuccess = false;
             try {
                 const tokenRes = await credential.getToken("https://management.azure.com/.default");
                 const token = tokenRes.token;
@@ -1109,6 +1114,7 @@ const appController = {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 const vms = vmRes.data?.value || [];
+                vmScanSuccess = true;
                 for (const vm of vms) {
                     let status = 'running';
                     try {
@@ -1155,19 +1161,35 @@ const appController = {
                 }
             } catch (err) {
                 console.error('[AppController] Error scanning virtual machines:', err.message);
-                if (!process.env.AZURE_CLIENT_ID) {
+            }
+
+            // 2.7. Fetch MySQL Flexible Servers (Databases)
+            let dbScanSuccess = false;
+            try {
+                const tokenRes = await credential.getToken("https://management.azure.com/.default");
+                const token = tokenRes.token;
+                const dbUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.DBforMySQL/flexibleServers?api-version=2021-05-01`;
+                const dbRes = await axios.get(dbUrl, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const servers = dbRes.data?.value || [];
+                dbScanSuccess = true;
+                for (const server of servers) {
                     apps.push({
-                        name: 'estevia-ml-vm-dev',
-                        type: 'vm',
-                        location: 'eastus2',
-                        hostname: `dev.ml.${defaultDomain}`,
-                        resourceId: `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/virtualMachines/estevia-ml-vm-dev`,
-                        status: 'running',
-                        repositoryUrl: `https://github.com/${githubOwner}/estevia-ml-setup`,
+                        name: server.name,
+                        type: 'database',
+                        location: server.location,
+                        hostname: server.properties?.fullyQualifiedDomainName || `${server.name}.mysql.database.azure.com`,
+                        resourceId: server.id,
+                        status: server.properties?.state?.toLowerCase() === 'ready' ? 'deployed' : 'pending',
+                        repositoryUrl: '',
                         resourceGroup: resourceGroup
                     });
                 }
+            } catch (err) {
+                console.error('[AppController] Error scanning databases:', err.message);
             }
+
 
             // 3. Auto-discover GoDaddy CNAME configurations
             let godaddyCnames = [];
@@ -1506,6 +1528,64 @@ const appController = {
                          (organization_id, name, repo_url, app_type, status, azure_resource_details, godaddy_dns_details, pipeline_id) 
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                         [organizationId, app.name, app.repositoryUrl, app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId]
+                    );
+                }
+            }
+
+            // Prune applications from DB that are no longer present in Azure (for successfully scanned types)
+            if (swaScanSuccess) {
+                const scannedNames = apps.filter(a => a.type === 'frontend').map(a => a.name);
+                if (scannedNames.length > 0) {
+                    await db.query(
+                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "frontend" AND name NOT IN (?)',
+                        [organizationId, scannedNames]
+                    );
+                } else {
+                    await db.query(
+                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "frontend"',
+                        [organizationId]
+                    );
+                }
+            }
+            if (caScanSuccess) {
+                const scannedNames = apps.filter(a => a.type === 'backend').map(a => a.name);
+                if (scannedNames.length > 0) {
+                    await db.query(
+                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "backend" AND name NOT IN (?)',
+                        [organizationId, scannedNames]
+                    );
+                } else {
+                    await db.query(
+                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "backend"',
+                        [organizationId]
+                    );
+                }
+            }
+            if (vmScanSuccess) {
+                const scannedNames = apps.filter(a => a.type === 'vm').map(a => a.name);
+                if (scannedNames.length > 0) {
+                    await db.query(
+                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "vm" AND name NOT IN (?)',
+                        [organizationId, scannedNames]
+                    );
+                } else {
+                    await db.query(
+                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "vm"',
+                        [organizationId]
+                    );
+                }
+            }
+            if (dbScanSuccess) {
+                const scannedNames = apps.filter(a => a.type === 'database').map(a => a.name);
+                if (scannedNames.length > 0) {
+                    await db.query(
+                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "database" AND name NOT IN (?)',
+                        [organizationId, scannedNames]
+                    );
+                } else {
+                    await db.query(
+                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "database"',
+                        [organizationId]
                     );
                 }
             }
