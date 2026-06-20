@@ -5,7 +5,7 @@ async function auditLogger(req, res, next) {
     res.on('finish', async () => {
         try {
             const method = req.method;
-            const path = req.path;
+            const path = req.originalUrl.split('?')[0];
             const isLogsView = method === 'GET' && path.includes('/observability/') && path.includes('/logs');
             const isAuditView = method === 'GET' && path.includes('/audit-logs');
             const isDbBackup = method === 'GET' && path.includes('/database-hub/backup');
@@ -16,8 +16,8 @@ async function auditLogger(req, res, next) {
             // Skip logging internal health checks or diagnostic actions
             if (path.includes('/health') || path.includes('/diagnostic')) return;
             
-            // Check if user session context is present (from authentication middleware)
-            const actorEmail = req.user?.email || 'system-bypass';
+            // Check if user session context is present (from authentication middleware or body)
+            const actorEmail = req.user?.email || req.user?.id || req.body?.email || 'system-bypass';
             
             // Resolve action type and target from request details
             let actionType = 'UNKNOWN_ACTION';
@@ -34,6 +34,12 @@ async function auditLogger(req, res, next) {
             } else if (isDbBackup) {
                 actionType = 'DB_BACKUP';
                 target = req.query?.dbName || req.body?.dbName || 'Database Hub Backup';
+            } else if (path.includes('/auth/microsoft')) {
+                actionType = 'USER_LOGIN_MS';
+                target = 'Microsoft SSO';
+            } else if (path.includes('/auth/bypass')) {
+                actionType = 'USER_LOGIN_BYPASS';
+                target = 'Local Dev Bypass';
             } else if (path.includes('/auth/users/sync')) {
                 actionType = 'DIRECTORY_SYNC';
                 target = 'Azure AD Sync';

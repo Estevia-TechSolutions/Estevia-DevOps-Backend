@@ -322,6 +322,167 @@ async function main() {
             `, [u.email, u.email, u.name, u.role]);
         }
 
+        // 9. Backfill historical UNKNOWN_ACTION records from audit_logs
+        console.log('Checking for audit logs to backfill...');
+        try {
+            const [rows] = await connection.query("SELECT id, details FROM audit_logs WHERE action_type = 'UNKNOWN_ACTION'");
+            if (rows.length > 0) {
+                console.log(`Found ${rows.length} UNKNOWN_ACTION audit records to evaluate for backfilling.`);
+                let backfilledCount = 0;
+                for (const row of rows) {
+                    if (!row.details) continue;
+                    let detailsData;
+                    try {
+                        detailsData = typeof row.details === 'string' ? JSON.parse(row.details) : row.details;
+                    } catch (err) {
+                        continue;
+                    }
+
+                    const method = detailsData.method || 'POST';
+                    const rawPath = detailsData.path || '';
+                    const body = detailsData.payload || {};
+                    const path = rawPath.split('?')[0];
+
+                    let actionType = 'UNKNOWN_ACTION';
+                    let target = path;
+
+                    // Resolve action type and target using absolute/relative path keywords
+                    if (path.includes('/auth/microsoft') || path === '/microsoft') {
+                        actionType = 'USER_LOGIN_MS';
+                        target = 'Microsoft SSO';
+                    } else if (path.includes('/auth/bypass') || path === '/bypass') {
+                        actionType = 'USER_LOGIN_BYPASS';
+                        target = 'Local Dev Bypass';
+                    } else if (path.includes('/cost/ask-eva') || path === '/cost/ask-eva') {
+                        actionType = 'EVA_AI_CONSULT';
+                        target = body?.question ? body.question.substring(0, 100) : 'Eva AI Assistant';
+                    } else if (path.includes('/cost/apply-remediation') || path === '/cost/apply-remediation') {
+                        actionType = 'APPLY_REMEDIATION';
+                        target = body?.appName ? `${body.appName} (${body.type || 'Remedy'})` : 'Cost Optimization';
+                    } else if (path.includes('/users/sync') || path === '/users/sync' || path.includes('/auth/users/sync')) {
+                        actionType = 'DIRECTORY_SYNC';
+                        target = 'Azure AD Sync';
+                    } else if (path.includes('/users/') && path.includes('/role')) {
+                        actionType = 'ROLE_CHANGE';
+                        const parts = path.split('/');
+                        const idx = parts.indexOf('users');
+                        target = (idx !== -1 && parts[idx + 1]) ? parts[idx + 1] : 'User Role';
+                    } else if (path.includes('/execute-query') || path === '/execute-query') {
+                        actionType = 'SQL_RUN';
+                        target = body?.query ? body.query.substring(0, 100) : 'SQL Console';
+                    } else if (path.includes('/database/migrate') || path.includes('/database-hub/migrate')) {
+                        actionType = 'DB_SCHEMA_MIGRATE';
+                        target = body?.targetDb || 'Database Hub Migration';
+                    } else if (path.includes('/database-hub/compare')) {
+                        actionType = 'DB_SCHEMA_COMPARE';
+                        target = body?.sourceDb && body?.targetDb ? `${body.sourceDb} -> ${body.targetDb}` : 'Database Hub';
+                    } else if (path.includes('/database-hub/migrate-data')) {
+                        actionType = 'DB_DATA_MIGRATE';
+                        target = body?.targetDb || 'Database Hub Data Migration';
+                    } else if (path.includes('/database-hub/backup')) {
+                        actionType = 'DB_BACKUP';
+                        target = body?.dbName || 'Database Hub Backup';
+                    } else if (path.includes('/org/test/')) {
+                        const provider = path.split('/test/').pop();
+                        actionType = `TEST_${provider.toUpperCase()}_CONN`;
+                        target = body?.provider || `${provider.charAt(0).toUpperCase() + provider.slice(1)} Connection`;
+                    } else if (path.includes('/organization-settings')) {
+                        actionType = 'ORG_SETTINGS_UPDATE';
+                        target = body?.orgName || 'Organization Settings';
+                    } else if (path.includes('/test-teams-webhook')) {
+                        actionType = 'TEAMS_WEBHOOK_TEST';
+                        target = body?.webhookUrl || 'Teams Webhook';
+                    } else if (path.includes('/setup-teams-service-hook')) {
+                        actionType = 'TEAMS_HOOK_SETUP';
+                        target = body?.webhookUrl || 'Teams Service Hook';
+                    } else if (path.includes('/discover-workspace')) {
+                        actionType = 'DISCOVER_WORKSPACE';
+                        target = body?.workspaceName || 'Log Analytics Workspace';
+                    } else if (path.includes('/create-dockerfile')) {
+                        actionType = 'DOCKERFILE_CREATE';
+                        target = body?.repoName ? `${body.repoName}/Dockerfile` : 'Dockerfile';
+                    } else if (path.includes('/update-dockerfile')) {
+                        actionType = 'DOCKERFILE_UPDATE';
+                        target = body?.repoName ? `${body.repoName}/Dockerfile` : 'Dockerfile';
+                    } else if (path.includes('/dns-swap')) {
+                        actionType = 'DNS_SWAP';
+                        target = body?.app1Name && body?.app2Name ? `${body.app1Name} <-> ${body.app2Name}` : 'DNS Swap';
+                    } else if (path.includes('/provision')) {
+                        actionType = 'PROVISION_APP';
+                        target = body?.name || 'Azure Resource';
+                    } else if (path.includes('/bind-domain')) {
+                        actionType = 'BIND_DOMAIN';
+                        target = body?.subdomain ? `${body.subdomain}.${body.domain || 'esteviatech.com'}` : 'Custom Domain';
+                    } else if (path.includes('/pipeline') || path.includes('/create-pipeline-yml')) {
+                        actionType = 'PIPELINE_CREATE';
+                        target = body?.appName || body?.repoName || 'CI/CD Pipeline';
+                    } else if (path.includes('/databases')) {
+                        actionType = 'PROVISION_DB';
+                        target = body?.dbName || 'Database Instance';
+                    } else if (path.endsWith('/control')) {
+                        actionType = 'RESOURCE_POWER_CONTROL';
+                        const parts = path.split('/');
+                        const idx = parts.indexOf('control');
+                        target = (idx > 0) ? parts[idx - 1] : 'Azure Resource';
+                    } else if (path.endsWith('/traffic')) {
+                        actionType = 'TRAFFIC_UPDATE';
+                        const parts = path.split('/');
+                        const idx = parts.indexOf('traffic');
+                        target = (idx > 0) ? parts[idx - 1] : 'App Traffic';
+                    } else if (path.endsWith('/revision-mode')) {
+                        actionType = 'REVISION_MODE_UPDATE';
+                        const parts = path.split('/');
+                        const idx = parts.indexOf('revision-mode');
+                        target = (idx > 0) ? parts[idx - 1] : 'App Revision Mode';
+                    } else if (path.includes('/clone')) {
+                        actionType = 'ENV_CLONE';
+                        target = body?.appName ? `${body.appName} (${body.sourceEnv} -> ${body.targetEnv})` : 'Environment';
+                    } else if (path.includes('/keyvault/map')) {
+                        actionType = 'KEYVAULT_SECRET_MAP';
+                        target = body?.secretName || 'KeyVault Secret';
+                    } else if (path.includes('/keyvault/mappings/')) {
+                        actionType = 'KEYVAULT_SECRET_UNMAP';
+                        target = path.split('/').pop() || 'Secret Mapping';
+                    } else if (path.includes('/register') || path.includes('/setup-azure') || path.includes('/setup-devops') || path.includes('/setup-dns') || path.includes('/complete')) {
+                        actionType = 'ONBOARDING_SETUP';
+                        target = path.split('/').pop() || 'Organization Onboarding';
+                    } else if (path.includes('/rules')) {
+                        actionType = 'SCHEDULER_SAVE';
+                        target = body?.ruleName || 'Sleep Scheduler Rule';
+                    } else {
+                        // Generic path resolver fallback
+                        const cleanPath = path.replace(/^\/api\//, '');
+                        const segments = cleanPath.split('/').filter(Boolean);
+                        
+                        if (segments.length > 0) {
+                            let actionWord = 'UPDATE';
+                            if (method === 'POST') actionWord = 'CREATE';
+                            if (method === 'DELETE') actionWord = 'DELETE';
+                            if (method === 'GET') actionWord = 'READ';
+
+                            const lastSegment = segments[segments.length - 1];
+                            const upperSegment = lastSegment.toUpperCase().replace(/-/g, '_');
+                            actionType = `${upperSegment}_${actionWord}`;
+                            
+                            if (segments.length > 1 && !['apps', 'database-hub', 'org', 'credentials', 'keyvault'].includes(segments[segments.length - 2])) {
+                                target = segments[segments.length - 2];
+                            } else {
+                                target = body?.name || body?.appName || lastSegment;
+                            }
+                        }
+                    }
+
+                    if (actionType !== 'UNKNOWN_ACTION') {
+                        await connection.query("UPDATE audit_logs SET action_type = ?, target = ? WHERE id = ?", [actionType, target, row.id]);
+                        backfilledCount++;
+                    }
+                }
+                console.log(`Backfill complete: successfully resolved and updated ${backfilledCount} audit records.`);
+            }
+        } catch (backfillErr) {
+            console.error('Failed to run audit logs backfill migration:', backfillErr.message);
+        }
+
         console.log('\n================================================================');
         console.log('SUCCESS: Database migration and seeding completed successfully!');
         console.log('================================================================');

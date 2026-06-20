@@ -215,6 +215,7 @@ const microsoftLogin = async (req, res) => {
             }
         }
 
+        req.user = user;
         return res.json({ 
             token, 
             user, 
@@ -294,6 +295,7 @@ const bypassLogin = async (req, res) => {
             }
         }
 
+        req.user = user;
         return res.json({ 
             token, 
             user, 
