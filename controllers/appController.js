@@ -969,7 +969,15 @@ const appController = {
         };
     },
     /**
-    _resolveBranchFromAppName(name, availableBranches = []) {
+    _resolveBranchFromAppName(name, availableBranches = [], boundBranch = null) {
+        if (boundBranch) {
+            const matchedBranch = availableBranches.find(b => b.name.toLowerCase() === boundBranch.toLowerCase());
+            if (matchedBranch) {
+                return `refs/heads/${matchedBranch.name}`;
+            }
+            return `refs/heads/${boundBranch}`;
+        }
+
         const n = name.toLowerCase();
 
         const hasEnvSegment = (str, seg) => new RegExp(`-${seg}(-|$)`).test(str);
@@ -1084,7 +1092,8 @@ const appController = {
                         resourceId: site.id,
                         status: 'deployed',
                         repositoryUrl: site.repositoryUrl || '',
-                        resourceGroup: resourceGroup
+                        resourceGroup: resourceGroup,
+                        branch: site.branch || null
                     });
                 }
                 swaScanSuccess = true;
@@ -1291,6 +1300,26 @@ const appController = {
             // 5. Sync scanned apps with applications database and cross-reference discovered credentials
             for (const app of apps) {
                 app.branches = repoBranchesMap.get(app.repositoryUrl) || [];
+
+                let dbBranch = null;
+                const [existing] = await db.query(
+                    'SELECT id, repo_url, azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
+                    [organizationId, app.name]
+                );
+                if (existing.length > 0) {
+                    if (existing[0].repo_url && !app.repositoryUrl) {
+                        app.repositoryUrl = existing[0].repo_url;
+                    }
+                    if (existing[0].azure_resource_details) {
+                        try {
+                            const details = typeof existing[0].azure_resource_details === 'string'
+                                ? JSON.parse(existing[0].azure_resource_details)
+                                : existing[0].azure_resource_details;
+                            dbBranch = details?.branch || null;
+                        } catch (e) {}
+                    }
+                }
+                app.branch = app.branch || dbBranch;
                 // Find matching CNAME mapping on GoDaddy
                 let matchedDns = {};
                  const matchingCname = godaddyCnames.find(r => {
@@ -1387,7 +1416,7 @@ const appController = {
                         const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
                         const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
                         
-                        const resolvedBranch = appController._resolveBranchFromAppName(app.name, app.branches || []);
+                        const resolvedBranch = appController._resolveBranchFromAppName(app.name, app.branches || [], app.branch);
                         const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
 
                         // Fetch InProgress, NotStarted, and Completed in parallel due to Azure DevOps API limitation
@@ -1505,23 +1534,16 @@ const appController = {
                     }
                 }
 
-                const [existing] = await db.query(
-                    'SELECT id, repo_url FROM applications WHERE organization_id = ? AND name = ?',
-                    [organizationId, app.name]
-                );
-
                 const azureDetails = JSON.stringify({
                     resourceId: app.resourceId,
                     location: app.location,
                     hostname: app.hostname,
                     pipelineName: app.pipelineName,
-                    resourceGroup: app.resourceGroup || resourceGroup
+                    resourceGroup: app.resourceGroup || resourceGroup,
+                    branch: app.branch || null
                 });
 
                 if (existing.length > 0) {
-                    if (existing[0].repo_url && !app.repositoryUrl) {
-                        app.repositoryUrl = existing[0].repo_url;
-                    }
                     // Update
                     await db.query(
                         `UPDATE applications 
@@ -3221,6 +3243,165 @@ const appController = {
                 success: false,
                 message: 'Failed to fetch latest pipeline build.',
                 error: error.message
+            });
+        }
+    },
+
+    /**
+     * Get build history for a pipeline definition from Azure DevOps
+     */
+    getBuildHistory: async (req, res) => {
+        try {
+            const { organizationId = 'estevia', pipelineId, top = 15 } = req.query;
+
+            if (!pipelineId) {
+                return res.status(400).json({ success: false, message: 'Missing parameter (pipelineId).' });
+            }
+
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
+            const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
+
+            const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
+            if (!devopsSecrets || !devopsSecrets.pat) {
+                return res.status(400).json({ success: false, message: 'Azure DevOps credentials not found.' });
+            }
+
+            const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
+            const historyUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=Completed&$top=${top}&api-version=7.1`;
+            
+            console.log(`[AppController] Fetching build history from: ${historyUrl}`);
+            const historyRes = await axios.get(historyUrl, {
+                headers: { 'Authorization': authHeader, 'Accept': 'application/json' },
+                timeout: 10000
+            });
+
+            const builds = historyRes.data?.value || [];
+            
+            const mappedBuilds = builds.map(b => {
+                const branchRaw = b.sourceBranch || '';
+                const branchShort = branchRaw.startsWith('refs/heads/') ? branchRaw.replace('refs/heads/', '') : branchRaw;
+
+                return {
+                    id: b.id,
+                    buildNumber: b.buildNumber,
+                    branch: branchShort,
+                    result: b.result, // succeeded, failed, canceled, partiallySucceeded
+                    startTime: b.startTime || null,
+                    finishTime: b.finishTime || null,
+                    sourceVersion: b.sourceVersion,
+                    requestedFor: b.requestedFor?.displayName || 'Unknown',
+                    webUrl: b._links?.web?.href || '',
+                    commitMessage: b.triggerInfo?.['ci.message'] || b.triggerInfo?.['ci.sourceShaMessage'] || ''
+                };
+            });
+
+            res.json({ success: true, builds: mappedBuilds });
+        } catch (error) {
+            console.error('[AppController] getBuildHistory failed:', error.message);
+            res.status(500).json({ 
+                success: false, 
+                message: 'Failed to fetch build history.', 
+                error: error.message 
+            });
+        }
+    },
+
+    /**
+     * Re-deploy a previous build (contributor+ role restricted for prod branches)
+     */
+    reDeployBuild: async (req, res) => {
+        try {
+            const { organizationId = 'estevia', pipelineId, sourceVersion, branchName, buildId } = req.body;
+
+            if (!pipelineId || !sourceVersion || !branchName) {
+                return res.status(400).json({ success: false, message: 'Missing parameters (pipelineId, sourceVersion, branchName).' });
+            }
+
+            const cleanBranchName = branchName.replace(/^refs\/heads\//, '').trim();
+
+            // Validate role: contributor can re-deploy non-production branches. admin/owner can re-deploy any branch.
+            const userRole = req.user?.role || 'viewer';
+            const isProductionBranch = ['main', 'master', 'prod', 'production'].includes(cleanBranchName.toLowerCase()) || cleanBranchName.toLowerCase().startsWith('release/');
+
+            if (isProductionBranch && !['owner', 'admin'].includes(userRole)) {
+                return res.status(403).json({ 
+                    success: false, 
+                    message: `Forbidden: Only Administrator or Owner roles can re-deploy to production-related branch: ${cleanBranchName}.` 
+                });
+            }
+
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
+            const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
+
+            const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
+            if (!devopsSecrets || !devopsSecrets.pat) {
+                return res.status(400).json({ success: false, message: 'Azure DevOps credentials not found.' });
+            }
+
+            const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
+
+            // Queue the build
+            const queueUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?api-version=7.1`;
+            const payload = {
+                definition: { id: parseInt(pipelineId) },
+                sourceBranch: `refs/heads/${cleanBranchName}`,
+                sourceVersion: sourceVersion
+            };
+
+            console.log(`[AppController] Queueing re-deploy build targeting branch refs/heads/${cleanBranchName} commit ${sourceVersion}`);
+            const queueRes = await axios.post(queueUrl, payload, {
+                headers: {
+                    'Authorization': authHeader,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                timeout: 10000
+            });
+
+            const newBuild = queueRes.data;
+
+            // Trigger Teams notification
+            try {
+                const { sendTeamsNotification } = require('../utils/teamsNotifier');
+                const triggerUser = req.user?.name || req.user?.email || 'Unknown User';
+                
+                await sendTeamsNotification(organizationId, {
+                    title: '🔄 Application Re-deploy Triggered',
+                    text: `A rollback / re-deploy has been triggered for pipeline definition ID **${pipelineId}**.`,
+                    themeColor: isProductionBranch ? 'FF8C00' : '0078D4',
+                    facts: [
+                        { name: 'Target Branch', value: cleanBranchName },
+                        { name: 'Target Commit', value: sourceVersion.substring(0, 7) },
+                        { name: 'Triggered By', value: `${triggerUser} (${userRole})` },
+                        { name: 'New Build Run', value: newBuild.buildNumber || String(newBuild.id) },
+                        { name: 'Prior Build ID', value: buildId || 'N/A' }
+                    ],
+                    actions: [
+                        {
+                            type: 'OpenUri',
+                            name: 'View Build in Azure DevOps',
+                            targets: [{ os: 'default', uri: newBuild._links?.web?.href || '' }]
+                        }
+                    ]
+                });
+            } catch (notifyErr) {
+                console.warn('[AppController] Failed to send Teams notification for re-deploy:', notifyErr.message);
+            }
+
+            res.json({ 
+                success: true, 
+                message: `Re-deploy build successfully queued.`, 
+                buildId: newBuild.id,
+                buildNumber: newBuild.buildNumber 
+            });
+        } catch (error) {
+            console.error('[AppController] reDeployBuild failed:', error.message);
+            res.status(500).json({ 
+                success: false, 
+                message: 'Failed to trigger re-deploy build on Azure DevOps.', 
+                error: error.message 
             });
         }
     },

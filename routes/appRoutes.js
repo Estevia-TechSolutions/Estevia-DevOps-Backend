@@ -33,6 +33,12 @@ router.get('/pipeline/timeline', appController.getPipelineTimeline);
 // Get the most recent build run for a given pipeline definition ID (for new-build discovery)
 router.get('/pipeline/latest', appController.getLatestPipelineBuild);
 
+// Get pipeline build history
+router.get('/pipeline/history', appController.getBuildHistory);
+
+// Re-deploy a previous build (roles gated inside controller)
+router.post('/pipeline/redeploy', restrictTo('owner', 'admin', 'contributor'), appController.reDeployBuild);
+
 // Commit a default azure-pipelines.yml to GitHub repo, then register pipeline
 router.post('/create-pipeline-yml', restrictTo('owner', 'admin', 'contributor'), appController.createPipelineYml);
 

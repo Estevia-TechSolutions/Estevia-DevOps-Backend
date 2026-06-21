@@ -262,24 +262,39 @@ const getMe = async (req, res) => {
 // Developer Override Login — always grants viewer-only access (for local dev/testing)
 const bypassLogin = async (req, res) => {
     try {
-        console.log('[authController] Developer Override authenticating (viewer role)...');
-        const [users] = await db.query('SELECT * FROM users WHERE id = ?', ['dev-bypass-user-id']);
+        const { organizationId = 'estevia' } = req.body;
+        const cleanOrgId = organizationId.toLowerCase().trim();
+
+        console.log(`[authController] Developer Override authenticating (viewer role) for organization: ${cleanOrgId}...`);
+        
+        // Ensure organization exists
+        const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [cleanOrgId]);
+        if (orgs.length === 0) {
+            return res.status(404).json({ error: `Organization '${cleanOrgId}' not found.` });
+        }
+        const org = orgs[0];
+
+        const bypassUserId = `dev-bypass-${cleanOrgId}`;
+        const [users] = await db.query('SELECT * FROM users WHERE id = ?', [bypassUserId]);
 
         let user;
         if (users.length === 0) {
-            // Create bypass user with viewer role
+            // Create bypass user with viewer role for this organization
+            const bypassEmail = `dev-bypass@${cleanOrgId}.evaops`;
             await db.query(
-                "INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES ('dev-bypass-user-id', 'dev@estevia.com', 'Developer Override', 'estevia', 'a39c526c-2005-4529-ab5a-f008fc5cbc57', 'viewer')"
+                "INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES (?, ?, ?, ?, ?, 'viewer')",
+                [bypassUserId, bypassEmail, 'Developer Override', cleanOrgId, org.tenant_id || '']
             );
-            user = { id: 'dev-bypass-user-id', email: 'dev@estevia.com', name: 'Developer Override', organization_id: 'estevia', tenant_id: 'a39c526c-2005-4529-ab5a-f008fc5cbc57', role: 'viewer' };
+            user = { id: bypassUserId, email: bypassEmail, name: 'Developer Override', organization_id: cleanOrgId, tenant_id: org.tenant_id || '', role: 'viewer' };
         } else {
             user = users[0];
             // Force-reset: Developer Override must always be viewer — downgrade if elevated
-            if (user.role !== 'viewer') {
-                console.log(`[authController] Developer Override: resetting role from '${user.role}' → 'viewer'`);
-                await db.query("UPDATE users SET role = 'viewer', name = 'Developer Override' WHERE id = 'dev-bypass-user-id'");
+            if (user.role !== 'viewer' || user.name !== 'Developer Override' || user.organization_id !== cleanOrgId) {
+                console.log(`[authController] Developer Override: resetting role from '${user.role}' → 'viewer' for organization '${cleanOrgId}'`);
+                await db.query("UPDATE users SET role = 'viewer', name = 'Developer Override', organization_id = ? WHERE id = ?", [cleanOrgId, bypassUserId]);
                 user.role = 'viewer';
                 user.name = 'Developer Override';
+                user.organization_id = cleanOrgId;
             }
         }
 
@@ -699,8 +714,8 @@ const syncUsers = async (req, res) => {
         
         let removedUsersCount = 0;
         for (const localUser of localUsers) {
-            // Do not delete the bypass account
-            if (localUser.id === 'dev-bypass-user-id') continue;
+            // Do not delete bypass or admin override accounts
+            if (localUser.id.startsWith('dev-bypass-') || localUser.id.startsWith('admin-override-') || localUser.id === 'dev-bypass-user-id') continue;
             
             // Do not delete pre-seeded users that haven't linked their MSAL ID yet (whose id matches their email)
             if (localUser.id.toLowerCase() === localUser.email.toLowerCase()) continue;
