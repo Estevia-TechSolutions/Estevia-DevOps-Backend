@@ -318,7 +318,7 @@ async function main() {
             await connection.query(`
                 INSERT INTO users (id, email, name, organization_id, role, tenant_id)
                 VALUES (?, ?, ?, 'estevia', ?, 'a39c526c-2005-4529-ab5a-f008fc5cbc57')
-                ON DUPLICATE KEY UPDATE name = VALUES(name), role = VALUES(role)
+                ON DUPLICATE KEY UPDATE name = VALUES(name)
             `, [u.email, u.email, u.name, u.role]);
         }
 
