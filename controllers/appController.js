@@ -971,37 +971,45 @@ const appController = {
     /**
     _resolveBranchFromAppName(name, availableBranches = []) {
         const n = name.toLowerCase();
-        
+
         const hasEnvSegment = (str, seg) => new RegExp(`-${seg}(-|$)`).test(str);
-        
+
         let envType = 'prod';
         if (hasEnvSegment(n, 'dev') || hasEnvSegment(n, 'development')) {
             envType = 'dev';
         } else if (hasEnvSegment(n, 'qa') || hasEnvSegment(n, 'staging') || hasEnvSegment(n, 'test') || hasEnvSegment(n, 'testing')) {
             envType = 'qa';
         }
-        
+
         const candidates = {
             dev: ['dev', 'development', 'dev-main', 'dev-master'],
             qa: ['qa', 'test', 'testing', 'staging'],
             prod: ['main', 'master', 'prod', 'production', 'release']
         };
-        
+
         const candidateList = candidates[envType];
-        
-        const matchedCandidate = candidateList.find(cand => 
+
+        // 1st priority: find a branch whose name matches one of our env-specific candidates
+        const matchedCandidate = candidateList.find(cand =>
             availableBranches.some(b => b.name.toLowerCase() === cand)
         );
-        
-        let resolvedBranchName;
+
         if (matchedCandidate) {
-            resolvedBranchName = availableBranches.find(b => b.name.toLowerCase() === matchedCandidate).name;
-        } else {
-            const defaultBranch = availableBranches.find(b => b.default || b.isDefault);
-            resolvedBranchName = defaultBranch ? defaultBranch.name : candidateList[0];
+            const resolvedBranchName = availableBranches.find(b => b.name.toLowerCase() === matchedCandidate).name;
+            return `refs/heads/${resolvedBranchName}`;
         }
-        
-        return `refs/heads/${resolvedBranchName}`;
+
+        // 2nd priority: use the repo's true default branch (marked by _getGithubBranchesInternal)
+        const defaultBranch = availableBranches.find(b => b.default === true);
+        if (defaultBranch) {
+            console.log(`[AppController] _resolveBranchFromAppName: no env candidate matched for '${name}', using repo default branch: ${defaultBranch.name}`);
+            return `refs/heads/${defaultBranch.name}`;
+        }
+
+        // Last resort: fall back to candidate name (may not exist in the repo — logged as warning)
+        const lastResort = candidateList[0];
+        console.warn(`[AppController] _resolveBranchFromAppName: no branches available for '${name}', falling back to hardcoded candidate: '${lastResort}'`);
+        return `refs/heads/${lastResort}`;
     },
     /**
      * Resolve dynamic DB host based on server name
@@ -2645,16 +2653,37 @@ const appController = {
     async _getGithubBranchesInternal(githubToken, githubRepo, organizationId) {
         try {
             console.log(`[AppController] Fetching branches internally for: ${githubRepo}`);
-            const response = await axios.get(`https://api.github.com/repos/${githubRepo}/branches?per_page=100`, {
-                headers: {
-                    'Authorization': `token ${githubToken}`,
-                    'Accept': 'application/vnd.github.v3+json',
-                    'User-Agent': getUserAgent(organizationId)
-                }
-            });
-            return response.data.map(b => ({
+
+            // Fetch branches list AND repo metadata in parallel to get the true default branch
+            const [branchesRes, repoRes] = await Promise.all([
+                axios.get(`https://api.github.com/repos/${githubRepo}/branches?per_page=100`, {
+                    headers: {
+                        'Authorization': `token ${githubToken}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'User-Agent': getUserAgent(organizationId)
+                    }
+                }),
+                axios.get(`https://api.github.com/repos/${githubRepo}`, {
+                    headers: {
+                        'Authorization': `token ${githubToken}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'User-Agent': getUserAgent(organizationId)
+                    }
+                }).catch(e => {
+                    // Non-fatal — repo metadata fetch is best-effort
+                    console.warn(`[AppController] Could not fetch repo metadata for ${githubRepo}: ${e.message}`);
+                    return { data: {} };
+                })
+            ]);
+
+            const defaultBranchName = repoRes.data?.default_branch || null;
+            console.log(`[AppController] GitHub default branch for ${githubRepo}: ${defaultBranchName || '(unknown)'}`);
+
+            return branchesRes.data.map(b => ({
                 name: b.name,
-                protected: b.protected
+                protected: b.protected,
+                // Mark the repo's true default branch so _resolveBranchFromAppName can use it
+                default: defaultBranchName ? b.name === defaultBranchName : false
             }));
         } catch (err) {
             console.warn(`[AppController] Failed to fetch branches internally for ${githubRepo}:`, err.message);
