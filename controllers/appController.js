@@ -969,13 +969,15 @@ const appController = {
         };
     },
     /**
-    _resolveBranchFromAppName(name, availableBranches = [], boundBranch = null) {
-        if (boundBranch) {
-            const matchedBranch = availableBranches.find(b => b.name.toLowerCase() === boundBranch.toLowerCase());
-            if (matchedBranch) {
-                return `refs/heads/${matchedBranch.name}`;
+     * Resolve dynamic target branch based on environment heuristics or explicitly bound branches.
+     */
+    _resolveBranchFromAppName(name, availableBranches = [], targetBranch = null) {
+        // 0th priority: if targetBranch is explicitly specified, prioritize it
+        if (targetBranch) {
+            const cleanTarget = targetBranch.replace('refs/heads/', '');
+            if (availableBranches.length === 0 || availableBranches.some(b => b.name === cleanTarget)) {
+                return `refs/heads/${cleanTarget}`;
             }
-            return `refs/heads/${boundBranch}`;
         }
 
         const n = name.toLowerCase();
@@ -1289,17 +1291,21 @@ const appController = {
             const repoBranchesMap = new Map();
             if (githubToken) {
                 for (const app of apps) {
-                    if (app.repositoryUrl && !repoBranchesMap.has(app.repositoryUrl)) {
-                        const githubRepo = app.repositoryUrl.replace('https://github.com/', '').replace(/\/$/, '');
-                        const branchList = await appController._getGithubBranchesInternal(githubToken, githubRepo, organizationId);
-                        repoBranchesMap.set(app.repositoryUrl, branchList);
+                    if (app.repositoryUrl) {
+                        const normalizedUrl = app.repositoryUrl.toLowerCase().replace(/\/$/, '').replace(/\.git$/, '');
+                        if (!repoBranchesMap.has(normalizedUrl)) {
+                            const githubRepo = normalizedUrl.replace('https://github.com/', '');
+                            const branchList = await appController._getGithubBranchesInternal(githubToken, githubRepo, organizationId);
+                            repoBranchesMap.set(normalizedUrl, branchList);
+                        }
                     }
                 }
             }
 
             // 5. Sync scanned apps with applications database and cross-reference discovered credentials
             for (const app of apps) {
-                app.branches = repoBranchesMap.get(app.repositoryUrl) || [];
+                const normalizedUrl = app.repositoryUrl ? app.repositoryUrl.toLowerCase().replace(/\/$/, '').replace(/\.git$/, '') : '';
+                app.branches = repoBranchesMap.get(normalizedUrl) || [];
 
                 let dbBranch = null;
                 const [existing] = await db.query(
@@ -4426,14 +4432,15 @@ const appController = {
             if (!organizationId || !githubRepo) {
                 return res.status(400).json({ message: 'Missing organizationId or githubRepo parameter.' });
             }
+            const cleanGithubRepo = githubRepo.replace('https://github.com/', '').replace(/\.git$/, '').replace(/\/$/, '');
             const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
             const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
             if (!githubToken) {
                 return res.status(400).json({ message: 'GitHub integration token not found.' });
             }
 
-            console.log(`[AppController] Fetching branches for repo: ${githubRepo}`);
-            const response = await axios.get(`https://api.github.com/repos/${githubRepo}/branches?per_page=100`, {
+            console.log(`[AppController] Fetching branches for repo: ${cleanGithubRepo}`);
+            const response = await axios.get(`https://api.github.com/repos/${cleanGithubRepo}/branches?per_page=100`, {
                 headers: {
                     'Authorization': `token ${githubToken}`,
                     'Accept': 'application/vnd.github.v3+json',
