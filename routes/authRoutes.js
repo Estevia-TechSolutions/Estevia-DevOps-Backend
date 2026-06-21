@@ -5,6 +5,7 @@ const { protect, restrictTo } = require('../middlewares/authMiddleware');
 
 router.post('/microsoft', authController.microsoftLogin);
 router.post('/bypass', authController.bypassLogin);
+router.post('/admin-override', authController.adminOverrideLogin);
 router.get('/login-url', authController.getLoginUrl);
 router.get('/me', protect, authController.getMe);
 router.get('/diagnostic', authController.runDiagnostic);

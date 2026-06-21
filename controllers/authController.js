@@ -168,11 +168,14 @@ const microsoftLogin = async (req, res) => {
             }
         } else {
             user = users[0];
-            // Update name, email, tenant_id, organization_id, or role if changed/missing
-            // If they have a role in the DB (like contributor/viewer/owner), let's keep it and not force-overwrite with userRole fallback
-            const finalRole = user.role || userRole;
-            let shouldUpdate = user.name !== name || user.email !== email || user.tenant_id !== tenantIdFromToken || user.role !== finalRole;
+            // ROLE PRESERVATION RULE: If a role is already set in the DB, ALWAYS keep it.
+            // Never allow the SSO-derived default (userRole) to overwrite an existing DB role.
+            // This prevents admins/owners from reverting to 'viewer' on every login.
+            const finalRole = (user.role && user.role.trim() !== '') ? user.role : userRole;
             let targetOrgId = user.organization_id;
+
+            // Only the non-role fields are candidates for update from SSO claims
+            let shouldUpdate = user.name !== name || user.email !== email || user.tenant_id !== tenantIdFromToken;
 
             if (matchedOrg && user.organization_id !== matchedOrg.id) {
                 targetOrgId = matchedOrg.id;
@@ -180,16 +183,18 @@ const microsoftLogin = async (req, res) => {
             }
 
             if (shouldUpdate) {
+                // Update name/email/tenant/org — but NEVER touch role here
                 await db.query(
-                    'UPDATE users SET name = ?, email = ?, tenant_id = ?, organization_id = ?, role = ? WHERE id = ?',
-                    [name, email, tenantIdFromToken, targetOrgId, finalRole, msalId]
+                    'UPDATE users SET name = ?, email = ?, tenant_id = ?, organization_id = ? WHERE id = ?',
+                    [name, email, tenantIdFromToken, targetOrgId, msalId]
                 );
                 user.name = name;
                 user.email = email;
                 user.tenant_id = tenantIdFromToken;
                 user.organization_id = targetOrgId;
-                user.role = finalRole;
             }
+            // Always carry the preserved role forward in the in-memory user object
+            user.role = finalRole;
         }
 
         // Generate local JWT token
@@ -254,35 +259,40 @@ const getMe = async (req, res) => {
     }
 };
 
-// Developer Bypass Login handler
+// Developer Override Login — always grants viewer-only access (for local dev/testing)
 const bypassLogin = async (req, res) => {
     try {
-        console.log('[authController] Developer Bypass authenticating...');
-        // Look for the pre-seeded bypass user
+        console.log('[authController] Developer Override authenticating (viewer role)...');
         const [users] = await db.query('SELECT * FROM users WHERE id = ?', ['dev-bypass-user-id']);
-        
+
         let user;
         if (users.length === 0) {
-            // Re-create if missing
+            // Create bypass user with viewer role
             await db.query(
-                "INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES ('dev-bypass-user-id', 'dev@estevia.com', 'Developer Bypass', 'estevia', 'a39c526c-2005-4529-ab5a-f008fc5cbc57', 'admin')"
+                "INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES ('dev-bypass-user-id', 'dev@estevia.com', 'Developer Override', 'estevia', 'a39c526c-2005-4529-ab5a-f008fc5cbc57', 'viewer')"
             );
-            user = { id: 'dev-bypass-user-id', email: 'dev@estevia.com', name: 'Developer Bypass', organization_id: 'estevia', tenant_id: 'a39c526c-2005-4529-ab5a-f008fc5cbc57', role: 'admin' };
+            user = { id: 'dev-bypass-user-id', email: 'dev@estevia.com', name: 'Developer Override', organization_id: 'estevia', tenant_id: 'a39c526c-2005-4529-ab5a-f008fc5cbc57', role: 'viewer' };
         } else {
             user = users[0];
+            // Force-reset: Developer Override must always be viewer — downgrade if elevated
+            if (user.role !== 'viewer') {
+                console.log(`[authController] Developer Override: resetting role from '${user.role}' → 'viewer'`);
+                await db.query("UPDATE users SET role = 'viewer', name = 'Developer Override' WHERE id = 'dev-bypass-user-id'");
+                user.role = 'viewer';
+                user.name = 'Developer Override';
+            }
         }
 
-        // Generate local JWT token
         const token = jwt.sign(
-            { 
-                id: user.id, 
-                email: user.email, 
-                name: user.name, 
-                organization_id: user.organization_id, 
-                role: user.role 
+            {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                organization_id: user.organization_id,
+                role: user.role
             },
             JWT_SECRET,
-            { expiresIn: '30d' } // Dev tokens last longer for convenience
+            { expiresIn: '30d' }
         );
 
         let requiresOnboarding = true;
@@ -296,15 +306,83 @@ const bypassLogin = async (req, res) => {
         }
 
         req.user = user;
-        return res.json({ 
-            token, 
-            user, 
-            requiresOnboarding, 
-            organization: finalOrg 
+        return res.json({ token, user, requiresOnboarding, organization: finalOrg });
+    } catch (err) {
+        console.error('[authController] Developer Override failed:', err.message);
+        return res.status(500).json({ error: 'Developer Override login failed', details: err.message });
+    }
+};
+
+// Admin Override Login — password-protected admin access for any registered org
+// Password formula: {FIRST 4 LETTERS OF ORG ID — UPPERCASE} + "2026" + "CbEt06"
+// Example: org 'estevia' → 'ESTE2026CbEt06'
+const adminOverrideLogin = async (req, res) => {
+    try {
+        const { organizationId, password } = req.body;
+
+        if (!organizationId || !password) {
+            return res.status(400).json({ error: 'Organization ID and password are required.' });
+        }
+
+        // Look up the organization
+        const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [organizationId.toLowerCase().trim()]);
+        if (orgs.length === 0) {
+            return res.status(401).json({ error: 'Invalid organization or password.' });
+        }
+        const org = orgs[0];
+
+        // Compute expected password: first 4 chars of org ID (uppercase) + '2026' + 'CbEt06'
+        const orgPrefix = org.id.replace(/[^a-z0-9]/gi, '').substring(0, 4).toUpperCase();
+        const expectedPassword = `${orgPrefix}2026CbEt06`;
+
+        if (password !== expectedPassword) {
+            console.warn(`[authController] Admin Override: incorrect password attempt for org '${org.id}'`);
+            return res.status(401).json({ error: 'Invalid organization or password.' });
+        }
+
+        // Create or fetch the admin override user for this org
+        const adminOverrideId = `admin-override-${org.id}`;
+        const [existingAdminUsers] = await db.query('SELECT * FROM users WHERE id = ?', [adminOverrideId]);
+
+        let user;
+        if (existingAdminUsers.length === 0) {
+            await db.query(
+                'INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES (?, ?, ?, ?, ?, ?)',
+                [adminOverrideId, `admin-override@${org.id}.evaops`, 'Admin Override', org.id, org.tenant_id || '', 'admin']
+            );
+            user = { id: adminOverrideId, email: `admin-override@${org.id}.evaops`, name: 'Admin Override', organization_id: org.id, tenant_id: org.tenant_id || '', role: 'admin' };
+        } else {
+            user = existingAdminUsers[0];
+            // Always ensure admin override user has admin role
+            if (user.role !== 'admin') {
+                await db.query("UPDATE users SET role = 'admin' WHERE id = ?", [adminOverrideId]);
+                user.role = 'admin';
+            }
+        }
+
+        const token = jwt.sign(
+            {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                organization_id: user.organization_id,
+                role: user.role
+            },
+            JWT_SECRET,
+            { expiresIn: '8h' } // Shorter expiry for admin override sessions
+        );
+
+        console.log(`[authController] Admin Override: successful login for org '${org.id}'`);
+        req.user = user;
+        return res.json({
+            token,
+            user,
+            requiresOnboarding: !org.onboarding_complete,
+            organization: org
         });
     } catch (err) {
-        console.error('[authController] Developer Bypass failed:', err.message);
-        return res.status(500).json({ error: 'Developer Bypass login failed', details: err.message });
+        console.error('[authController] Admin Override failed:', err.message);
+        return res.status(500).json({ error: 'Admin Override login failed', details: err.message });
     }
 };
 
@@ -656,6 +734,7 @@ module.exports = {
     microsoftLogin,
     getMe,
     bypassLogin,
+    adminOverrideLogin,
     getLoginUrl,
     runDiagnostic,
     listUsers,
