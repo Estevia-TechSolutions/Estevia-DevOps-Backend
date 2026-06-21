@@ -85,7 +85,7 @@ router.get('/db-servers', appController.getDbServers);
 router.get('/databases', appController.getDatabases);
 router.post('/databases', restrictTo('owner', 'admin', 'contributor'), appController.provisionDatabase);
 router.get('/database-schema', appController.getDatabaseSchema);
-router.post('/execute-query', restrictTo('owner', 'admin', 'contributor'), appController.executeQuery);
+router.post('/execute-query', restrictTo('owner', 'admin', 'contributor', 'viewer'), appController.executeQuery);
 
 // Get dynamic Azure provisioning metadata (Resource Groups, locations, envs, registries, DevOps service connections)
 router.get('/provisioning-metadata', appController.getProvisioningMetadata);

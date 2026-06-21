@@ -5139,6 +5139,20 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 return res.status(400).json({ message: 'Missing serverName, dbName, or query parameters.' });
             }
 
+            // Restrict viewer roles from executing delete, drop, and truncate statements
+            if (req.user?.role === 'viewer') {
+                const queryWithoutStrings = query
+                    .replace(/'[^']*'/g, '')
+                    .replace(/"[^"]*"/g, '')
+                    .toLowerCase();
+                if (/\b(delete|drop|truncate)\b/.test(queryWithoutStrings)) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'Delete, drop, and truncate operations are not permitted in developer/viewer mode.'
+                    });
+                }
+            }
+
             const orgSettings = await appController._getOrgSettings(organizationId);
             const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
