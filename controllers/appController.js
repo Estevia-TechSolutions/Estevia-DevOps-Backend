@@ -1326,6 +1326,17 @@ const appController = {
                     }
                 }
                 app.branch = app.branch || dbBranch;
+
+                // If still no branch, try to derive from GitHub branches list (prefer main > master)
+                // This ensures Container Apps without tags/pipelines still get the correct env from the real repo default branch
+                if (!app.branch && app.branches && app.branches.length > 0) {
+                    const branchNames = app.branches.map(b => b.name.toLowerCase());
+                    if (branchNames.includes('main')) app.branch = 'main';
+                    else if (branchNames.includes('master')) app.branch = 'master';
+                    else if (branchNames.includes('prod') || branchNames.includes('production')) app.branch = 'main';
+                    console.log(`[AppController] Inferred branch '${app.branch}' for ${app.name} from GitHub branches`);
+                }
+
                 // Find matching CNAME mapping on GoDaddy
                 let matchedDns = {};
                  const matchingCname = godaddyCnames.find(r => {
