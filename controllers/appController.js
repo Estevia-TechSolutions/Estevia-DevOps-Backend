@@ -1327,16 +1327,30 @@ const appController = {
                 }
                 app.branch = app.branch || dbBranch;
 
-                // Only auto-infer branch when the repo has exactly ONE branch.
-                // A single-branch repo (e.g. only "main") means every ACA from that repo
-                // unambiguously deploys from that branch — safe to infer.
-                // Multi-branch repos (dev/qa/main) cannot be auto-mapped: multiple ACAs
-                // each deploy from a different branch, so the ACA name suffix is the correct
-                // env signal for those — do not override it.
-                if (!app.branch && app.branches && app.branches.length === 1) {
-                    const singleBranch = app.branches[0].name;
-                    app.branch = singleBranch;
-                    console.log(`[AppController] Inferred branch '${app.branch}' for ${app.name} (single-branch repo)`);
+                if (app.branches && app.branches.length > 0) {
+                    if (app.branches.length === 1) {
+                        // Single-branch repo: every deployment unambiguously uses this branch
+                        if (!app.branch) {
+                            app.branch = app.branches[0].name;
+                            console.log(`[AppController] Branch inferred from single-branch repo for ${app.name}: ${app.branch}`);
+                        }
+                    } else {
+                        // Multi-branch repo: derive branch by matching each repo branch name
+                        // as a dash-separated segment against the ACA resource name.
+                        // e.g. ACA "estevia-api-dev" + repo branch "dev" → matches "-dev" → branch = "dev"
+                        // Always recompute — this also self-heals stale DB values on every scan.
+                        const n = app.name.toLowerCase();
+                        for (const repoBranch of app.branches) {
+                            const bLower = repoBranch.name.toLowerCase();
+                            if (new RegExp(`-${bLower}(-|$)`).test(n)) {
+                                app.branch = repoBranch.name;
+                                console.log(`[AppController] Branch matched from repo for ${app.name}: ${app.branch}`);
+                                break;
+                            }
+                        }
+                        // If no repo branch matched the ACA name, leave app.branch as-is.
+                        // The frontend will fall back to the ACA name suffix for env detection.
+                    }
                 }
 
                 // Find matching CNAME mapping on GoDaddy
