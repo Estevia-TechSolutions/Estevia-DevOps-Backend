@@ -1327,14 +1327,16 @@ const appController = {
                 }
                 app.branch = app.branch || dbBranch;
 
-                // If still no branch, try to derive from GitHub branches list (prefer main > master)
-                // This ensures Container Apps without tags/pipelines still get the correct env from the real repo default branch
-                if (!app.branch && app.branches && app.branches.length > 0) {
-                    const branchNames = app.branches.map(b => b.name.toLowerCase());
-                    if (branchNames.includes('main')) app.branch = 'main';
-                    else if (branchNames.includes('master')) app.branch = 'master';
-                    else if (branchNames.includes('prod') || branchNames.includes('production')) app.branch = 'main';
-                    console.log(`[AppController] Inferred branch '${app.branch}' for ${app.name} from GitHub branches`);
+                // Only auto-infer branch when the repo has exactly ONE branch.
+                // A single-branch repo (e.g. only "main") means every ACA from that repo
+                // unambiguously deploys from that branch — safe to infer.
+                // Multi-branch repos (dev/qa/main) cannot be auto-mapped: multiple ACAs
+                // each deploy from a different branch, so the ACA name suffix is the correct
+                // env signal for those — do not override it.
+                if (!app.branch && app.branches && app.branches.length === 1) {
+                    const singleBranch = app.branches[0].name;
+                    app.branch = singleBranch;
+                    console.log(`[AppController] Inferred branch '${app.branch}' for ${app.name} (single-branch repo)`);
                 }
 
                 // Find matching CNAME mapping on GoDaddy
