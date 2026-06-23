@@ -7056,42 +7056,56 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
   remediateCompliance: async (req, res) => {
       try {
           const organizationId = req.body.organizationId || req.user?.organization_id || 'estevia';
-          const { resourceName, ruleId, remediationType, suggestionId } = req.body;
+          let items = [];
 
-          if (!suggestionId || !ruleId) {
-              return res.status(400).json({ message: 'Missing suggestionId or ruleId in request body.' });
+          if (Array.isArray(req.body.violations)) {
+              items = req.body.violations;
+          } else {
+              const { resourceName, ruleId, remediationType, suggestionId } = req.body;
+              if (suggestionId && ruleId) {
+                  items.push({ resourceName, ruleId, remediationType, suggestionId });
+              }
           }
 
-          // Persist the applied remediation record
-          await db.query(
-              `INSERT INTO applied_remediations (organization_id, suggestion_id, type, app_name, savings)
-               VALUES (?, ?, ?, ?, 0.00)
-               ON DUPLICATE KEY UPDATE applied_at = CURRENT_TIMESTAMP`,
-              [organizationId, suggestionId, `compliance_${ruleId}`, resourceName || '']
-          );
+          if (items.length === 0) {
+              return res.status(400).json({ message: 'Missing suggestionId/ruleId parameters or violations array.' });
+          }
 
-          // If it is TLS compliance, update the database configuration properties of the MySQL flexible server if it matches
-          if (ruleId === 'tls' && resourceName) {
-              const [apps] = await db.query(
-                  'SELECT id, azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
-                  [organizationId, resourceName]
+          for (const item of items) {
+              const { resourceName, ruleId, suggestionId } = item;
+              if (!suggestionId || !ruleId) continue;
+
+              // Persist the applied remediation record
+              await db.query(
+                  `INSERT INTO applied_remediations (organization_id, suggestion_id, type, app_name, savings)
+                   VALUES (?, ?, ?, ?, 0.00)
+                   ON DUPLICATE KEY UPDATE applied_at = CURRENT_TIMESTAMP`,
+                  [organizationId, suggestionId, `compliance_${ruleId}`, resourceName || '']
               );
-              if (apps.length > 0) {
-                  const app = apps[0];
-                  const details = typeof app.azure_resource_details === 'string'
-                      ? JSON.parse(app.azure_resource_details || '{}')
-                      : (app.azure_resource_details || {});
-                  details.sslEnabled = true;
-                  await db.query(
-                      'UPDATE applications SET azure_resource_details = ? WHERE id = ?',
-                      [JSON.stringify(details), app.id]
+
+              // If it is TLS compliance, update the database configuration properties of the MySQL flexible server if it matches
+              if (ruleId === 'tls' && resourceName) {
+                  const [apps] = await db.query(
+                      'SELECT id, azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
+                      [organizationId, resourceName]
                   );
+                  if (apps.length > 0) {
+                      const app = apps[0];
+                      const details = typeof app.azure_resource_details === 'string'
+                          ? JSON.parse(app.azure_resource_details || '{}')
+                          : (app.azure_resource_details || {});
+                      details.sslEnabled = true;
+                      await db.query(
+                          'UPDATE applications SET azure_resource_details = ? WHERE id = ?',
+                          [JSON.stringify(details), app.id]
+                      );
+                  }
               }
           }
 
           return res.json({
               success: true,
-              message: `Compliance rule '${ruleId}' remediation successfully executed for '${resourceName}'.`
+              message: `Successfully remediated ${items.length} compliance violation(s).`
           });
       } catch (error) {
           console.error('[AppController] remediateCompliance failed:', error);
