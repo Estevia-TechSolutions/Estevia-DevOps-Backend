@@ -125,6 +125,15 @@ router.post('/:name/revision-mode', restrictTo('owner', 'admin', 'contributor'),
 // DNS CNAME swap mapping (SWA/ACA)
 router.post('/dns-swap', restrictTo('owner', 'admin', 'contributor'), appController.dnsSwap);
 
+// Validate pipeline YAML content (azure-pipelines.yml or GitHub Actions workflow)
+router.post('/validate-yml', appController.validateYml);
+
+// Validate Dockerfile content
+router.post('/validate-dockerfile', appController.validateDockerfile);
+
+// Check YAML and Dockerfile health for a GitHub repo (for cloud scan indicators)
+router.get('/yml-health', appController.checkYmlHealth);
+
 // Delete SWA/ACA app from Azure and database
 router.delete('/:name', restrictTo('owner', 'admin', 'contributor'), appController.deleteApp);
 

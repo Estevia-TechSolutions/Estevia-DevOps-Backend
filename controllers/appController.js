@@ -5,6 +5,7 @@ const { WebSiteManagementClient } = require('@azure/arm-appservice');
 const { ContainerAppsAPIClient } = require('@azure/arm-appcontainers');
 const { ResourceManagementClient } = require('@azure/arm-resources');
 const axios = require('axios');
+const jsYaml = require('js-yaml');
 
 function getUserAgent(orgId) {
     const cleanId = (typeof orgId === 'string' ? orgId : (orgId?.id || orgId?.organizationId)) || 'global';
@@ -33,6 +34,162 @@ async function getAzureCredential(organizationId) {
     }
     console.log(`[AzureAuth] Falling back to DefaultAzureCredential for organization: ${organizationId}`);
     return new DefaultAzureCredential();
+}
+
+// ─── YAML Validator ─────────────────────────────────────────────────────────
+function _validatePipelineYml(ymlContent, pipelineProvider = 'azure_devops') {
+    const errors = [];
+    const warnings = [];
+
+    if (!ymlContent || !ymlContent.trim()) {
+        errors.push({ ruleId: 'YAML_EMPTY', message: 'Pipeline YAML content is empty.', severity: 'error' });
+        return { valid: false, errors, warnings };
+    }
+
+    let parsed;
+    try {
+        parsed = jsYaml.load(ymlContent);
+    } catch (e) {
+        errors.push({ ruleId: 'YAML_PARSE_ERROR', message: `YAML syntax error: ${e.message}`, severity: 'error', line: e.mark?.line });
+        return { valid: false, errors, warnings };
+    }
+
+    const isGitHub = pipelineProvider === 'github_actions';
+
+    if (isGitHub) {
+        // GitHub Actions rules
+        if (!parsed || !parsed.on) {
+            errors.push({ ruleId: 'GH_MISSING_ON_TRIGGER', message: 'Missing required \'on:\' trigger block. GitHub Actions workflows must define at least one trigger.', severity: 'error' });
+        }
+        if (!parsed || !parsed.jobs || Object.keys(parsed.jobs || {}).length === 0) {
+            errors.push({ ruleId: 'GH_MISSING_JOBS', message: 'Missing required \'jobs:\' block. At least one job must be defined.', severity: 'error' });
+        } else {
+            for (const [jobName, job] of Object.entries(parsed.jobs || {})) {
+                if (!job || !job['runs-on']) {
+                    errors.push({ ruleId: 'GH_JOB_NO_RUNS_ON', message: `Job '${jobName}' is missing required 'runs-on:' field.`, severity: 'error' });
+                }
+                const steps = job?.steps || [];
+                const hasCheckout = steps.some(s => s.uses && s.uses.includes('actions/checkout'));
+                if (!hasCheckout) {
+                    warnings.push({ ruleId: 'GH_MISSING_CHECKOUT', message: `Job '${jobName}' does not include an 'actions/checkout' step. The workspace may not be initialized.`, severity: 'warning' });
+                }
+            }
+        }
+        if (ymlContent.includes('secrets.')) {
+            warnings.push({ ruleId: 'GH_SECRET_REMINDER', message: 'This workflow references GitHub Secrets (secrets.*). Ensure all referenced secrets are added to your repository Settings → Secrets and variables → Actions.', severity: 'warning' });
+        }
+    } else {
+        // Azure DevOps rules
+        if (!parsed || !parsed.trigger) {
+            errors.push({ ruleId: 'AZ_MISSING_TRIGGER', message: 'Missing \'trigger:\' block. Azure pipeline must define which branches trigger the pipeline.', severity: 'error' });
+        }
+        if (!parsed || (!parsed.stages && !parsed.jobs)) {
+            errors.push({ ruleId: 'AZ_MISSING_STAGES_OR_JOBS', message: 'Pipeline must define either \'stages:\' or \'jobs:\' at the top level.', severity: 'error' });
+        }
+
+        // Check az containerapp update/create missing --container-name
+        const lines = ymlContent.split('\n');
+        lines.forEach((line, idx) => {
+            const trimmed = line.trim();
+            if ((trimmed.includes('az containerapp update') || trimmed.includes('az containerapp create')) && !trimmed.includes('--container-name')) {
+                // Look ahead a few lines for --container-name flag
+                const block = lines.slice(idx, idx + 8).join(' ');
+                if (!block.includes('--container-name')) {
+                    errors.push({ ruleId: 'AZ_CONTAINERAPP_CONTAINER_NAME', message: `'az containerapp update/create' at line ${idx + 1} is missing the required '--container-name' flag. Azure CLI requires this when updating a container image.`, severity: 'error', line: idx + 1 });
+                }
+            }
+        });
+
+        // Check Docker@2 task missing containerRegistry
+        if (ymlContent.includes('Docker@2') && !ymlContent.includes('containerRegistry:')) {
+            errors.push({ ruleId: 'AZ_DOCKER_MISSING_REGISTRY', message: 'Docker@2 task is present but \'containerRegistry:\' input is missing. The task will fail without a registry service connection.', severity: 'error' });
+        }
+
+        // Check undefined variables ($(varName) not in variables block)
+        if (parsed && parsed.variables) {
+            const definedVars = new Set();
+            const vars = parsed.variables;
+            if (Array.isArray(vars)) {
+                vars.forEach(v => { if (v.name) definedVars.add(v.name); });
+            } else if (typeof vars === 'object') {
+                Object.keys(vars).forEach(k => definedVars.add(k));
+            }
+            // Conditional variable blocks like ${{ if ... }} are not in parsed.variables — skip those
+            const varRefs = [...ymlContent.matchAll(/\$\(([^)]+)\)/g)].map(m => m[1]);
+            const specialVars = new Set(['Build.BuildId', 'Build.SourceBranchName', 'Build.Repository.Name', 'System.DefaultWorkingDirectory', 'Pipeline.Workspace', 'Agent.BuildDirectory']);
+            const uniqueRefs = [...new Set(varRefs)].filter(v => !specialVars.has(v) && !definedVars.has(v));
+            // Only warn for vars not found in variables block and not in the conditional blocks section
+            uniqueRefs.slice(0, 5).forEach(v => {
+                warnings.push({ ruleId: 'AZ_UNDEFINED_VARIABLE', message: `Variable '$(${v})' is referenced but not found in the top-level 'variables:' block. It may be defined conditionally (using \${{ if }}) which is fine, or it may be undefined.`, severity: 'warning' });
+            });
+        }
+
+        // Check dependsOn references
+        if (parsed && parsed.stages) {
+            const stageNames = new Set((parsed.stages || []).map(s => s.stage || s.displayName).filter(Boolean));
+            (parsed.stages || []).forEach(stage => {
+                const deps = Array.isArray(stage.dependsOn) ? stage.dependsOn : (stage.dependsOn ? [stage.dependsOn] : []);
+                deps.forEach(dep => {
+                    if (!stageNames.has(dep)) {
+                        warnings.push({ ruleId: 'AZ_DANGLING_DEPENDS_ON', message: `Stage '${stage.stage || stage.displayName}' depends on '${dep}' which is not defined as a stage in this pipeline.`, severity: 'warning' });
+                    }
+                });
+            });
+        }
+    }
+
+    const valid = errors.length === 0;
+    return { valid, errors, warnings };
+}
+
+// ─── Dockerfile Validator ─────────────────────────────────────────────────────
+function _validateDockerfile(content) {
+    const errors = [];
+    const warnings = [];
+
+    if (!content || !content.trim()) {
+        errors.push({ ruleId: 'DOCKER_EMPTY', message: 'Dockerfile content is empty.', severity: 'error' });
+        return { valid: false, errors, warnings };
+    }
+
+    const lines = content.split('\n');
+    const instructions = lines.map((l, i) => ({ line: i + 1, text: l.trim() })).filter(l => l.text && !l.text.startsWith('#'));
+
+    const hasFrom = instructions.some(l => l.text.toUpperCase().startsWith('FROM'));
+    if (!hasFrom) {
+        errors.push({ ruleId: 'DOCKER_NO_FROM', message: 'Dockerfile is missing a FROM instruction. Every Dockerfile must start with FROM.', severity: 'error' });
+    }
+
+    const hasExpose = instructions.some(l => l.text.toUpperCase().startsWith('EXPOSE'));
+    if (!hasExpose) {
+        warnings.push({ ruleId: 'DOCKER_NO_EXPOSE', message: 'No EXPOSE instruction found. Without EXPOSE, the container port will not be documented and may not be automatically accessible.', severity: 'warning' });
+    }
+
+    const hasCmd = instructions.some(l => l.text.toUpperCase().startsWith('CMD') || l.text.toUpperCase().startsWith('ENTRYPOINT'));
+    if (!hasCmd) {
+        warnings.push({ ruleId: 'DOCKER_NO_CMD_OR_ENTRYPOINT', message: 'No CMD or ENTRYPOINT instruction found. The container will not know what process to run on startup.', severity: 'warning' });
+    }
+
+    const hasUser = instructions.some(l => l.text.toUpperCase().startsWith('USER'));
+    if (!hasUser) {
+        warnings.push({ ruleId: 'DOCKER_ROOT_USER', message: 'No USER instruction found. Container will run as root, which is a security risk. Consider adding USER node or USER nobody.', severity: 'warning' });
+    }
+
+    // Check for latest tag
+    instructions.forEach(l => {
+        if (l.text.toUpperCase().startsWith('FROM') && l.text.includes(':latest')) {
+            warnings.push({ ruleId: 'DOCKER_LATEST_TAG', line: l.line, message: `FROM instruction at line ${l.line} uses ':latest' tag. This leads to non-deterministic builds. Pin to a specific version (e.g., node:20-alpine).`, severity: 'warning' });
+        }
+    });
+
+    // Check COPY . . without obvious dockerignore comment
+    const hasCopyAll = instructions.some(l => l.text === 'COPY . .' || l.text.match(/^COPY\s+\.\s+\./));
+    if (hasCopyAll) {
+        warnings.push({ ruleId: 'DOCKER_COPY_DOT_DOT', message: "'COPY . .' copies all files including node_modules. Ensure a .dockerignore file excludes node_modules and other build artifacts.", severity: 'warning' });
+    }
+
+    const valid = errors.length === 0;
+    return { valid, errors, warnings };
 }
 
 const appController = {
@@ -1769,7 +1926,9 @@ const appController = {
                         const repoPath = matchedPipelineId.split(':').slice(1).join(':');
                         if (githubToken) {
                             const resolvedBranch = appController._resolveBranchFromAppName(app.name, app.branches || [], app.branch);
-                            const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=1${resolvedBranch ? '&branch=' + encodeURIComponent(resolvedBranch) : ''}`;
+                            // GitHub API branch filter expects bare branch name (not refs/heads/ prefix)
+                            const resolvedBranchClean = resolvedBranch ? resolvedBranch.replace(/^refs\/heads\//, '') : null;
+                            const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=1${resolvedBranchClean ? '&branch=' + encodeURIComponent(resolvedBranchClean) : ''}`;
                             const runsRes = await axios.get(runsUrl, {
                                 headers: {
                                     'Authorization': `token ${githubToken}`,
@@ -4242,7 +4401,9 @@ const appController = {
                     return res.status(400).json({ success: false, message: 'GitHub integration credentials not found.' });
                 }
 
-                const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=1${branchName ? '&branch=' + encodeURIComponent(branchName) : ''}`;
+                // GitHub API branch filter expects bare branch name, not refs/heads/ prefix
+                const cleanBranchName = branchName ? branchName.replace(/^refs\/heads\//, '') : null;
+                const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=1${cleanBranchName ? '&branch=' + encodeURIComponent(cleanBranchName) : ''}`;
                 console.log(`[AppController] getLatestPipelineBuild (GitHub): Fetching runs for ${repoPath} from: ${runsUrl}`);
                 const runsRes = await axios.get(runsUrl, {
                     headers: {
@@ -4860,7 +5021,19 @@ const appController = {
             // Fetch organization dynamic settings
             const orgSettings = await appController._getOrgSettings(organizationId);
 
-            // 3. Commit the default yml
+            // 3. Validate YAML before committing (server-side gate)
+            if (customYml && customYml.trim()) {
+                const ymlValidation = _validatePipelineYml(customYml, pipelineProvider || 'azure_devops');
+                if (!ymlValidation.valid) {
+                    return res.status(400).json({
+                        message: 'Pipeline YAML contains errors and cannot be committed. Please fix the issues and try again.',
+                        validationErrors: ymlValidation.errors,
+                        validationWarnings: ymlValidation.warnings
+                    });
+                }
+            }
+
+            // 4. Commit the default yml
             const fileLabel = isGitHubAction ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
             console.log(`[AppController] Committing ${fileLabel} to ${githubRepo} (exists: ${ymlStatus.exists}) on branch ${branch || 'main'}...`);
             await appController._commitYmlToRepo(
@@ -6911,6 +7084,16 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         // File doesn't exist yet — will create it
       }
 
+      // Validate Dockerfile before committing (server-side gate)
+      const dockerValidation = _validateDockerfile(content);
+      if (!dockerValidation.valid) {
+          return res.status(400).json({
+              message: 'Dockerfile contains errors and cannot be committed. Please fix the issues and try again.',
+              validationErrors: dockerValidation.errors,
+              validationWarnings: dockerValidation.warnings
+          });
+      }
+
       const body = {
         message: commitMessage || `chore: update Dockerfile [via Estevia DevOps Hub]`,
         content: Buffer.from(content).toString('base64'),
@@ -7833,7 +8016,130 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
           console.error('[AppController] remediateCompliance failed:', error);
           res.status(500).json({ message: 'Failed to execute compliance remediation.', error: error.message });
       }
-  }
+  },
+
+    /**
+     * POST /api/apps/validate-yml
+     * Validate a pipeline YAML string (azure-pipelines.yml or GitHub Actions workflow).
+     * Body: { ymlContent, pipelineProvider }
+     */
+    validateYml: async (req, res) => {
+        try {
+            const { ymlContent, pipelineProvider } = req.body;
+            if (!ymlContent && ymlContent !== '') {
+                return res.status(400).json({ message: 'Missing ymlContent in request body.' });
+            }
+            const result = _validatePipelineYml(ymlContent, pipelineProvider || 'azure_devops');
+            return res.json(result);
+        } catch (error) {
+            console.error('[AppController] validateYml failed:', error);
+            res.status(500).json({ message: 'Validation failed.', error: error.message });
+        }
+    },
+
+    /**
+     * POST /api/apps/validate-dockerfile
+     * Validate a Dockerfile content string.
+     * Body: { content }
+     */
+    validateDockerfile: async (req, res) => {
+        try {
+            const { content } = req.body;
+            if (content === undefined || content === null) {
+                return res.status(400).json({ message: 'Missing content in request body.' });
+            }
+            const result = _validateDockerfile(content);
+            return res.json(result);
+        } catch (error) {
+            console.error('[AppController] validateDockerfile failed:', error);
+            res.status(500).json({ message: 'Validation failed.', error: error.message });
+        }
+    },
+
+    /**
+     * GET /api/apps/yml-health
+     * Fetch YAML and optionally Dockerfile from GitHub and validate them.
+     * Used by the cloud scanning dashboard to show health indicators.
+     * Query: { organizationId, githubRepo, branch, pipelineProvider, checkDockerfile }
+     */
+    checkYmlHealth: async (req, res) => {
+        try {
+            const { organizationId, githubRepo, branch, pipelineProvider, checkDockerfile } = req.query;
+            if (!organizationId || !githubRepo) {
+                return res.status(400).json({ message: 'Missing organizationId or githubRepo.' });
+            }
+
+            const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+            const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+            if (!githubToken) {
+                return res.status(400).json({ message: 'GitHub integration credentials not found.' });
+            }
+
+            const branchName = branch || 'main';
+            const provider = pipelineProvider || 'azure_devops';
+            const isGitHub = provider === 'github_actions';
+            const ymlPath = isGitHub ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
+
+            const fetchGithubFile = async (path) => {
+                try {
+                    const url = `https://api.github.com/repos/${githubRepo}/contents/${path}?ref=${encodeURIComponent(branchName)}`;
+                    const response = await axios.get(url, {
+                        headers: {
+                            'Authorization': `token ${githubToken}`,
+                            'Accept': 'application/vnd.github.v3+json',
+                            'User-Agent': getUserAgent(organizationId)
+                        }
+                    });
+                    if (response.data && response.data.content) {
+                        return Buffer.from(response.data.content, 'base64').toString('utf-8');
+                    }
+                    return null;
+                } catch (e) {
+                    if (e.response && e.response.status === 404) return null;
+                    throw e;
+                }
+            };
+
+            // Validate YAML
+            const ymlContent = await fetchGithubFile(ymlPath);
+            let ymlHealth = { exists: false, valid: true, errorCount: 0, warningCount: 0, errors: [], warnings: [] };
+            if (ymlContent !== null) {
+                const result = _validatePipelineYml(ymlContent, provider);
+                ymlHealth = {
+                    exists: true,
+                    valid: result.valid,
+                    errorCount: result.errors.length,
+                    warningCount: result.warnings.length,
+                    errors: result.errors,
+                    warnings: result.warnings
+                };
+            }
+
+            // Optionally validate Dockerfile
+            let dockerfileHealth = null;
+            if (checkDockerfile === 'true') {
+                const dockerContent = await fetchGithubFile('Dockerfile');
+                if (dockerContent !== null) {
+                    const result = _validateDockerfile(dockerContent);
+                    dockerfileHealth = {
+                        exists: true,
+                        valid: result.valid,
+                        errorCount: result.errors.length,
+                        warningCount: result.warnings.length,
+                        errors: result.errors,
+                        warnings: result.warnings
+                    };
+                } else {
+                    dockerfileHealth = { exists: false, valid: true, errorCount: 0, warningCount: 0, errors: [], warnings: [] };
+                }
+            }
+
+            return res.json({ success: true, ymlHealth, dockerfileHealth });
+        } catch (error) {
+            console.error('[AppController] checkYmlHealth failed:', error);
+            res.status(500).json({ message: 'Failed to check YAML health.', error: error.message });
+        }
+    }
 };
 
 module.exports = appController;
