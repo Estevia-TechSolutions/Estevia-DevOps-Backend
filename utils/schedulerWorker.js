@@ -111,6 +111,12 @@ async function notifyScaleTransition(orgId, appName, newState, minReplicas, maxR
         costNote = isSleeping
             ? 'Compute allocation deallocated. Compute pricing is paused.'
             : 'Compute allocation restarted. VM is running.';
+    } else if (appType === 'cluster') {
+        appTypeLabel = 'AKS Cluster';
+        stateLabel = isSleeping ? 'Stopped (Deallocated)' : 'Running';
+        costNote = isSleeping
+            ? 'AKS cluster instance VMSS backed nodes stopped. All node billing is paused.'
+            : 'AKS cluster instance nodes started. Cluster is running.';
     } else {
         appTypeLabel = 'Container App';
         stateLabel = isSleeping ? 'Scaled Down (Sleep Mode)' : 'Scaled Up (Active)';
@@ -229,6 +235,12 @@ async function checkSchedules() {
                     } else {
                         await setVirtualMachinePowerState(orgId, app.name, 'start');
                     }
+                } else if (app.app_type === 'cluster') {
+                    if (shouldBeSleep && (rules.autoStopVm || rules.autoStopCluster)) {
+                        await setClusterPowerState(orgId, app.name, 'stop');
+                    } else {
+                        await setClusterPowerState(orgId, app.name, 'start');
+                    }
                 }
             }
         }
@@ -286,6 +298,51 @@ async function setVirtualMachinePowerState(orgId, vmName, action) {
         }
     } catch (err) {
         console.error(`[SleepScheduler] Failed to adjust VM power state for ${vmName}:`, err.message);
+    }
+}
+
+// Helper to control AKS Cluster power state inside sleep schedules
+async function setClusterPowerState(orgId, clusterName, action) {
+    const isStopping = action === 'stop';
+    const targetState = isStopping ? 'sleep' : 'active';
+    const cacheKey = `${orgId}:${clusterName}`;
+    const prevState = scaleStateCache.get(cacheKey);
+
+    try {
+        const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [orgId]);
+        const subId = orgs[0]?.azure_subscription_id || SUBSCRIPTION_ID;
+        const rg = orgs[0]?.azure_resource_group || RESOURCE_GROUP;
+
+        if (!process.env.AZURE_CLIENT_ID) {
+            console.log(`[MOCK SleepScheduler] AKS Cluster '${clusterName}' power status changed to: ${action === 'stop' ? 'Stopped' : 'Running'} (Dry run/Dev mode)`);
+            if (prevState !== targetState) {
+                scaleStateCache.set(cacheKey, targetState);
+                await notifyScaleTransition(orgId, clusterName, targetState, 0, 0, 'cluster');
+                await db.query('UPDATE applications SET status = ? WHERE organization_id = ? AND name = ?', [action === 'stop' ? 'Stopped' : 'Running', orgId, clusterName]);
+            }
+            return;
+        }
+
+        console.log(`[SleepScheduler] Connecting to Azure AKS: ${clusterName} to perform action: ${action}...`);
+        const credential = await getAzureCredential(orgId);
+        const tokenRes = await credential.getToken("https://management.azure.com/.default");
+        const token = tokenRes.token;
+
+        const url = `https://management.azure.com/subscriptions/${subId}/resourceGroups/${rg}/providers/Microsoft.ContainerService/managedClusters/${clusterName}/${action}?api-version=2023-09-01`;
+
+        const axios = require('axios');
+        await axios.post(url, {}, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        console.log(`[SleepScheduler] Successfully performed action '${action}' on AKS Cluster '${clusterName}'`);
+
+        if (prevState !== targetState) {
+            scaleStateCache.set(cacheKey, targetState);
+            await notifyScaleTransition(orgId, clusterName, targetState, 0, 0, 'cluster');
+            await db.query('UPDATE applications SET status = ? WHERE organization_id = ? AND name = ?', [action === 'stop' ? 'Stopped' : 'Running', orgId, clusterName]);
+        }
+    } catch (err) {
+        console.error(`[SleepScheduler] Failed to adjust AKS cluster power state for ${clusterName}:`, err.message);
     }
 }
 

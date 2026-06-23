@@ -21,6 +21,7 @@ const schedulerController = {
                 const defaultRules = {
                     autoScaleAca: true,
                     autoStopVm: false,
+                    autoStopCluster: false,
                     schedules: [{
                         id: 'default',
                         name: 'Default Sleep Policy',
@@ -51,6 +52,7 @@ const schedulerController = {
             const normalizedRules = {
                 autoScaleAca: parsedRules.autoScaleAca !== undefined ? parsedRules.autoScaleAca : true,
                 autoStopVm: parsedRules.autoStopVm !== undefined ? parsedRules.autoStopVm : false,
+                autoStopCluster: parsedRules.autoStopCluster !== undefined ? parsedRules.autoStopCluster : false,
                 schedules: []
             };
 
