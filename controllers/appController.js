@@ -6159,6 +6159,18 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
       );
       const branches = branchesRes.data;
 
+      // Fetch repo details to get default branch
+      let defaultBranch = 'main';
+      try {
+        const repoRes = await axios.get(
+          `https://api.github.com/repos/${cleanRepo}`,
+          { headers: ghHeaders }
+        );
+        defaultBranch = repoRes.data.default_branch || 'main';
+      } catch (repoErr) {
+        console.warn(`[checkRepoIntegrity] Failed to fetch repo default branch:`, repoErr.message);
+      }
+
       // ── 2. Fetch root contents for each branch in parallel ───────────────
       const branchReports = await Promise.all(branches.map(async (branch) => {
         try {
@@ -6218,7 +6230,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
       const overallStatus = mixedBranches.length > 0 ? 'mixed' : (issues.length > 0 ? 'warning' : 'ok');
       console.log(`[AppController] checkRepoIntegrity: ${cleanRepo} → ${overallStatus} (${branchReports.length} branches)`);
 
-      res.json({ success: true, repo: cleanRepo, overallStatus, issues, branches: branchReports });
+      res.json({ success: true, repo: cleanRepo, overallStatus, issues, branches: branchReports, defaultBranch });
 
     } catch (error) {
       console.error('[AppController] checkRepoIntegrity failed:', error);
