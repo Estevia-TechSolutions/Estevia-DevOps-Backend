@@ -1737,22 +1737,27 @@ const appController = {
 
             const repoBranchesMap = new Map();
             if (githubToken) {
-                for (const app of apps) {
-                    if (app.repositoryUrl) {
-                        const normalizedUrl = app.repositoryUrl.toLowerCase().replace(/\/$/, '').replace(/\.git$/, '');
-                        if (!repoBranchesMap.has(normalizedUrl)) {
-                            const githubRepo = normalizedUrl.replace('https://github.com/', '');
-                            const branchList = await appController._getGithubBranchesInternal(githubToken, githubRepo, organizationId);
-                            repoBranchesMap.set(normalizedUrl, branchList);
-                        }
+                const uniqueRepos = [...new Set(apps
+                    .map(app => app.repositoryUrl)
+                    .filter(Boolean)
+                    .map(url => url.toLowerCase().replace(/\/$/, '').replace(/\.git$/, ''))
+                )];
+                
+                await Promise.all(uniqueRepos.map(async (normalizedUrl) => {
+                    try {
+                        const githubRepo = normalizedUrl.replace('https://github.com/', '');
+                        const branchList = await appController._getGithubBranchesInternal(githubToken, githubRepo, organizationId);
+                        repoBranchesMap.set(normalizedUrl, branchList);
+                    } catch (e) {
+                        console.warn(`[AppController] Failed to query branches for ${normalizedUrl}:`, e.message);
                     }
-                }
+                }));
             }
             
             const repoHasGithubActionsMap = new Map();
 
             // 5. Sync scanned apps with applications database and cross-reference discovered credentials
-            for (const app of apps) {
+            await Promise.all(apps.map(async (app) => {
                 const normalizedUrl = app.repositoryUrl ? app.repositoryUrl.toLowerCase().replace(/\/$/, '').replace(/\.git$/, '') : '';
                 app.branches = repoBranchesMap.get(normalizedUrl) || [];
 
@@ -2158,7 +2163,7 @@ const appController = {
                         [organizationId, app.name, app.repositoryUrl, app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId]
                     );
                 }
-            }
+            }));
 
             // Prune applications from DB that are no longer present in Azure (for successfully scanned types)
             if (swaScanSuccess) {
