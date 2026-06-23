@@ -1230,9 +1230,10 @@ const appController = {
 
         // Fetch live Azure Advisor Recommendations
         try {
-            const tokenRes = await credential.getToken("https://management.azure.com/.default");
-            const token = tokenRes.token;
-            const advisorUrl = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Advisor/recommendations?api-version=2023-01-01`;
+            const tokenRes = await promiseWithTimeout(credential.getToken("https://management.azure.com/.default"), 4000);
+            if (tokenRes && tokenRes.token) {
+                const token = tokenRes.token;
+                const advisorUrl = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Advisor/recommendations?api-version=2023-01-01`;
             const advisorRes = await axios.get(advisorUrl, {
                 headers: {
                     'Authorization': `Bearer ${token}`
@@ -1262,6 +1263,7 @@ const appController = {
                         }
                     }
                 }
+            }
             }
         } catch (advErr) {
             console.warn('[AppController] Live Azure Advisor API query skipped or failed:', advErr.message);
