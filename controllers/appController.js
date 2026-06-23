@@ -1581,6 +1581,8 @@ const appController = {
                     }
                 }
             }
+            
+            const repoHasGithubActionsMap = new Map();
 
             // 5. Sync scanned apps with applications database and cross-reference discovered credentials
             for (const app of apps) {
@@ -1719,12 +1721,81 @@ const appController = {
                     matchedPipelineId = String(matchingPipeline.id);
                     matchedPipelineName = matchingPipeline.name;
                 }
+
+                // Fallback to GitHub Actions if no Azure DevOps pipeline is found
+                if (!matchedPipelineId && !isDevVm && app.repositoryUrl && githubToken) {
+                    const cleanAppRepo = app.repositoryUrl.replace('https://github.com/', '').replace(/\/$/, '').toLowerCase();
+                    if (!repoHasGithubActionsMap.has(normalizedUrl)) {
+                        let hasActions = false;
+                        const branchToUse = app.branch || 'main';
+                        const githubRepo = normalizedUrl.replace('https://github.com/', '');
+                        try {
+                            const workflowsUrl = `https://api.github.com/repos/${githubRepo}/contents/.github/workflows?ref=${encodeURIComponent(branchToUse)}`;
+                            const workflowsRes = await axios.get(workflowsUrl, {
+                                headers: {
+                                    'Authorization': `token ${githubToken}`,
+                                    'Accept': 'application/vnd.github.v3+json',
+                                    'User-Agent': getUserAgent(organizationId)
+                                },
+                                timeout: 3000
+                            });
+                            if (Array.isArray(workflowsRes.data) && workflowsRes.data.length > 0) {
+                                hasActions = true;
+                            }
+                        } catch (err) {
+                            // 404 is expected if workflows directory is not present
+                        }
+                        repoHasGithubActionsMap.set(normalizedUrl, hasActions);
+                    }
+                    
+                    const hasGithubActions = repoHasGithubActionsMap.get(normalizedUrl) || (existing.length > 0 && existing[0].pipeline_id && String(existing[0].pipeline_id).startsWith('github-actions'));
+                    if (hasGithubActions) {
+                        const githubRepo = normalizedUrl.replace('https://github.com/', '');
+                        matchedPipelineId = 'github-actions:' + githubRepo;
+                        matchedPipelineName = 'GitHub Actions';
+                    }
+                } else if (!matchedPipelineId && existing.length > 0 && existing[0].pipeline_id && String(existing[0].pipeline_id).startsWith('github-actions')) {
+                    matchedPipelineId = existing[0].pipeline_id;
+                    matchedPipelineName = 'GitHub Actions';
+                }
+
                 app.pipelineId = matchedPipelineId;
                 app.pipelineName = matchedPipelineName;
 
-                // Fetch latest pipeline build run status if DevOps PAT is present
+                // Fetch latest pipeline build run status
                 app.pipelineRun = null;
-                if (matchedPipelineId && devopsSecrets && devopsSecrets.pat) {
+                if (matchedPipelineId && String(matchedPipelineId).startsWith('github-actions:')) {
+                    try {
+                        const repoPath = matchedPipelineId.split(':').slice(1).join(':');
+                        if (githubToken) {
+                            const resolvedBranch = appController._resolveBranchFromAppName(app.name, app.branches || [], app.branch);
+                            const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=1${resolvedBranch ? '&branch=' + encodeURIComponent(resolvedBranch) : ''}`;
+                            const runsRes = await axios.get(runsUrl, {
+                                headers: {
+                                    'Authorization': `token ${githubToken}`,
+                                    'Accept': 'application/vnd.github.v3+json',
+                                    'User-Agent': getUserAgent(organizationId)
+                                },
+                                timeout: 5000
+                            });
+                            const latestRun = runsRes.data?.workflow_runs?.[0];
+                            if (latestRun) {
+                                app.pipelineRun = {
+                                    id: `${repoPath}/${latestRun.id}`,
+                                    name: `#${latestRun.run_number}`,
+                                    state: latestRun.status === 'completed' ? 'completed' : (latestRun.status === 'queued' ? 'notStarted' : 'inProgress'),
+                                    result: latestRun.conclusion === 'success' ? 'succeeded' : (latestRun.conclusion === 'failure' ? 'failed' : (latestRun.conclusion === 'cancelled' ? 'canceled' : null)),
+                                    webUrl: latestRun.html_url,
+                                    startTime: latestRun.run_started_at || latestRun.created_at,
+                                    finishTime: latestRun.conclusion ? latestRun.updated_at : null,
+                                    stages: []
+                                };
+                            }
+                        }
+                    } catch (runErr) {
+                        console.warn(`[AppController] Failed to fetch GitHub Actions latest run status for ${matchedPipelineId}:`, runErr.message);
+                    }
+                } else if (matchedPipelineId && devopsSecrets && devopsSecrets.pat) {
                     try {
                         const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
                         const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
@@ -2617,7 +2688,7 @@ const appController = {
      */
     checkYml: async (req, res) => {
         try {
-            const { organizationId, githubRepo, branch } = req.query;
+            const { organizationId, githubRepo, branch, pipelineProvider } = req.query;
             if (!organizationId || !githubRepo) {
                 return res.status(400).json({ message: 'Missing organizationId or githubRepo query parameters.' });
             }
@@ -2664,7 +2735,7 @@ const appController = {
                 }
             }
 
-            const ymlStatus = await appController._checkYmlExists(githubToken, githubRepo, branch || 'main', organizationId);
+            const ymlStatus = await appController._checkYmlExists(githubToken, githubRepo, branch || 'main', organizationId, pipelineProvider || 'azure_devops');
             res.json({ exists: ymlStatus.exists, sha: ymlStatus.sha, githubRepo });
         } catch (error) {
             console.error('[AppController] checkYml failed:', error);
@@ -3849,6 +3920,31 @@ const appController = {
                 return res.status(400).json({ message: 'Missing parameters (buildId, logId).' });
             }
 
+            if (String(buildId).includes('/')) {
+                const parts = buildId.split('/');
+                const repoPath = parts.slice(0, -1).join('/');
+                const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+                const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+                if (!githubToken) {
+                    return res.status(400).json({ success: false, message: 'GitHub integration credentials not found.' });
+                }
+
+                const logUrl = `https://api.github.com/repos/${repoPath}/actions/jobs/${logId}/logs`;
+                console.log(`[AppController] Fetching GitHub Actions job logs from: ${logUrl}`);
+
+                const response = await axios.get(logUrl, {
+                    headers: {
+                        'Authorization': `token ${githubToken}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'User-Agent': getUserAgent(organizationId)
+                    },
+                    responseType: 'text',
+                    timeout: 10000
+                });
+
+                return res.json({ success: true, logs: response.data });
+            }
+
             const orgSettings = await appController._getOrgSettings(organizationId);
             const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
             const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
@@ -4629,7 +4725,7 @@ const appController = {
             let pipelineUrl = '';
 
             if (isGitHubAction) {
-                pipelineId = 'github-actions';
+                pipelineId = 'github-actions:' + githubRepo;
                 pipelineUrl = `https://github.com/${githubRepo}/actions`;
             } else {
                 const [sameRepoApps] = await db.query(
@@ -4746,9 +4842,10 @@ const appController = {
 
             let pipelineId = null;
             let pipelineUrl = '';
+            let sameRepoApps = null;
 
             if (isGitHubAction) {
-                pipelineId = 'github-actions';
+                pipelineId = 'github-actions:' + githubRepo;
                 pipelineUrl = `https://github.com/${githubRepo}/actions`;
             } else {
                 // 4. Get Azure DevOps PAT
@@ -4759,10 +4856,11 @@ const appController = {
                 const pat = devopsSecrets.pat;
 
                 // 5. Register or Reuse pipeline
-                const [sameRepoApps] = await db.query(
+                const [sameRepoAppsRes] = await db.query(
                     'SELECT pipeline_id FROM applications WHERE organization_id = ? AND (repo_url = ? OR repo_url = ? OR repo_url LIKE ?) AND pipeline_id IS NOT NULL LIMIT 1',
                     [organizationId, `https://github.com/${githubRepo}`, `https://github.com/${githubRepo}/`, `%${githubRepo}%`]
                 );
+                sameRepoApps = sameRepoAppsRes;
 
                 if (sameRepoApps.length > 0) {
                     pipelineId = sameRepoApps[0].pipeline_id;
