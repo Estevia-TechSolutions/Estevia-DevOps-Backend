@@ -1790,6 +1790,50 @@ const appController = {
                                     finishTime: latestRun.conclusion ? latestRun.updated_at : null,
                                     stages: []
                                 };
+
+                                // Fetch jobs & steps to construct stages
+                                try {
+                                    const jobsUrl = `https://api.github.com/repos/${repoPath}/actions/runs/${latestRun.id}/jobs`;
+                                    const jobsRes = await axios.get(jobsUrl, {
+                                        headers: {
+                                            'Authorization': `token ${githubToken}`,
+                                            'Accept': 'application/vnd.github.v3+json',
+                                            'User-Agent': getUserAgent(organizationId)
+                                        },
+                                        timeout: 5000
+                                    });
+                                    const ghJobs = jobsRes.data?.jobs || [];
+                                    app.pipelineRun.stages = [{
+                                        id: 'workflow-execution-stage',
+                                        name: 'Workflow Execution',
+                                        displayName: 'Workflow Execution',
+                                        state: app.pipelineRun.state,
+                                        result: app.pipelineRun.result,
+                                        startTime: app.pipelineRun.startTime,
+                                        finishTime: app.pipelineRun.finishTime,
+                                        jobs: ghJobs.map(job => ({
+                                            id: String(job.id),
+                                            name: job.name,
+                                            displayName: job.name,
+                                            state: job.status === 'completed' ? 'completed' : (job.status === 'queued' ? 'notStarted' : 'inProgress'),
+                                            result: job.conclusion === 'success' ? 'succeeded' : (job.conclusion === 'failure' ? 'failed' : null),
+                                            startTime: job.started_at,
+                                            finishTime: job.completed_at,
+                                            steps: (job.steps || []).map((step, idx) => ({
+                                                id: `${job.id}:${idx + 1}`,
+                                                name: step.name,
+                                                displayName: step.name,
+                                                state: step.status === 'completed' ? 'completed' : (step.status === 'queued' ? 'notStarted' : 'inProgress'),
+                                                result: step.conclusion === 'success' ? 'succeeded' : (step.conclusion === 'failure' ? 'failed' : null),
+                                                startTime: step.started_at || null,
+                                                finishTime: step.completed_at || null,
+                                                logId: String(job.id)
+                                            }))
+                                        }))
+                                    }];
+                                } catch (jobsErr) {
+                                    console.warn(`[AppController] Failed to fetch jobs for GitHub Actions latest run ${latestRun.id}:`, jobsErr.message);
+                                }
                             }
                         }
                     } catch (runErr) {
