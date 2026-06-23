@@ -79,7 +79,7 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 az config set extension.use_dynamic_install=yes_without_prompt
-                az containerapp update --container-name web-container \
+                az containerapp update --container-name api-evaops \
                   --name $(containerAppName) \
                   --resource-group $(resourceGroup) \
                   --image $(containerRegistry)/$(imageRepository):$(Build.BuildId)
