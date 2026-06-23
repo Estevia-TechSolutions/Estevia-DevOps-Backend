@@ -1887,6 +1887,160 @@ const appController = {
                 });
             }
 
+            // Builds-only light request check (refreshes pipeline status only, bypasses heavy Azure/DNS queries)
+            if (req.query.buildsOnly === 'true') {
+                const [dbApps] = await db.query(
+                    'SELECT id, name, app_type, status, repo_url, azure_resource_details, godaddy_dns_details, pipeline_id FROM applications WHERE organization_id = ?',
+                    [organizationId]
+                );
+
+                let githubToken = null;
+                try {
+                    const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+                    githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+                } catch (e) {
+                    console.warn('[AppController] Could not retrieve GitHub token for builds-only sync:', e.message);
+                }
+
+                let devopsSecrets = null;
+                try {
+                    devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
+                } catch (e) {
+                    console.warn('[AppController] Failed to decrypt DevOps credentials for builds-only sync:', e.message);
+                }
+
+                const apps = await Promise.all(dbApps.map(async (dbApp) => {
+                    const details = typeof dbApp.azure_resource_details === 'string'
+                        ? JSON.parse(dbApp.azure_resource_details || '{}')
+                        : (dbApp.azure_resource_details || {});
+                    const dnsDetails = typeof dbApp.godaddy_dns_details === 'string'
+                        ? JSON.parse(dbApp.godaddy_dns_details || '{}')
+                        : (dbApp.godaddy_dns_details || {});
+
+                    const app = {
+                        name: dbApp.name,
+                        type: dbApp.app_type,
+                        status: dbApp.status,
+                        repositoryUrl: dbApp.repo_url || '',
+                        location: details.location || 'Central US',
+                        hostname: details.hostname || '',
+                        resourceId: details.resourceId || '',
+                        resourceGroup: details.resourceGroup || resourceGroup,
+                        branch: details.branch || null,
+                        branches: [],
+                        dnsDetails,
+                        pipelineId: dbApp.pipeline_id,
+                        pipelineName: details.pipelineName || null,
+                        pipelineRun: details.pipelineRun || null,
+                        azureResourceDetails: details
+                    };
+
+                    // Only query live API if the app has a valid pipeline ID
+                    if (app.pipelineId) {
+                        let latestRun = null;
+                        if (String(app.pipelineId).startsWith('github-actions:')) {
+                            if (githubToken) {
+                                try {
+                                    const repoPath = app.pipelineId.split(':').slice(1).join(':');
+                                    const resolvedBranchClean = app.branch ? app.branch.replace(/^refs\/heads\//, '') : null;
+                                    const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=1${resolvedBranchClean ? '&branch=' + encodeURIComponent(resolvedBranchClean) : ''}`;
+                                    const runsRes = await axios.get(runsUrl, {
+                                        headers: {
+                                            'Authorization': `token ${githubToken}`,
+                                            'Accept': 'application/vnd.github.v3+json',
+                                            'User-Agent': getUserAgent(organizationId)
+                                        },
+                                        timeout: 5000
+                                    });
+                                    const ghRun = runsRes.data?.workflow_runs?.[0];
+                                    if (ghRun) {
+                                        latestRun = {
+                                            id: `${repoPath}/${ghRun.id}`,
+                                            name: `#${ghRun.run_number}`,
+                                            state: ghRun.status === 'completed' ? 'completed' : (ghRun.status === 'queued' ? 'notStarted' : 'inProgress'),
+                                            result: ghRun.conclusion === 'success' ? 'succeeded' : (ghRun.conclusion === 'failure' ? 'failed' : (ghRun.conclusion === 'cancelled' ? 'canceled' : null)),
+                                            webUrl: ghRun.html_url,
+                                            startTime: ghRun.run_started_at || ghRun.created_at,
+                                            finishTime: ghRun.conclusion ? ghRun.updated_at : null,
+                                            stages: []
+                                        };
+                                    }
+                                } catch (err) {
+                                    console.warn(`[AppController] buildsOnly: Failed to fetch GitHub Action run for ${app.pipelineId}:`, err.message);
+                                }
+                            }
+                        } else if (devopsSecrets && devopsSecrets.pat) {
+                            try {
+                                const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
+                                const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
+                                const resolvedBranch = app.branch || 'refs/heads/main';
+                                const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
+
+                                const urlInProgress = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${app.pipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=InProgress&$top=1&api-version=7.1`;
+                                const urlNotStarted = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${app.pipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=NotStarted&$top=1&api-version=7.1`;
+                                const urlCompleted  = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${app.pipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=Completed&$top=1&api-version=7.1`;
+
+                                const [resInProgress, resNotStarted, resCompleted] = await Promise.all([
+                                    axios.get(urlInProgress, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(() => ({ data: { value: [] } })),
+                                    axios.get(urlNotStarted, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(() => ({ data: { value: [] } })),
+                                    axios.get(urlCompleted,  { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(() => ({ data: { value: [] } }))
+                                ]);
+
+                                const builds = [
+                                    resInProgress.data?.value?.[0],
+                                    resNotStarted.data?.value?.[0],
+                                    resCompleted.data?.value?.[0]
+                                ].filter(Boolean);
+
+                                builds.sort((a, b) => b.id - a.id);
+                                const azureBuild = builds[0];
+
+                                if (azureBuild) {
+                                    latestRun = {
+                                        id: azureBuild.id,
+                                        name: azureBuild.buildNumber,
+                                        state: azureBuild.status,
+                                        result: azureBuild.result || null,
+                                        webUrl: azureBuild._links?.web?.href || '',
+                                        startTime: azureBuild.startTime || null,
+                                        finishTime: azureBuild.finishTime || null,
+                                        stages: []
+                                    };
+                                }
+                            } catch (err) {
+                                console.warn(`[AppController] buildsOnly: Failed to fetch Azure DevOps build for ${app.pipelineId}:`, err.message);
+                            }
+                        }
+
+                        if (latestRun) {
+                            app.pipelineRun = latestRun;
+                            details.pipelineRun = latestRun;
+                            try {
+                                await db.query(
+                                    'UPDATE applications SET azure_resource_details = ? WHERE id = ?',
+                                    [JSON.stringify(details), dbApp.id]
+                                );
+                            } catch (dbErr) {
+                                console.warn(`[AppController] buildsOnly: Failed to update DB for ${app.name}:`, dbErr.message);
+                            }
+                        }
+                    }
+
+                    return app;
+                }));
+
+                return res.json({
+                    success: true,
+                    count: apps.length,
+                    apps,
+                    integrity: {
+                        github: { success: true, message: 'Builds-only sync completed.' },
+                        godaddy: { success: true, message: 'Builds-only sync completed.' },
+                        azure: { success: true, message: 'Builds-only sync completed.' }
+                    }
+                });
+            }
+
             // Move Integration Discovery to start of scan so it's resolved for incremental updates
             let godaddyCnames = [];
             try {
@@ -5066,6 +5220,29 @@ const appController = {
                     console.warn(`[AppController] Failed to fetch jobs for latest run ${latestRun.id}:`, jobsErr.message);
                 }
 
+                // Update the database cache with the new pipelineRun
+                try {
+                    const [apps] = await db.query(
+                        'SELECT id, azure_resource_details FROM applications WHERE organization_id = ? AND pipeline_id = ?',
+                        [organizationId, pipelineId]
+                    );
+                    if (apps.length > 0) {
+                        for (const app of apps) {
+                            const details = typeof app.azure_resource_details === 'string'
+                                ? JSON.parse(app.azure_resource_details || '{}')
+                                : (app.azure_resource_details || {});
+                            details.pipelineRun = pipelineRun;
+                            await db.query(
+                                'UPDATE applications SET azure_resource_details = ? WHERE id = ?',
+                                [JSON.stringify(details), app.id]
+                            );
+                        }
+                        console.log(`[AppController] getLatestPipelineBuild (GitHub): Updated cache for pipeline: ${pipelineId}`);
+                    }
+                } catch (dbErr) {
+                    console.warn('[AppController] getLatestPipelineBuild: Failed to update GitHub cache in DB:', dbErr.message);
+                }
+
                 return res.json({ success: true, pipelineRun });
             }
 
@@ -5173,6 +5350,29 @@ const appController = {
                 }
             } catch (tlErr) {
                 console.warn(`[AppController] getLatestPipelineBuild: Failed to fetch timeline for build ${latestRun.id}:`, tlErr.message);
+            }
+
+            // Update the database cache with the new pipelineRun
+            try {
+                const [apps] = await db.query(
+                    'SELECT id, azure_resource_details FROM applications WHERE organization_id = ? AND pipeline_id = ?',
+                    [organizationId, pipelineId]
+                );
+                if (apps.length > 0) {
+                    for (const app of apps) {
+                        const details = typeof app.azure_resource_details === 'string'
+                            ? JSON.parse(app.azure_resource_details || '{}')
+                            : (app.azure_resource_details || {});
+                        details.pipelineRun = pipelineRun;
+                        await db.query(
+                            'UPDATE applications SET azure_resource_details = ? WHERE id = ?',
+                            [JSON.stringify(details), app.id]
+                        );
+                    }
+                    console.log(`[AppController] getLatestPipelineBuild (Azure DevOps): Updated cache for pipeline: ${pipelineId}`);
+                }
+            } catch (dbErr) {
+                console.warn('[AppController] getLatestPipelineBuild: Failed to update DevOps cache in DB:', dbErr.message);
             }
 
             res.json({ success: true, pipelineRun });
