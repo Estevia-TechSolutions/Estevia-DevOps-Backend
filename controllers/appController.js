@@ -8865,6 +8865,35 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 return res.status(400).json({ message: 'Missing organizationId or githubRepo.' });
             }
 
+            // 1. Try DB cache lookup first to avoid GitHub API queries
+            let appRecord = null;
+            try {
+                const [apps] = await db.query(
+                    'SELECT id, name, azure_resource_details FROM applications WHERE organization_id = ? AND repo_url LIKE ?',
+                    [organizationId, `%${githubRepo}%`]
+                );
+                if (apps.length > 0) {
+                    appRecord = apps[0];
+                    const details = typeof appRecord.azure_resource_details === 'string'
+                        ? JSON.parse(appRecord.azure_resource_details || '{}')
+                        : (appRecord.azure_resource_details || {});
+                    
+                    const lastChecked = details.healthLastChecked ? new Date(details.healthLastChecked).getTime() : 0;
+                    const now = Date.now();
+                    
+                    if (details.ymlHealth && (now - lastChecked < 30 * 60 * 1000)) {
+                        console.log(`[AppController] Returning cached YML/Dockerfile health for ${githubRepo} (checked ${Math.round((now - lastChecked)/60000)}m ago)`);
+                        return res.json({
+                            success: true,
+                            ymlHealth: details.ymlHealth,
+                            dockerfileHealth: details.dockerfileHealth || null
+                        });
+                    }
+                }
+            } catch (dbErr) {
+                console.warn('[AppController] Failed to query health cache from DB:', dbErr.message);
+            }
+
             const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
             const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
             if (!githubToken) {
@@ -8954,6 +8983,27 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     };
                 } else {
                     dockerfileHealth = { exists: false, valid: true, errorCount: 0, warningCount: 0, errors: [], warnings: [] };
+                }
+            }
+
+            // 2. Save result to DB cache
+            if (appRecord) {
+                try {
+                    const details = typeof appRecord.azure_resource_details === 'string'
+                        ? JSON.parse(appRecord.azure_resource_details || '{}')
+                        : (appRecord.azure_resource_details || {});
+                    
+                    details.ymlHealth = ymlHealth;
+                    details.dockerfileHealth = dockerfileHealth;
+                    details.healthLastChecked = new Date().toISOString();
+                    
+                    await db.query(
+                        'UPDATE applications SET azure_resource_details = ? WHERE id = ?',
+                        [JSON.stringify(details), appRecord.id]
+                    );
+                    console.log(`[AppController] Saved YML/Dockerfile health cache in DB for ${appRecord.name}`);
+                } catch (dbErr) {
+                    console.warn('[AppController] Failed to update health cache in DB:', dbErr.message);
                 }
             }
 
