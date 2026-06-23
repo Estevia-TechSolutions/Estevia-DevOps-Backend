@@ -17,6 +17,11 @@ const SUBSCRIPTION_ID = 'a812e8e3-34f9-4773-82ee-6398869533b0';
 const RESOURCE_GROUP = 'Estevia-Prod-RG';
 const DEFAULT_DOMAIN = 'esteviatech.com';
 
+// GitHub APIs Caches to avoid secondary rate limiting under rapid polling
+const branchCache = new Map(); // key: repoName, value: { timestamp, branchList }
+const actionsCache = new Map(); // key: repoName, value: { timestamp, hasActions }
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
+
 // Dynamic helper to fetch Azure credentials (Service Principal or Default CLI fallback)
 async function getAzureCredential(organizationId) {
     try {
@@ -1339,6 +1344,439 @@ const appController = {
         }
         return '10.0.0.4';
     },
+
+    /**
+     * Helper to resolve, map and save a specific category of apps to DB incrementally.
+     * Prevents locking up the main scan process and allows progressive updates.
+     */
+    _syncAppsInCategoryToDb: async (categoryApps, category, organizationId, resourceGroup, defaultDomain, githubOwner, devopsPipelines, godaddyCnames, githubToken, repoHasGithubActionsMap) => {
+        const orgSettings = await appController._getOrgSettings(organizationId);
+        let devopsSecrets = null;
+        try {
+            devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
+        } catch (e) {
+            console.warn('[AppController] Failed to decrypt DevOps credentials for sync:', e.message);
+        }
+
+        // Fetch repository branches for the repositories in this category
+        const repoBranchesMap = new Map();
+        if (githubToken) {
+            const uniqueRepos = [...new Set(categoryApps
+                .map(app => app.repositoryUrl)
+                .filter(Boolean)
+                .map(url => url.toLowerCase().replace(/\/$/, '').replace(/\.git$/, ''))
+            )];
+            
+            await Promise.all(uniqueRepos.map(async (normalizedUrl) => {
+                try {
+                    const githubRepo = normalizedUrl.replace('https://github.com/', '');
+                    const branchList = await appController._getGithubBranchesInternal(githubToken, githubRepo, organizationId);
+                    repoBranchesMap.set(normalizedUrl, branchList);
+                } catch (e) {
+                    console.warn(`[AppController] Failed to query branches for ${normalizedUrl}:`, e.message);
+                }
+            }));
+        }
+
+        await Promise.all(categoryApps.map(async (app) => {
+            const normalizedUrl = app.repositoryUrl ? app.repositoryUrl.toLowerCase().replace(/\/$/, '').replace(/\.git$/, '') : '';
+            app.branches = repoBranchesMap.get(normalizedUrl) || [];
+
+            let dbBranch = null;
+            const [existing] = await db.query(
+                'SELECT id, repo_url, azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
+                [organizationId, app.name]
+            );
+            if (existing.length > 0) {
+                if (existing[0].repo_url && !app.repositoryUrl) {
+                    app.repositoryUrl = existing[0].repo_url;
+                }
+                if (existing[0].azure_resource_details) {
+                    try {
+                        const details = typeof existing[0].azure_resource_details === 'string'
+                            ? JSON.parse(existing[0].azure_resource_details)
+                            : existing[0].azure_resource_details;
+                        dbBranch = details?.branch || null;
+                    } catch (e) {}
+                }
+            }
+            app.branch = app.branch || dbBranch;
+
+            if (app.branches && app.branches.length > 0) {
+                if (app.branches.length === 1) {
+                    if (!app.branch) {
+                        app.branch = app.branches[0].name;
+                    }
+                } else {
+                    const n = app.name.toLowerCase();
+                    for (const repoBranch of app.branches) {
+                        const bLower = repoBranch.name.toLowerCase();
+                        if (new RegExp(`-${bLower}(-|$)`).test(n)) {
+                            app.branch = repoBranch.name;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Find matching CNAME mapping on GoDaddy
+            let matchedDns = {};
+            const matchingCname = godaddyCnames.find(r => {
+                if (!r.data || !app.hostname) return false;
+                const rData = r.data.toLowerCase();
+                const appHost = app.hostname.toLowerCase();
+                
+                if (rData === appHost || rData === `${appHost}.` || appHost.includes(rData)) {
+                    return true;
+                }
+                
+                if (app.type === 'backend' && rData.includes('cloudfront.net')) {
+                    const cleanRecordHost = r.name.toLowerCase().replace('.', '-');
+                    const cleanAppName = app.name.toLowerCase();
+                    
+                    const recordWords = cleanRecordHost.split('-');
+                    const appWords = cleanAppName.split('-');
+                    
+                    const isMatch = recordWords.every(w => cleanAppName.includes(w)) && 
+                                    appWords.filter(w => !['prod', 'api', 'dev', 'qa'].includes(w))
+                                            .every(w => cleanRecordHost.includes(w));
+                    if (isMatch) return true;
+                }
+                return false;
+            });
+            if (matchingCname) {
+                matchedDns = {
+                    subdomain: matchingCname.name,
+                    domain: defaultDomain,
+                    fqdn: `${matchingCname.name}.${defaultDomain}`,
+                    mappedAt: new Date()
+                };
+            }
+            if (!matchedDns.fqdn && app.type === 'vm' && app.hostname) {
+                matchedDns = {
+                    subdomain: app.hostname.split('.')[0],
+                    domain: defaultDomain,
+                    fqdn: app.hostname,
+                    mappedAt: new Date()
+                };
+            }
+            app.dnsDetails = matchedDns;
+
+            // Find matching Azure DevOps Pipeline ID
+            let matchedPipelineId = null;
+            let matchedPipelineName = null;
+            
+            const isDevVm = app.type === 'vm' && (app.name.toLowerCase().includes('-dev') || app.name.toLowerCase().includes('dev'));
+            
+            let matchingPipeline = null;
+            if (!isDevVm && app.repositoryUrl) {
+                const cleanAppRepo = app.repositoryUrl.replace('https://github.com/', '').replace(/\/$/, '').toLowerCase();
+                matchingPipeline = devopsPipelines.find(p => {
+                    const repoFullName = p.configuration?.repository?.fullName;
+                    return repoFullName && repoFullName.toLowerCase() === cleanAppRepo;
+                });
+            }
+            
+            if (!isDevVm && !matchingPipeline) {
+                matchingPipeline = devopsPipelines.find(p => {
+                    const pName = p.name.toLowerCase();
+                    const cleanAppName = app.name.toLowerCase();
+                    
+                    const ownerPrefix = githubOwner.toLowerCase().replace('-techsolutions', '').replace('-solutions', '').split('-')[0];
+                    const baseApp = cleanAppName.replace(new RegExp(`^${ownerPrefix}-`), '').replace('-swa', '').replace('-dev', '').replace('-qa', '').replace('-prod', '').replace('-api', '').replace('-frontend', '');
+                    const basePipeline = pName.replace('-pipeline', '').replace('-ci-cd', '').replace('-frontend', '').replace('-backend', '').replace('-api', '');
+                    
+                    if (baseApp && basePipeline && baseApp === basePipeline) {
+                        return true;
+                    }
+                    if (cleanAppName.includes(`${ownerPrefix}-api`) && pName.includes('backend-api')) {
+                        return true;
+                    }
+                    if (cleanAppName.includes('marketing') && pName.includes('marketing-web')) {
+                        return true;
+                    }
+                    return false;
+                });
+            }
+            if (matchingPipeline) {
+                matchedPipelineId = String(matchingPipeline.id);
+                matchedPipelineName = matchingPipeline.name;
+            }
+
+            if (!matchedPipelineId && !isDevVm && app.repositoryUrl && githubToken) {
+                const cleanAppRepo = app.repositoryUrl.replace('https://github.com/', '').replace(/\/$/, '').toLowerCase();
+                
+                // Check in global actionsCache first to avoid rate limiting
+                const cachedActions = actionsCache.get(normalizedUrl);
+                if (cachedActions && (Date.now() - cachedActions.timestamp < CACHE_TTL_MS)) {
+                    repoHasGithubActionsMap.set(normalizedUrl, cachedActions.hasActions);
+                }
+
+                if (!repoHasGithubActionsMap.has(normalizedUrl)) {
+                    let hasActions = false;
+                    const branchToUse = app.branch || 'main';
+                    const githubRepo = normalizedUrl.replace('https://github.com/', '');
+                    try {
+                        const workflowsUrl = `https://api.github.com/repos/${githubRepo}/contents/.github/workflows?ref=${encodeURIComponent(branchToUse)}`;
+                        const workflowsRes = await axios.get(workflowsUrl, {
+                            headers: {
+                                'Authorization': `token ${githubToken}`,
+                                'Accept': 'application/vnd.github.v3+json',
+                                'User-Agent': getUserAgent(organizationId)
+                            },
+                            timeout: 3000
+                        });
+                        if (Array.isArray(workflowsRes.data) && workflowsRes.data.length > 0) {
+                            hasActions = true;
+                        }
+                    } catch (err) {}
+                    repoHasGithubActionsMap.set(normalizedUrl, hasActions);
+                    actionsCache.set(normalizedUrl, { timestamp: Date.now(), hasActions });
+                }
+                
+                const hasGithubActions = repoHasGithubActionsMap.get(normalizedUrl) || (existing.length > 0 && existing[0].pipeline_id && String(existing[0].pipeline_id).startsWith('github-actions'));
+                if (hasGithubActions) {
+                    const githubRepo = normalizedUrl.replace('https://github.com/', '');
+                    matchedPipelineId = 'github-actions:' + githubRepo;
+                    matchedPipelineName = 'GitHub Actions';
+                }
+            } else if (!matchedPipelineId && existing.length > 0 && existing[0].pipeline_id && String(existing[0].pipeline_id).startsWith('github-actions')) {
+                matchedPipelineId = existing[0].pipeline_id;
+                matchedPipelineName = 'GitHub Actions';
+            }
+
+            app.pipelineId = matchedPipelineId;
+            app.pipelineName = matchedPipelineName;
+
+            app.pipelineRun = null;
+            if (matchedPipelineId && String(matchedPipelineId).startsWith('github-actions:')) {
+                try {
+                    const repoPath = matchedPipelineId.split(':').slice(1).join(':');
+                    if (githubToken) {
+                        const resolvedBranch = appController._resolveBranchFromAppName(app.name, app.branches || [], app.branch);
+                        const resolvedBranchClean = resolvedBranch ? resolvedBranch.replace(/^refs\/heads\//, '') : null;
+                        const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=1${resolvedBranchClean ? '&branch=' + encodeURIComponent(resolvedBranchClean) : ''}`;
+                        const runsRes = await axios.get(runsUrl, {
+                            headers: {
+                                'Authorization': `token ${githubToken}`,
+                                'Accept': 'application/vnd.github.v3+json',
+                                'User-Agent': getUserAgent(organizationId)
+                            },
+                            timeout: 5000
+                        });
+                        const latestRun = runsRes.data?.workflow_runs?.[0];
+                        if (latestRun) {
+                            app.pipelineRun = {
+                                id: `${repoPath}/${latestRun.id}`,
+                                name: `#${latestRun.run_number}`,
+                                state: latestRun.status === 'completed' ? 'completed' : (latestRun.status === 'queued' ? 'notStarted' : 'inProgress'),
+                                result: latestRun.conclusion === 'success' ? 'succeeded' : (latestRun.conclusion === 'failure' ? 'failed' : (latestRun.conclusion === 'cancelled' ? 'canceled' : null)),
+                                webUrl: latestRun.html_url,
+                                startTime: latestRun.run_started_at || latestRun.created_at,
+                                finishTime: latestRun.conclusion ? latestRun.updated_at : null,
+                                stages: []
+                            };
+
+                            try {
+                                const jobsUrl = `https://api.github.com/repos/${repoPath}/actions/runs/${latestRun.id}/jobs`;
+                                const jobsRes = await axios.get(jobsUrl, {
+                                    headers: {
+                                        'Authorization': `token ${githubToken}`,
+                                        'Accept': 'application/vnd.github.v3+json',
+                                        'User-Agent': getUserAgent(organizationId)
+                                    },
+                                    timeout: 5000
+                                });
+                                const ghJobs = jobsRes.data?.jobs || [];
+                                app.pipelineRun.stages = [{
+                                    id: 'workflow-execution-stage',
+                                    name: 'Workflow Execution',
+                                    displayName: 'Workflow Execution',
+                                    state: app.pipelineRun.state,
+                                    result: app.pipelineRun.result,
+                                    startTime: app.pipelineRun.startTime,
+                                    finishTime: app.pipelineRun.finishTime,
+                                    jobs: ghJobs.map(job => ({
+                                        id: String(job.id),
+                                        name: job.name,
+                                        displayName: job.name,
+                                        state: job.status === 'completed' ? 'completed' : (job.status === 'queued' ? 'notStarted' : 'inProgress'),
+                                        result: job.conclusion === 'success' ? 'succeeded' : (job.conclusion === 'failure' ? 'failed' : null),
+                                        startTime: job.started_at,
+                                        finishTime: job.completed_at,
+                                        steps: (job.steps || []).map((step, idx) => ({
+                                            id: `${job.id}:${idx + 1}`,
+                                            name: step.name,
+                                            displayName: step.name,
+                                            state: step.status === 'completed' ? 'completed' : (step.status === 'queued' ? 'notStarted' : 'inProgress'),
+                                            result: step.conclusion === 'success' ? 'succeeded' : (step.conclusion === 'failure' ? 'failed' : null),
+                                            startTime: step.started_at || null,
+                                            finishTime: step.completed_at || null,
+                                            logId: String(job.id)
+                                        }))
+                                    }))
+                                }];
+                            } catch (jobsErr) {
+                                console.warn(`[AppController] Failed to fetch jobs for GitHub Actions latest run ${latestRun.id}:`, jobsErr.message);
+                            }
+                        }
+                    }
+                } catch (runErr) {
+                    console.warn(`[AppController] Failed to fetch GitHub Actions latest run status for ${matchedPipelineId}:`, runErr.message);
+                }
+            } else if (matchedPipelineId && devopsSecrets && devopsSecrets.pat) {
+                try {
+                    const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
+                    const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
+                    
+                    const resolvedBranch = appController._resolveBranchFromAppName(app.name, app.branches || [], app.branch);
+                    const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
+
+                    const urlInProgress = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=InProgress&$top=1&api-version=7.1`;
+                    const urlNotStarted = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=NotStarted&$top=1&api-version=7.1`;
+                    const urlCompleted  = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=Completed&$top=1&api-version=7.1`;
+
+                    const [resInProgress, resNotStarted, resCompleted] = await Promise.all([
+                        axios.get(urlInProgress, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(e => { console.warn(`[AppController] Failed to fetch InProgress builds: ${e.message}`); return { data: { value: [] } }; }),
+                        axios.get(urlNotStarted, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(e => { console.warn(`[AppController] Failed to fetch NotStarted builds: ${e.message}`); return { data: { value: [] } }; }),
+                        axios.get(urlCompleted,  { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(e => { console.warn(`[AppController] Failed to fetch Completed builds: ${e.message}`); return { data: { value: [] } }; })
+                    ]);
+
+                    const builds = [
+                        resInProgress.data?.value?.[0],
+                        resNotStarted.data?.value?.[0],
+                        resCompleted.data?.value?.[0]
+                    ].filter(Boolean);
+
+                    builds.sort((a, b) => b.id - a.id);
+                    const latestRun = builds[0];
+
+                    if (latestRun) {
+                        app.pipelineRun = {
+                            id: latestRun.id,
+                            name: latestRun.buildNumber,
+                            state: latestRun.status,
+                            result: latestRun.result,
+                            webUrl: latestRun._links?.web?.href || '',
+                            startTime: latestRun.startTime || null,
+                            finishTime: latestRun.finishTime || null,
+                            stages: []
+                        };
+
+                        try {
+                            const timelineUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds/${latestRun.id}/timeline?api-version=7.1`;
+                            const tlRes = await axios.get(timelineUrl, {
+                                headers: {
+                                    'Authorization': `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`,
+                                    'Accept': 'application/json'
+                                },
+                                timeout: 5000
+                            });
+
+                            if (tlRes.data && Array.isArray(tlRes.data.records)) {
+                                const allRecords = tlRes.data.records;
+                                const stages = allRecords
+                                    .filter(r => r.type === 'Stage')
+                                    .sort((a, b) => (a.order || 0) - (b.order || 0));
+                                
+                                const jobs = allRecords.filter(r => r.type === 'Job');
+                                const phases = allRecords.filter(r => r.type === 'Phase');
+                                
+                                const stageRecords = stages.map(stage => {
+                                    const stageJobs = jobs.filter(job => {
+                                        if (job.parentId === stage.id) return true;
+                                        const parentPhase = phases.find(p => p.id === job.parentId);
+                                        return parentPhase && parentPhase.parentId === stage.id;
+                                     }).sort((a, b) => (a.order || 0) - (b.order || 0))
+                                       .map(j => {
+                                           const jobTasks = allRecords
+                                               .filter(r => r.type === 'Task' && r.parentId === j.id)
+                                               .sort((a, b) => (a.order || 0) - (b.order || 0))
+                                               .map(t => ({
+                                                   id: t.id,
+                                                   name: t.name,
+                                                   displayName: t.displayName || t.name,
+                                                   state: t.state,
+                                                   result: t.result,
+                                                   startTime: t.startTime || null,
+                                                   finishTime: t.finishTime || null,
+                                                   logId: t.log ? t.log.id : null
+                                               }));
+                                           return {
+                                               id: j.id,
+                                               name: j.name,
+                                               displayName: j.displayName || j.name,
+                                               state: j.state,
+                                               result: j.result,
+                                               startTime: j.startTime || null,
+                                               finishTime: j.finishTime || null,
+                                               steps: jobTasks
+                                           };
+                                       });
+
+                                    return {
+                                        id: stage.id,
+                                        name: stage.name,
+                                        displayName: stage.displayName || stage.name,
+                                        state: stage.state,
+                                        result: stage.result,
+                                        startTime: stage.startTime || null,
+                                        finishTime: stage.finishTime || null,
+                                        jobs: stageJobs
+                                    };
+                                });
+                                app.pipelineRun.stages = stageRecords;
+                            }
+                        } catch (tlErr) {
+                            console.warn(`[AppController] Failed to fetch timeline for build ${latestRun.id}:`, tlErr.message);
+                        }
+                    }
+                } catch (runErr) {
+                    console.warn(`[AppController] Failed to fetch pipeline run status for ${matchedPipelineId}:`, runErr.message);
+                }
+            }
+
+            const azureDetails = JSON.stringify({
+                resourceId: app.resourceId,
+                location: app.location,
+                hostname: app.hostname,
+                pipelineName: app.pipelineName,
+                resourceGroup: app.resourceGroup || resourceGroup,
+                branch: app.branch || null,
+                ...(app.azureResourceDetails || {})
+            });
+
+            if (existing.length > 0) {
+                await db.query(
+                    `UPDATE applications 
+                     SET app_type = ?, status = ?, azure_resource_details = ?, godaddy_dns_details = ?, pipeline_id = ?
+                     WHERE id = ?`,
+                    [app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId, existing[0].id]
+                );
+            } else {
+                await db.query(
+                    `INSERT INTO applications 
+                     (organization_id, name, repo_url, app_type, status, azure_resource_details, godaddy_dns_details, pipeline_id) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [organizationId, app.name, app.repositoryUrl, app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId]
+                );
+            }
+        }));
+
+        // Category Pruning logic
+        const scannedNames = categoryApps.map(a => a.name);
+        if (scannedNames.length > 0) {
+            await db.query(
+                'DELETE FROM applications WHERE organization_id = ? AND app_type = ? AND name NOT IN (?)',
+                [organizationId, category, scannedNames]
+            );
+        } else {
+            await db.query(
+                'DELETE FROM applications WHERE organization_id = ? AND app_type = ?',
+                [organizationId, category]
+            );
+        }
+    },
     /**
      * Scan Azure subscription for Static Web Apps and Container Apps,
      * sync them with the local applications DB table, and return the combined details.
@@ -1357,6 +1795,112 @@ const appController = {
             const defaultDomain = orgSettings.default_dns_domain || DEFAULT_DOMAIN;
             const githubOwner = orgSettings.github_owner || 'Estevia-TechSolutions';
 
+            // Cached request check
+            if (req.query.cached === 'true') {
+                const [dbApps] = await db.query(
+                    'SELECT name, app_type, status, repo_url, azure_resource_details, godaddy_dns_details, pipeline_id FROM applications WHERE organization_id = ?',
+                    [organizationId]
+                );
+
+                const apps = dbApps.map(app => {
+                    const details = typeof app.azure_resource_details === 'string'
+                        ? JSON.parse(app.azure_resource_details || '{}')
+                        : (app.azure_resource_details || {});
+                    const dnsDetails = typeof app.godaddy_dns_details === 'string'
+                        ? JSON.parse(app.godaddy_dns_details || '{}')
+                        : (app.godaddy_dns_details || {});
+
+                    return {
+                        name: app.name,
+                        type: app.app_type,
+                        status: app.status,
+                        repositoryUrl: app.repo_url || '',
+                        location: details.location || 'Central US',
+                        hostname: details.hostname || '',
+                        resourceId: details.resourceId || '',
+                        resourceGroup: details.resourceGroup || resourceGroup,
+                        branch: details.branch || null,
+                        branches: [],
+                        dnsDetails,
+                        pipelineId: app.pipeline_id,
+                        pipelineName: details.pipelineName || null,
+                        pipelineRun: null,
+                        azureResourceDetails: details
+                    };
+                });
+
+                return res.json({
+                    success: true,
+                    count: apps.length,
+                    apps,
+                    integrity: {
+                        github: { success: true, message: 'Cached data returned.' },
+                        godaddy: { success: true, message: 'Cached data returned.' },
+                        azure: { success: true, message: 'Cached data returned.' }
+                    }
+                });
+            }
+
+            // Move Integration Discovery to start of scan so it's resolved for incremental updates
+            let godaddyCnames = [];
+            try {
+                const godaddySecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'godaddy');
+                if (godaddySecrets && godaddySecrets.apiKey && godaddySecrets.apiSecret) {
+                    const godaddyUrl = `https://api.godaddy.com/v1/domains/${defaultDomain}/records/CNAME`;
+                    const gdRes = await axios.get(godaddyUrl, {
+                        headers: { 'Authorization': `sso-key ${godaddySecrets.apiKey}:${godaddySecrets.apiSecret}` },
+                        timeout: 8000
+                    });
+                    if (Array.isArray(gdRes.data)) {
+                        godaddyCnames = gdRes.data;
+                    }
+                }
+            } catch (err) {
+                console.error('[AppController] Auto-discovery GoDaddy CNAMEs failed:', err.message);
+            }
+
+            let devopsPipelines = [];
+            let devopsSecrets = null;
+            try {
+                devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
+                if (devopsSecrets && devopsSecrets.pat) {
+                    const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
+                    const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
+                    const devopsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/pipelines?api-version=7.1-preview.1`;
+                    const devRes = await axios.get(devopsUrl, {
+                        headers: { 'Authorization': `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}` },
+                        timeout: 8000
+                    });
+                    if (devRes.data && Array.isArray(devRes.data.value)) {
+                        console.log(`[AppController] Discovered ${devRes.data.value.length} pipelines. Fetching full configurations...`);
+                        devopsPipelines = await Promise.all(devRes.data.value.map(async (p) => {
+                            try {
+                                const detailUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/pipelines/${p.id}?api-version=7.1-preview.1`;
+                                const detailRes = await axios.get(detailUrl, {
+                                    headers: { 'Authorization': `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}` },
+                                    timeout: 3000
+                                });
+                                return detailRes.data;
+                            } catch (err) {
+                                console.warn(`[AppController] Failed to fetch details for pipeline ${p.id}:`, err.message);
+                                return p;
+                            }
+                        }));
+                    }
+                }
+            } catch (err) {
+                console.error('[AppController] Auto-discovery Azure DevOps pipelines failed:', err.message);
+            }
+
+            let githubToken = null;
+            try {
+                const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+                githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+            } catch (e) {
+                console.warn('[AppController] Could not retrieve GitHub token for scanning branches:', e.message);
+            }
+
+            const repoHasGithubActionsMap = new Map();
             const credential = await getAzureCredential(organizationId);
             const webClient = new WebSiteManagementClient(credential, subscriptionId);
             const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
@@ -1364,10 +1908,11 @@ const appController = {
             const apps = [];
 
             // 1. Fetch Static Web Apps (Frontends)
+            const swaApps = [];
             let swaScanSuccess = false;
             try {
                 for await (const site of webClient.staticSites.listStaticSitesByResourceGroup(resourceGroup)) {
-                    apps.push({
+                    swaApps.push({
                         name: site.name,
                         type: 'frontend',
                         location: site.location,
@@ -1380,11 +1925,15 @@ const appController = {
                     });
                 }
                 swaScanSuccess = true;
+                // Sync and prune frontends immediately to DB
+                await appController._syncAppsInCategoryToDb(swaApps, 'frontend', organizationId, resourceGroup, defaultDomain, githubOwner, devopsPipelines, godaddyCnames, githubToken, repoHasGithubActionsMap);
+                apps.push(...swaApps);
             } catch (err) {
                 console.error('[AppController] Error scanning static sites:', err.message);
             }
 
             // 1.5. Fetch Virtual Networks
+            const networkApps = [];
             let networkScanSuccess = false;
             const envSubnetMap = new Map();
             const nicSubnetMap = new Map();
@@ -1393,7 +1942,8 @@ const appController = {
                 const token = tokenRes.token;
                 const vnetUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Network/virtualNetworks?api-version=2023-09-01`;
                 const vnetRes = await axios.get(vnetUrl, {
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    timeout: 8000
                 });
                 const vnets = vnetRes.data?.value || [];
                 networkScanSuccess = true;
@@ -1417,7 +1967,7 @@ const appController = {
                         remoteVirtualNetworkId: p.properties?.remoteVirtualNetwork?.id
                     }));
 
-                    apps.push({
+                    networkApps.push({
                         name: vnet.name,
                         type: 'network',
                         location: vnet.location,
@@ -1437,6 +1987,9 @@ const appController = {
                         pipelineRun: null
                     });
                 }
+                // Sync and prune networks immediately to DB
+                await appController._syncAppsInCategoryToDb(networkApps, 'network', organizationId, resourceGroup, defaultDomain, githubOwner, devopsPipelines, godaddyCnames, githubToken, repoHasGithubActionsMap);
+                apps.push(...networkApps);
             } catch (err) {
                 console.error('[AppController] Error scanning virtual networks:', err.message);
             }
@@ -1465,7 +2018,8 @@ const appController = {
                 const token = tokenRes.token;
                 const nicUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Network/networkInterfaces?api-version=2023-09-01`;
                 const nicRes = await axios.get(nicUrl, {
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    timeout: 8000
                 });
                 const nics = nicRes.data?.value || [];
                 for (const nic of nics) {
@@ -1484,12 +2038,13 @@ const appController = {
             }
 
             // 2. Fetch Container Apps (Backends)
+            const caApps = [];
             let caScanSuccess = false;
             try {
                 for await (const app of containerClient.containerApps.listByResourceGroup(resourceGroup)) {
                     const envId = app.environmentId || app.managedEnvironmentId || app.properties?.environmentId;
                     const vnetSubnetID = envId ? envSubnetMap.get(envId.toLowerCase()) : null;
-                    apps.push({
+                    caApps.push({
                         name: app.name,
                         type: 'backend',
                         location: app.location,
@@ -1504,18 +2059,23 @@ const appController = {
                     });
                 }
                 caScanSuccess = true;
+                // Sync and prune container apps immediately to DB
+                await appController._syncAppsInCategoryToDb(caApps, 'backend', organizationId, resourceGroup, defaultDomain, githubOwner, devopsPipelines, godaddyCnames, githubToken, repoHasGithubActionsMap);
+                apps.push(...caApps);
             } catch (err) {
                 console.error('[AppController] Error scanning container apps:', err.message);
             }
 
             // 2.5. Fetch Virtual Machines (VMs)
+            const vmApps = [];
             let vmScanSuccess = false;
             try {
                 const tokenRes = await credential.getToken("https://management.azure.com/.default");
                 const token = tokenRes.token;
                 const vmUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/virtualMachines?api-version=2023-09-01`;
                 const vmRes = await axios.get(vmUrl, {
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    timeout: 8000
                 });
                 const vms = vmRes.data?.value || [];
                 vmScanSuccess = true;
@@ -1565,7 +2125,7 @@ const appController = {
                         }
                     }
 
-                    apps.push({
+                    vmApps.push({
                         name: vm.name,
                         type: 'vm',
                         location: vm.location,
@@ -1579,23 +2139,28 @@ const appController = {
                         }
                     });
                 }
+                // Sync and prune VMs immediately to DB
+                await appController._syncAppsInCategoryToDb(vmApps, 'vm', organizationId, resourceGroup, defaultDomain, githubOwner, devopsPipelines, godaddyCnames, githubToken, repoHasGithubActionsMap);
+                apps.push(...vmApps);
             } catch (err) {
                 console.error('[AppController] Error scanning virtual machines:', err.message);
             }
 
             // 2.7. Fetch MySQL Flexible Servers (Databases)
+            const dbApps = [];
             let dbScanSuccess = false;
             try {
                 const tokenRes = await credential.getToken("https://management.azure.com/.default");
                 const token = tokenRes.token;
                 const dbUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.DBforMySQL/flexibleServers?api-version=2021-05-01`;
                 const dbRes = await axios.get(dbUrl, {
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    timeout: 8000
                 });
                 const servers = dbRes.data?.value || [];
                 dbScanSuccess = true;
                 for (const server of servers) {
-                    apps.push({
+                    dbApps.push({
                         name: server.name,
                         type: 'database',
                         location: server.location,
@@ -1611,23 +2176,28 @@ const appController = {
                         }
                     });
                 }
+                // Sync and prune databases immediately to DB
+                await appController._syncAppsInCategoryToDb(dbApps, 'database', organizationId, resourceGroup, defaultDomain, githubOwner, devopsPipelines, godaddyCnames, githubToken, repoHasGithubActionsMap);
+                apps.push(...dbApps);
             } catch (err) {
                 console.error('[AppController] Error scanning databases:', err.message);
             }
 
             // 2.9. Fetch AKS (Azure Kubernetes Service) Clusters
+            const aksApps = [];
             let aksScanSuccess = false;
             try {
                 const tokenRes = await credential.getToken("https://management.azure.com/.default");
                 const token = tokenRes.token;
                 const aksUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.ContainerService/managedClusters?api-version=2023-08-01`;
                 const aksRes = await axios.get(aksUrl, {
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    timeout: 8000
                 });
                 const clusters = aksRes.data?.value || [];
                 aksScanSuccess = true;
                 for (const cluster of clusters) {
-                    apps.push({
+                    aksApps.push({
                         name: cluster.name,
                         type: 'cluster',
                         location: cluster.location,
@@ -1652,60 +2222,15 @@ const appController = {
                         }
                     });
                 }
+                // Sync and prune AKS clusters immediately to DB
+                await appController._syncAppsInCategoryToDb(aksApps, 'cluster', organizationId, resourceGroup, defaultDomain, githubOwner, devopsPipelines, godaddyCnames, githubToken, repoHasGithubActionsMap);
+                apps.push(...aksApps);
             } catch (err) {
                 console.error('[AppController] Error scanning AKS clusters:', err.message);
             }
 
 
-            // 3. Auto-discover GoDaddy CNAME configurations
-            let godaddyCnames = [];
-            try {
-                const godaddySecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'godaddy');
-                if (godaddySecrets && godaddySecrets.apiKey && godaddySecrets.apiSecret) {
-                    const godaddyUrl = `https://api.godaddy.com/v1/domains/${defaultDomain}/records/CNAME`;
-                    const gdRes = await axios.get(godaddyUrl, {
-                        headers: { 'Authorization': `sso-key ${godaddySecrets.apiKey}:${godaddySecrets.apiSecret}` }
-                    });
-                    if (Array.isArray(gdRes.data)) {
-                        godaddyCnames = gdRes.data;
-                    }
-                }
-            } catch (err) {
-                console.error('[AppController] Auto-discovery GoDaddy CNAMEs failed:', err.message);
-            }
-
-            // 4. Auto-discover Azure DevOps Pipelines
-            let devopsPipelines = [];
-            let devopsSecrets = null;
-            try {
-                devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
-                if (devopsSecrets && devopsSecrets.pat) {
-                    const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
-                    const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
-                    const devopsUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/pipelines?api-version=7.1-preview.1`;
-                    const devRes = await axios.get(devopsUrl, {
-                        headers: { 'Authorization': `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}` }
-                    });
-                    if (devRes.data && Array.isArray(devRes.data.value)) {
-                        console.log(`[AppController] Discovered ${devRes.data.value.length} pipelines. Fetching full configurations...`);
-                        devopsPipelines = await Promise.all(devRes.data.value.map(async (p) => {
-                            try {
-                                const detailUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/pipelines/${p.id}?api-version=7.1-preview.1`;
-                                const detailRes = await axios.get(detailUrl, {
-                                    headers: { 'Authorization': `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}` },
-                                    timeout: 3000
-                                });
-                                return detailRes.data;
-                            } catch (err) {
-                                console.warn(`[AppController] Failed to fetch details for pipeline ${p.id}:`, err.message);
-                                return p;
-                            }
-                        }));
-                    }
-                }
-            } catch (err) {
-                console.error('[AppController] Auto-discovery Azure DevOps pipelines failed:', err.message);
-            }
+            // Redundant integration discovery blocks removed (already resolved at start of scanApps)
 
             // 4.3. Resolve repositoryUrl from DB for scanned apps that lack one
             try {
@@ -1726,14 +2251,7 @@ const appController = {
                 console.warn('[AppController] Failed to pre-resolve repo URLs from DB:', dbErr.message);
             }
 
-            // 4.5. Dynamic branches lookup from GitHub for scanned apps
-            let githubToken = null;
-            try {
-                const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
-                githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
-            } catch (e) {
-                console.warn('[AppController] Could not retrieve GitHub token for scanning branches:', e.message);
-            }
+            // 4.5. Dynamic branches lookup from GitHub for scanned apps (reuses githubToken resolved at start)
 
             const repoBranchesMap = new Map();
             if (githubToken) {
@@ -1754,7 +2272,7 @@ const appController = {
                 }));
             }
             
-            const repoHasGithubActionsMap = new Map();
+            // Reuses repoHasGithubActionsMap resolved at start
 
             // 5. Sync scanned apps with applications database and cross-reference discovered credentials
             await Promise.all(apps.map(async (app) => {
@@ -2252,7 +2770,7 @@ const appController = {
                 }
             }
 
-            // 6. Check environment integrity (GitHub, GoDaddy, Azure)
+
             const integrity = {
                 github: { success: false, message: 'Not configured.' },
                 godaddy: { success: false, message: 'Not configured.' },
@@ -2934,7 +3452,8 @@ const appController = {
                             'Authorization': `token ${githubToken}`,
                             'Accept': 'application/vnd.github.v3+json',
                             'User-Agent': getUserAgent(organizationId)
-                        }
+                        },
+                        timeout: 8000
                     });
                     if (dfRes.data && dfRes.data.sha) {
                         hasDockerfile = true;
@@ -2982,7 +3501,8 @@ const appController = {
                     'Authorization': `token ${githubToken}`,
                     'Accept': 'application/vnd.github.v3+json',
                     'User-Agent': getUserAgent(organizationId)
-                }
+                },
+                timeout: 8000
             });
             return { exists: true, sha: res.data.sha || null };
         } catch (err) {
@@ -3666,6 +4186,13 @@ const appController = {
      * Internal helper – fetch branches for a repository from GitHub
      */
     async _getGithubBranchesInternal(githubToken, githubRepo, organizationId) {
+        const cacheKey = githubRepo.toLowerCase();
+        const cached = branchCache.get(cacheKey);
+        if (cached && (Date.now() - cached.timestamp < CACHE_TTL_MS)) {
+            console.log(`[AppController] Returning cached branches for: ${githubRepo}`);
+            return cached.branchList;
+        }
+
         try {
             console.log(`[AppController] Fetching branches internally for: ${githubRepo}`);
 
@@ -3676,14 +4203,16 @@ const appController = {
                         'Authorization': `token ${githubToken}`,
                         'Accept': 'application/vnd.github.v3+json',
                         'User-Agent': getUserAgent(organizationId)
-                    }
+                    },
+                    timeout: 8000
                 }),
                 axios.get(`https://api.github.com/repos/${githubRepo}`, {
                     headers: {
                         'Authorization': `token ${githubToken}`,
                         'Accept': 'application/vnd.github.v3+json',
                         'User-Agent': getUserAgent(organizationId)
-                    }
+                    },
+                    timeout: 8000
                 }).catch(e => {
                     // Non-fatal — repo metadata fetch is best-effort
                     console.warn(`[AppController] Could not fetch repo metadata for ${githubRepo}: ${e.message}`);
@@ -3694,12 +4223,15 @@ const appController = {
             const defaultBranchName = repoRes.data?.default_branch || null;
             console.log(`[AppController] GitHub default branch for ${githubRepo}: ${defaultBranchName || '(unknown)'}`);
 
-            return branchesRes.data.map(b => ({
+            const result = branchesRes.data.map(b => ({
                 name: b.name,
                 protected: b.protected,
                 // Mark the repo's true default branch so _resolveBranchFromAppName can use it
                 default: defaultBranchName ? b.name === defaultBranchName : false
             }));
+
+            branchCache.set(cacheKey, { timestamp: Date.now(), branchList: result });
+            return result;
         } catch (err) {
             console.warn(`[AppController] Failed to fetch branches internally for ${githubRepo}:`, err.message);
             return [];
@@ -5975,7 +6507,8 @@ const appController = {
                         'Authorization': `token ${githubToken}`,
                         'Accept': 'application/vnd.github.v3+json',
                         'User-Agent': getUserAgent(organizationId)
-                    }
+                    },
+                    timeout: 8000
                 });
                 
                 if (response.data && response.data.content) {
@@ -7043,7 +7576,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             'Authorization': `token ${githubToken}`,
             'Accept': 'application/vnd.github.v3+json',
             'User-Agent': getUserAgent(organizationId)
-          }
+          },
+          timeout: 8000
         });
         
         if (response.data && response.data.content) {
@@ -8103,7 +8637,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                             'Authorization': `token ${githubToken}`,
                             'Accept': 'application/vnd.github.v3+json',
                             'User-Agent': getUserAgent(organizationId)
-                        }
+                        },
+                        timeout: 8000
                     });
                     if (response.data && response.data.content) {
                         return Buffer.from(response.data.content, 'base64').toString('utf-8');
@@ -8124,7 +8659,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                             'Authorization': `token ${githubToken}`,
                             'Accept': 'application/vnd.github.v3+json',
                             'User-Agent': getUserAgent(organizationId)
-                        }
+                        },
+                        timeout: 8000
                     });
                     if (Array.isArray(listResponse.data)) {
                         const ymlFiles = listResponse.data.filter(f => f.name.endsWith('.yml') || f.name.endsWith('.yaml'));
