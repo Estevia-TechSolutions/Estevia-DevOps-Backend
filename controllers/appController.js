@@ -98,7 +98,7 @@ function _validatePipelineYml(ymlContent, pipelineProvider = 'azure_devops') {
                 // Look ahead a few lines for --container-name flag
                 const block = lines.slice(idx, idx + 8).join(' ');
                 if (!block.includes('--container-name')) {
-                    errors.push({ ruleId: 'AZ_CONTAINERAPP_CONTAINER_NAME', message: `'az containerapp update/create' at line ${idx + 1} is missing the required '--container-name' flag. Azure CLI requires this when updating a container image.`, severity: 'error', line: idx + 1 });
+                    warnings.push({ ruleId: 'AZ_CONTAINERAPP_CONTAINER_NAME', message: `'az containerapp update/create' at line ${idx + 1} is missing the '--container-name' flag. This is optional for single-container apps, but required for multi-container deployments.`, severity: 'warning', line: idx + 1 });
                 }
             }
         });
