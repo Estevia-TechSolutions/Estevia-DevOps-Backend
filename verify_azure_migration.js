@@ -15,10 +15,13 @@ if (fs.existsSync(envPath)) {
 }
 
 async function verifyMigration() {
+    if (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_PASSWORD) {
+        throw new Error('DB_HOST, DB_USER, and DB_PASSWORD environment variables must be set before running migration verification.');
+    }
     const conn = await mysql.createConnection({
-        host: process.env.DB_HOST || '10.0.0.6',
-        user: process.env.DB_USER || 'estevia',
-        password: process.env.DB_PASSWORD || 'Ewco26INCP',
+        host: process.env.DB_HOST,
+        user: process.env.DB_USER,
+        password: process.env.DB_PASSWORD,
         database: process.env.DB_NAME || 'estevia_devops',
         port: parseInt(process.env.DB_PORT) || 3306,
         ssl: { require: true, rejectUnauthorized: false }

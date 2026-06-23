@@ -12,10 +12,12 @@ function getUserAgent(orgId) {
     return `EvaOps-DevOps-Hub/${cleanId}`;
 }
 
+const MASTER_ORGANIZATION_ID = process.env.MASTER_ORGANIZATION_ID || 'estevia';
+
 // Default Fallbacks
-const SUBSCRIPTION_ID = 'a812e8e3-34f9-4773-82ee-6398869533b0';
-const RESOURCE_GROUP = 'Estevia-Prod-RG';
-const DEFAULT_DOMAIN = 'esteviatech.com';
+const SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID || 'a812e8e3-34f9-4773-82ee-6398869533b0';
+const RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP || 'Estevia-Prod-RG';
+const DEFAULT_DOMAIN = process.env.DEFAULT_DOMAIN || 'esteviatech.com';
 
 // GitHub APIs Caches to avoid secondary rate limiting under rapid polling
 const branchCache = new Map(); // key: repoName, value: { timestamp, branchList }
@@ -37,8 +39,11 @@ async function getAzureCredential(organizationId) {
     } catch (err) {
         console.warn(`[AzureAuth] Failed to retrieve Azure credentials for organization ${organizationId}:`, err.message);
     }
-    console.log(`[AzureAuth] Falling back to DefaultAzureCredential for organization: ${organizationId}`);
-    return new DefaultAzureCredential();
+    if (organizationId === MASTER_ORGANIZATION_ID) {
+        console.log(`[AzureAuth] Falling back to DefaultAzureCredential for MASTER organization: ${organizationId}`);
+        return new DefaultAzureCredential();
+    }
+    throw new Error(`Azure Integration credentials not configured for organization: ${organizationId}`);
 }
 
 // ─── YAML Validator ─────────────────────────────────────────────────────────
@@ -274,7 +279,7 @@ const appController = {
             details.source = 'Azure Advisor';
         } else if (type === 'remove_cname') {
             details.impact = 'low';
-            details.recommendation = 'Remove orphaned DNS CNAME record "staging-test.esteviatech.com".';
+            details.recommendation = `Remove orphaned DNS CNAME record "staging-test.${DEFAULT_DOMAIN}".`;
             details.description = 'This custom domain points to an inactive static web app that was deleted last week. Cleaning it up reduces DNS clutter and domain costs.';
             details.source = 'Azure Advisor';
         } else if (type === 'aks_spot') {
@@ -292,12 +297,34 @@ const appController = {
     /**
      * Shared helper to retrieve organization settings from database
      */
-    async _getOrgSettings(organizationId) {
+    async _getOrgSettings(organizationId, requireAzure = false) {
         const [rows] = await db.query('SELECT * FROM organizations WHERE id = ?', [organizationId]);
         if (rows.length === 0) {
             throw new Error(`Organization ${organizationId} not found.`);
         }
-        return rows[0];
+        const settings = rows[0];
+        if (organizationId !== MASTER_ORGANIZATION_ID) {
+            if (!settings.azure_subscription_id || settings.azure_subscription_id.trim() === '') {
+                if (requireAzure) {
+                    throw new Error(`Azure Integration (Subscription ID) is not configured for organization: ${organizationId}`);
+                }
+                settings.azure_subscription_id = 'unconfigured';
+            }
+            if (!settings.azure_resource_group || settings.azure_resource_group.trim() === '') {
+                if (requireAzure) {
+                    throw new Error(`Azure Integration (Resource Group) is not configured for organization: ${organizationId}`);
+                }
+                settings.azure_resource_group = 'unconfigured';
+            }
+        } else {
+            if (!settings.azure_subscription_id) {
+                settings.azure_subscription_id = SUBSCRIPTION_ID;
+            }
+            if (!settings.azure_resource_group) {
+                settings.azure_resource_group = RESOURCE_GROUP;
+            }
+        }
+        return settings;
     },
 
     async _getCostAndOptimizationData(organizationId) {
@@ -1217,7 +1244,7 @@ const appController = {
             type: 'remove_cname',
             impact: 'low',
             savings: 1.00,
-            recommendation: 'Remove orphaned DNS CNAME record "staging-test.esteviatech.com".',
+            recommendation: `Remove orphaned DNS CNAME record "staging-test.${DEFAULT_DOMAIN}".`,
             description: 'This custom domain points to an inactive static web app that was deleted last week. Cleaning it up reduces DNS clutter and domain costs.',
             source: 'Azure Advisor'
         };
@@ -1835,7 +1862,8 @@ const appController = {
                 return res.status(400).json({ message: 'Missing organizationId query parameter.' });
             }
 
-            const orgSettings = await appController._getOrgSettings(organizationId);
+            const orgSettings = await appController._getOrgSettings(organizationId, true);
+
             const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
             const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
             const defaultDomain = orgSettings.default_dns_domain || DEFAULT_DOMAIN;
@@ -3377,7 +3405,7 @@ const appController = {
 
                     const dbProps = {
                         administratorLogin: adminUsername || "admin",
-                        administratorLoginPassword: adminPassword || "Ewco26INCP",
+                        administratorLoginPassword: adminPassword || require('crypto').randomBytes(16).toString('hex') + 'A1!',
                         version: version || "8.0.21",
                         createMode: "Default"
                     };
@@ -7121,7 +7149,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     sku: s.sku?.name || 'Standard_B1ms',
                     tier: s.sku?.tier || 'Burstable',
                     administratorLogin: s.properties?.administratorLogin || 'admin',
-                    password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                    password: process.env.DB_PASSWORD,
                     delegatedSubnetResourceId: s.properties?.network?.delegatedSubnetResourceId || null,
                     privateDnsZoneResourceId: s.properties?.network?.privateDnsZoneResourceId || null
                 };
@@ -7144,7 +7172,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     sku: 'Standard_B1ms',
                     tier: 'Burstable',
                     administratorLogin: 'admin',
-                    password: process.env.DB_PASSWORD || 'Ewco26INCP'
+                    password: process.env.DB_PASSWORD
                 });
             }
             if (orgSettings.qa_db_host) {
@@ -7159,7 +7187,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     sku: 'Standard_B1ms',
                     tier: 'Burstable',
                     administratorLogin: 'admin',
-                    password: process.env.DB_PASSWORD || 'Ewco26INCP'
+                    password: process.env.DB_PASSWORD
                 });
             }
             if (orgSettings.prod_db_host) {
@@ -7174,11 +7202,11 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     sku: 'Standard_D2ads_v5',
                     tier: 'GeneralPurpose',
                     administratorLogin: 'admin',
-                    password: process.env.DB_PASSWORD || 'Ewco26INCP'
+                    password: process.env.DB_PASSWORD
                 });
             }
 
-            if (fallbackServers.length === 0) {
+            if (fallbackServers.length === 0 && organizationId === MASTER_ORGANIZATION_ID) {
                 fallbackServers.push(
                     {
                         id: 'db-server-dev',
@@ -7191,7 +7219,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         sku: 'Standard_B1ms',
                         tier: 'Burstable',
                         administratorLogin: 'estevia',
-                        password: process.env.DB_PASSWORD || 'Ewco26INCP'
+                        password: process.env.DB_PASSWORD
                     },
                     {
                         id: 'db-server-qa',
@@ -7204,7 +7232,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         sku: 'Standard_B1ms',
                         tier: 'Burstable',
                         administratorLogin: 'estevia',
-                        password: process.env.DB_PASSWORD || 'Ewco26INCP'
+                        password: process.env.DB_PASSWORD
                     },
                     {
                         id: 'db-server-prod',
@@ -7217,7 +7245,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         sku: 'Standard_D2ads_v5',
                         tier: 'GeneralPurpose',
                         administratorLogin: 'estevia',
-                        password: process.env.DB_PASSWORD || 'Ewco26INCP'
+                        password: process.env.DB_PASSWORD
                     }
                 );
             }
@@ -7272,8 +7300,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 const mysql = require('mysql2/promise');
                 const conn = await mysql.createConnection({
                     host: resolvedHost,
-                    user: process.env.DB_USER || 'estevia',
-                    password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                    user: process.env.DB_USER,
+                    password: process.env.DB_PASSWORD,
                     ssl: { require: true, rejectUnauthorized: false },
                     connectTimeout: 5000
                 });
@@ -7362,8 +7390,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const mysql = require('mysql2/promise');
             const conn = await mysql.createConnection({
                 host: resolvedHost,
-                user: process.env.DB_USER || 'estevia',
-                password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                user: process.env.DB_USER,
+                password: process.env.DB_PASSWORD,
                 database: dbName,
                 port: process.env.DB_PORT || 3306,
                 ssl: { require: true, rejectUnauthorized: false },
@@ -7441,8 +7469,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             
             const conn = await mysql.createConnection({
                 host: resolvedHost,
-                user: process.env.DB_USER || 'estevia',
-                password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                user: process.env.DB_USER,
+                password: process.env.DB_PASSWORD,
                 database: dbName,
                 port: process.env.DB_PORT || 3306,
                 ssl: { require: true, rejectUnauthorized: false },

@@ -3,8 +3,9 @@ const { DefaultAzureCredential } = require('@azure/identity');
 const { ContainerAppsAPIClient } = require('@azure/arm-appcontainers');
 const { sendTeamsNotification } = require('./teamsNotifier');
 
-const SUBSCRIPTION_ID = 'a812e8e3-34f9-4773-82ee-6398869533b0';
-const RESOURCE_GROUP = 'Estevia-Prod-RG';
+const MASTER_ORGANIZATION_ID = process.env.MASTER_ORGANIZATION_ID || 'estevia';
+const SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID || 'a812e8e3-34f9-4773-82ee-6398869533b0';
+const RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP || 'Estevia-Prod-RG';
 
 // In-memory transition state cache: key = "orgId:appName", value = 'active' | 'sleep'
 // This ensures Teams is notified only when a state CHANGE occurs, not on every tick.
@@ -22,7 +23,27 @@ async function getAzureCredential(organizationId) {
     } catch (err) {
         // Fallback silently
     }
-    return new DefaultAzureCredential();
+    if (organizationId === MASTER_ORGANIZATION_ID) {
+        return new DefaultAzureCredential();
+    }
+    throw new Error(`Azure Integration credentials not configured for organization: ${organizationId}`);
+}
+
+function resolveOrgAzureSettings(orgRow, orgId) {
+    let subId = orgRow?.azure_subscription_id;
+    let rg = orgRow?.azure_resource_group;
+    if (orgId !== MASTER_ORGANIZATION_ID) {
+        if (!subId || subId.trim() === '') {
+            throw new Error(`Azure Integration (Subscription ID) is not configured for organization: ${orgId}`);
+        }
+        if (!rg || rg.trim() === '') {
+            throw new Error(`Azure Integration (Resource Group) is not configured for organization: ${orgId}`);
+        }
+    } else {
+        if (!subId) subId = SUBSCRIPTION_ID;
+        if (!rg) rg = RESOURCE_GROUP;
+    }
+    return { subId, rg };
 }
 
 // Helper to parse HH:MM into total minutes from midnight
@@ -41,8 +62,7 @@ async function setContainerAppScale(orgId, appName, minReplicas, maxReplicas) {
 
     try {
         const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [orgId]);
-        const subId = orgs[0]?.azure_subscription_id || SUBSCRIPTION_ID;
-        const rg = orgs[0]?.azure_resource_group || RESOURCE_GROUP;
+        const { subId, rg } = resolveOrgAzureSettings(orgs[0], orgId);
 
         if (!process.env.AZURE_CLIENT_ID) {
             console.log(`[MOCK SleepScheduler] Scaled container app '${appName}' to min: ${minReplicas}, max: ${maxReplicas} (Dry run/Dev mode)`);
@@ -265,8 +285,7 @@ async function setVirtualMachinePowerState(orgId, vmName, action) {
 
     try {
         const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [orgId]);
-        const subId = orgs[0]?.azure_subscription_id || SUBSCRIPTION_ID;
-        const rg = orgs[0]?.azure_resource_group || RESOURCE_GROUP;
+        const { subId, rg } = resolveOrgAzureSettings(orgs[0], orgId);
 
         if (!process.env.AZURE_CLIENT_ID) {
             console.log(`[MOCK SleepScheduler] VM '${vmName}' power status changed to: ${action === 'stop' ? 'Stopped (Deallocated)' : 'Running'} (Dry run/Dev mode)`);
@@ -310,8 +329,7 @@ async function setClusterPowerState(orgId, clusterName, action) {
 
     try {
         const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [orgId]);
-        const subId = orgs[0]?.azure_subscription_id || SUBSCRIPTION_ID;
-        const rg = orgs[0]?.azure_resource_group || RESOURCE_GROUP;
+        const { subId, rg } = resolveOrgAzureSettings(orgs[0], orgId);
 
         if (!process.env.AZURE_CLIENT_ID) {
             console.log(`[MOCK SleepScheduler] AKS Cluster '${clusterName}' power status changed to: ${action === 'stop' ? 'Stopped' : 'Running'} (Dry run/Dev mode)`);

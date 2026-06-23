@@ -4,12 +4,15 @@ require('dotenv').config();
 async function migrate() {
     console.log('Connecting to database server...');
     const connection = await mysql.createConnection({
-        host: process.env.DB_HOST || 'estevia-dev-db.mysql.database.azure.com',
-        user: process.env.DB_USER || 'estevia',
-        password: process.env.DB_PASSWORD || 'Ewco26INCP',
+        host: process.env.DB_HOST,
+        user: process.env.DB_USER,
+        password: process.env.DB_PASSWORD,
         database: process.env.DB_NAME || 'estevia_devops',
         port: process.env.DB_PORT || 3306
     });
+    if (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_PASSWORD) {
+        throw new Error('DB_HOST, DB_USER, and DB_PASSWORD environment variables must be set before running migrations.');
+    }
 
     try {
         console.log('Altering organizations table to add settings columns...');

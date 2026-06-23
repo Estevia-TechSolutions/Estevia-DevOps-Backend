@@ -3,12 +3,26 @@ trigger:
     include:
       - main
 
+# ============================================================
+# PIPELINE CONFIGURATION
+# All values below must be set as Azure DevOps pipeline
+# variables or linked variable group — do NOT hardcode.
+# Required variables:
+#   azureServiceConnection  - Azure service connection name
+#   containerRegistry       - ACR login server (e.g. myregistry.azurecr.io)
+#   acrServiceConnection    - ACR service connection name
+#   imageRepository         - Container image repository name
+#   containerAppName        - Azure Container App name
+#   resourceGroup           - Azure Resource Group name
+# ============================================================
+
 variables:
-  azureServiceConnection: 'protrack-azure-sc'
-  containerRegistry: 'esteviacoreregistry.azurecr.io'
-  imageRepository: 'api-evaops'
-  containerAppName: 'api-evaops'
-  resourceGroup: 'Estevia-Prod-RG'
+  azureServiceConnection: $(AZURE_SERVICE_CONNECTION)
+  containerRegistry: $(CONTAINER_REGISTRY)
+  acrServiceConnection: $(ACR_SERVICE_CONNECTION)
+  imageRepository: $(IMAGE_REPOSITORY)
+  containerAppName: $(CONTAINER_APP_NAME)
+  resourceGroup: $(AZURE_RESOURCE_GROUP)
 
 stages:
 - stage: BuildAndPush
@@ -32,7 +46,7 @@ stages:
     - task: Docker@2
       displayName: 'Build and Push Image to ACR'
       inputs:
-        containerRegistry: 'estevia-acr-sc'
+        containerRegistry: '$(acrServiceConnection)'
         repository: '$(imageRepository)'
         command: 'buildAndPush'
         Dockerfile: 'Dockerfile'

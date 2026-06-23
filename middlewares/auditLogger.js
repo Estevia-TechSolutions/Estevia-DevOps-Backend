@@ -57,7 +57,7 @@ async function auditLogger(req, res, next) {
                 target = req.body?.name || 'Azure Resource';
             } else if (path.includes('/apps/bind-domain')) {
                 actionType = 'BIND_DOMAIN';
-                target = req.body?.subdomain ? `${req.body.subdomain}.${req.body.domain || 'esteviatech.com'}` : 'Custom Domain';
+                target = req.body?.subdomain ? `${req.body.subdomain}.${req.body.domain || process.env.DEFAULT_DOMAIN || ''}`.replace(/\.$/, '') : 'Custom Domain';
             } else if (path.includes('/apps/execute-query')) {
                 actionType = 'SQL_RUN';
                 target = req.body?.query ? req.body.query.substring(0, 100) : 'SQL Console';

@@ -2,10 +2,10 @@ const mysql = require('mysql2/promise');
 require('dotenv').config();
 
 async function main() {
-    const host = process.env.DB_HOST || '10.0.0.6';
-    const user = process.env.DB_USER || 'estevia';
-    const password = process.env.DB_PASSWORD || 'Ewco26INCP';
-    const database = process.env.DB_NAME || 'estevia_devops';
+    const host = process.env.DB_HOST || '127.0.0.1';
+    const user = process.env.DB_USER || 'root';
+    const password = process.env.DB_PASSWORD || '';
+    const database = process.env.DB_NAME || 'evaops';
     const port = process.env.DB_PORT || 3306;
 
     console.log(`Connecting to MySQL database server: ${host} as ${user}...`);
@@ -266,37 +266,59 @@ async function main() {
             await connection.query(`ALTER TABLE applied_remediations MODIFY COLUMN suggestion_id VARCHAR(255) NOT NULL`);
         }
 
+        const masterOrgId = process.env.MASTER_ORGANIZATION_ID || 'estevia';
+        const masterOrgName = process.env.MASTER_ORGANIZATION_NAME || 'Estevia Tech Solutions';
+        const defaultSubId = process.env.AZURE_SUBSCRIPTION_ID || 'a812e8e3-34f9-4773-82ee-6398869533b0';
+        const defaultRg = process.env.AZURE_RESOURCE_GROUP || 'Estevia-Prod-RG';
+        const defaultDomain = process.env.DEFAULT_DOMAIN || 'esteviatech.com';
+        const defaultDevopsUrl = process.env.AZURE_DEVOPS_ORG_URL || 'https://dev.azure.com/esteviatech';
+        const defaultDevopsProject = process.env.AZURE_DEVOPS_PROJECT || 'Estevia-Platform';
+        const defaultPipelineVarGroup = process.env.PIPELINE_VARIABLE_GROUP || 'estevia-frontend-vars';
+        const defaultGithubOwner = process.env.GITHUB_OWNER || 'Estevia-TechSolutions';
+        const defaultTenantId = process.env.MICROSOFT_TENANT_ID || 'a39c526c-2005-4529-ab5a-f008fc5cbc57';
+        const defaultAdminEmail = process.env.MASTER_ADMIN_EMAIL || 'govind.m@esteviatech.com';
+
         // 6. Seed initial organizations
-        console.log('Seeding initial organizations and config settings...');
+        console.log(`Seeding initial organizations and config settings for master: ${masterOrgId}...`);
         await connection.query(`
             INSERT INTO organizations (
                 id, name, azure_subscription_id, azure_resource_group, default_dns_domain, 
                 azure_devops_org_url, azure_devops_project, pipeline_variable_group, github_owner,
                 tenant_id, admin_email, onboarding_complete
             ) VALUES (
-                'estevia', 'Estevia Tech Solutions', 'a812e8e3-34f9-4773-82ee-6398869533b0', 'Estevia-Prod-RG', 'esteviatech.com',
-                'https://dev.azure.com/esteviatech', 'Estevia-Platform', 'estevia-frontend-vars', 'Estevia-TechSolutions',
-                'a39c526c-2005-4529-ab5a-f008fc5cbc57', 'govind.m@esteviatech.com', 1
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, 1
             ) ON DUPLICATE KEY UPDATE 
+                name = VALUES(name),
                 azure_subscription_id = VALUES(azure_subscription_id),
                 azure_resource_group = VALUES(azure_resource_group),
+                default_dns_domain = VALUES(default_dns_domain),
+                azure_devops_org_url = VALUES(azure_devops_org_url),
+                azure_devops_project = VALUES(azure_devops_project),
+                pipeline_variable_group = VALUES(pipeline_variable_group),
+                github_owner = VALUES(github_owner),
                 tenant_id = VALUES(tenant_id),
                 admin_email = VALUES(admin_email),
                 onboarding_complete = VALUES(onboarding_complete)
-        `);
+        `, [
+            masterOrgId, masterOrgName, defaultSubId, defaultRg, defaultDomain,
+            defaultDevopsUrl, defaultDevopsProject, defaultPipelineVarGroup, defaultGithubOwner,
+            defaultTenantId, defaultAdminEmail
+        ]);
 
         await connection.query(`
-            INSERT INTO organizations (id, name) VALUES ('org-1', 'Estevia Techsolutions')
+            INSERT INTO organizations (id, name) VALUES ('org-1', ?)
             ON DUPLICATE KEY UPDATE name = VALUES(name)
-        `);
+        `, [`${masterOrgName} Dev/QA`]);
 
         // 7. Seed bypass developer user
         console.log('Seeding Developer Bypass account...');
         await connection.query(`
             INSERT INTO users (id, email, name, organization_id, role)
-            VALUES ('dev-bypass-user-id', 'dev@estevia.com', 'Developer Bypass', 'estevia', 'admin')
+            VALUES ('dev-bypass-user-id', ?, 'Developer Bypass', ?, 'admin')
             ON DUPLICATE KEY UPDATE organization_id = VALUES(organization_id), role = VALUES(role)
-        `);
+        `, [`dev-bypass@${masterOrgId}.evaops`, masterOrgId]);
 
         // 8. Seed initial directory users and roles
         console.log('Seeding initial directory users and roles...');
@@ -317,9 +339,9 @@ async function main() {
         for (const u of initialUsers) {
             await connection.query(`
                 INSERT INTO users (id, email, name, organization_id, role, tenant_id)
-                VALUES (?, ?, ?, 'estevia', ?, 'a39c526c-2005-4529-ab5a-f008fc5cbc57')
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE name = VALUES(name)
-            `, [u.email, u.email, u.name, u.role]);
+            `, [u.email, u.email, u.name, masterOrgId, u.role, defaultTenantId]);
         }
 
         // 9. Backfill historical UNKNOWN_ACTION records from audit_logs

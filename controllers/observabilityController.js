@@ -5,8 +5,9 @@ const { LogsQueryClient, Durations } = require('@azure/monitor-query-logs');
 const axios = require('axios');
 const logCapturer = require('../utils/logCapturer');
 
-const SUBSCRIPTION_ID = 'a812e8e3-34f9-4773-82ee-6398869533b0';
-const RESOURCE_GROUP = 'Estevia-Prod-RG';
+const MASTER_ORGANIZATION_ID = process.env.MASTER_ORGANIZATION_ID || 'estevia';
+const SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID || 'a812e8e3-34f9-4773-82ee-6398869533b0';
+const RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP || 'Estevia-Prod-RG';
 const MAX_LOG_LINES = 2000;
 
 // Helper to fetch Azure credentials for organization
@@ -18,9 +19,12 @@ async function getAzureCredential(organizationId) {
             return new ClientSecretCredential(azureSecrets.tenantId, azureSecrets.clientId, azureSecrets.clientSecret);
         }
     } catch (err) {
-        console.warn(`[Observability] Using DefaultAzureCredential fallback:`, err.message);
+        console.warn(`[Observability] Failed to retrieve Azure credentials for organization ${organizationId}:`, err.message);
     }
-    return new DefaultAzureCredential();
+    if (organizationId === MASTER_ORGANIZATION_ID) {
+        return new DefaultAzureCredential();
+    }
+    throw new Error(`Azure Integration credentials not configured for organization: ${organizationId}`);
 }
 
 /**
@@ -255,12 +259,24 @@ const observabilityController = {
                 [orgId]
             );
 
-            let subscriptionId = SUBSCRIPTION_ID;
-            let resourceGroup = RESOURCE_GROUP;
+            let subscriptionId = null;
+            let resourceGroup = null;
 
             if (rows.length > 0) {
-                if (rows[0].azure_subscription_id) subscriptionId = rows[0].azure_subscription_id;
-                if (rows[0].azure_resource_group) resourceGroup = rows[0].azure_resource_group;
+                subscriptionId = rows[0].azure_subscription_id;
+                resourceGroup = rows[0].azure_resource_group;
+            }
+
+            if (orgId !== MASTER_ORGANIZATION_ID) {
+                if (!subscriptionId || subscriptionId.trim() === '') {
+                    throw new Error(`Azure Integration (Subscription ID) is not configured for organization: ${orgId}`);
+                }
+                if (!resourceGroup || resourceGroup.trim() === '') {
+                    throw new Error(`Azure Integration (Resource Group) is not configured for organization: ${orgId}`);
+                }
+            } else {
+                if (!subscriptionId) subscriptionId = SUBSCRIPTION_ID;
+                if (!resourceGroup) resourceGroup = RESOURCE_GROUP;
             }
 
             console.log(`[Observability] Querying Metrics from Azure Monitor for Container App: ${appName}`);
@@ -400,7 +416,7 @@ function generateMockLogs(appName) {
             `[WARN] PDF parser: Encrypted metadata detected in file 'resume_premnath.pdf'. Bypassing encryption check.`,
             `[INFO] Parsed and indexed candidate resume: candidate_tanmay.pdf (Score: 0.94)`,
             `[INFO] Incoming GET /api/candidates/search?role=contributor - status 200 OK`,
-            `[ERROR] Failed to send email alert to candidate govind.m@esteviatech.com: SMTP relay connection timed out`,
+            `[ERROR] Failed to send email alert to candidate admin@example.com: SMTP relay connection timed out`,
             `[WARN] Email queued for retry. Retrying SMTP connection...`,
             `[INFO] GET /health - Status 200 OK`
         ];
@@ -461,7 +477,7 @@ function generateMockLogs(appName) {
             `[INFO] Connecting to database cluster host: 10.0.0.6`,
             `[INFO] Database connection pooled successfully (10 active connections)`,
             `[INFO] Redis Cache connected at redis-cache.internal:6379`,
-            `[WARN] Token verification warning: expired session token rejected for user 'akhil.m@esteviatech.com'`,
+            `[WARN] Token verification warning: expired session token rejected for user 'user@example.com'`,
             `[INFO] Incoming GET /api/auth/users - status 200 OK`,
             `[INFO] Incoming PATCH /api/auth/users/tanmay.k/role - status 200 OK`,
             `[ERROR] Database query timed out: SELECT * FROM audit_logs LIMIT 1000 (exceeded 5000ms)`,

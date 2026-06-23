@@ -27,8 +27,8 @@ const dbHubController = {
             // 1. Establish connection to source server
             const sourceConn = await mysql.createConnection({
                 host: sourceHost,
-                user: process.env.DB_USER || 'estevia',
-                password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                user: process.env.DB_USER,
+                password: process.env.DB_PASSWORD,
                 port: process.env.DB_PORT || 3306,
                 ssl: { require: true, rejectUnauthorized: false },
                 connectTimeout: 8000
@@ -39,8 +39,8 @@ const dbHubController = {
                 // 2. Establish connection to target server
                 targetConn = await mysql.createConnection({
                     host: targetHost,
-                    user: process.env.DB_USER || 'estevia',
-                    password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                    user: process.env.DB_USER,
+                    password: process.env.DB_PASSWORD,
                     port: process.env.DB_PORT || 3306,
                     ssl: { require: true, rejectUnauthorized: false },
                     connectTimeout: 8000
@@ -173,8 +173,8 @@ const dbHubController = {
             const mysql = require('mysql2/promise');
             const conn = await mysql.createConnection({
                 host: resolvedHost,
-                user: process.env.DB_USER || 'estevia',
-                password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                user: process.env.DB_USER,
+                password: process.env.DB_PASSWORD,
                 database: targetDb,
                 port: process.env.DB_PORT || 3306,
                 ssl: { require: true, rejectUnauthorized: false },
@@ -261,8 +261,8 @@ const dbHubController = {
 
             const sourceConn = await mysql.createConnection({
                 host: appController._resolveDbHost(sourceServerName, orgSettings),
-                user: process.env.DB_USER || 'estevia',
-                password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                user: process.env.DB_USER,
+                password: process.env.DB_PASSWORD,
                 database: sourceDb,
                 port: process.env.DB_PORT || 3306,
                 ssl: { require: true, rejectUnauthorized: false },
@@ -271,8 +271,8 @@ const dbHubController = {
 
             const targetConn = await mysql.createConnection({
                 host: appController._resolveDbHost(targetServerName, orgSettings),
-                user: process.env.DB_USER || 'estevia',
-                password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                user: process.env.DB_USER,
+                password: process.env.DB_PASSWORD,
                 database: targetDb,
                 port: process.env.DB_PORT || 3306,
                 ssl: { require: true, rejectUnauthorized: false },
@@ -382,8 +382,8 @@ const dbHubController = {
             const mysql = require('mysql2/promise');
             const conn = await mysql.createConnection({
                 host: resolvedHost,
-                user: process.env.DB_USER || 'estevia',
-                password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                user: process.env.DB_USER,
+                password: process.env.DB_PASSWORD,
                 database: dbName,
                 port: process.env.DB_PORT || 3306,
                 ssl: { require: true, rejectUnauthorized: false },
@@ -480,8 +480,8 @@ const dbHubController = {
             const mysql = require('mysql2/promise');
             const conn = await mysql.createConnection({
                 host: resolvedHost,
-                user: process.env.DB_USER || 'estevia',
-                password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                user: process.env.DB_USER,
+                password: process.env.DB_PASSWORD,
                 database: dbName,
                 port: process.env.DB_PORT || 3306,
                 ssl: { require: true, rejectUnauthorized: false },

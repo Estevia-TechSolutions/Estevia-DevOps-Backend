@@ -24,7 +24,11 @@ async function getAzureCredential(organizationId) {
     return new DefaultAzureCredential();
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'estevia-devops-jwt-super-secret-key-12345';
+if (!process.env.JWT_SECRET) {
+    console.error('[authController] FATAL: JWT_SECRET environment variable is not set. Server cannot start securely.');
+    if (process.env.NODE_ENV === 'production') process.exit(1);
+}
+const JWT_SECRET = process.env.JWT_SECRET || (() => { throw new Error('JWT_SECRET must be set in environment variables'); })();
 
 // Helper to decode JWT payload without verification (for Azure ID Token)
 function decodeJwtPayload(token) {
@@ -262,7 +266,10 @@ const getMe = async (req, res) => {
 // Developer Override Login — always grants viewer-only access (for local dev/testing)
 const bypassLogin = async (req, res) => {
     try {
-        const { organizationId = 'estevia' } = req.body;
+        const { organizationId } = req.body;
+        if (!organizationId) {
+            return res.status(400).json({ error: 'organizationId is required for Developer Override login.' });
+        }
         const cleanOrgId = organizationId.toLowerCase().trim();
 
         console.log(`[authController] Developer Override authenticating (viewer role) for organization: ${cleanOrgId}...`);
@@ -570,7 +577,7 @@ const listUsers = async (req, res) => {
     try {
         const [rows] = await db.query(
             'SELECT id, email, name, role, created_at FROM users WHERE organization_id = ? ORDER BY name ASC',
-            [req.user.organization_id || 'estevia']
+            [req.user.organization_id]
         );
         return res.json(rows);
     } catch (err) {
@@ -604,7 +611,7 @@ const updateUserRole = async (req, res) => {
         // Fire Teams security alert asynchronously
         setImmediate(async () => {
             try {
-                const orgId = req.user?.organization_id || targetUser.organization_id || 'estevia';
+                const orgId = req.user?.organization_id || targetUser.organization_id;
                 const adminEmail = req.user?.email || 'system';
                 const roleLabel = role.charAt(0).toUpperCase() + role.slice(1).toLowerCase();
                 await sendTeamsNotification(orgId, {
@@ -633,8 +640,11 @@ const syncUsers = async (req, res) => {
     console.log('[authController] Triggering team directory sync from Azure AD (Microsoft Graph API)...');
     
     try {
-        const orgId = req.user?.organization_id || 'estevia';
-        const tenantId = req.user?.tenant_id || 'a39c526c-2005-4529-ab5a-f008fc5cbc57';
+        const orgId = req.user?.organization_id;
+        const tenantId = req.user?.tenant_id;
+        if (!orgId || !tenantId) {
+            return res.status(400).json({ error: 'User session is missing organization or tenant context for directory sync.' });
+        }
 
         // Retrieve token for Microsoft Graph using the main App Registration credentials
         // which have been granted the User.Read.All Application permission.

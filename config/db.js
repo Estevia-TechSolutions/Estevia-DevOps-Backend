@@ -37,17 +37,18 @@ if (process.env.NODE_ENV === 'test') {
 const host = process.env.DB_HOST;
 const user = process.env.DB_USER;
 const password = process.env.DB_PASSWORD;
-const database = process.env.DB_NAME || 'estevia_devops';
+const database = process.env.DB_NAME || 'evaops';
 const port = process.env.DB_PORT || 3306;
 
 if (!host || !user || !password) {
-    console.warn('[WARNING] Database environment variables (DB_HOST, DB_USER, DB_PASSWORD) are not fully configured. Using fallback credentials.');
+    console.error('[FATAL] Database connection credentials (DB_HOST, DB_USER, DB_PASSWORD) are not configured. Exiting.');
+    process.exit(1);
 }
 
 const pool = mysql.createPool({
-    host: host || 'estevia-dev-db.mysql.database.azure.com',
-    user: user || 'estevia',
-    password: password || 'Ewco26INCP',
+    host,
+    user,
+    password,
     database,
     port,
     ssl: { require: true, rejectUnauthorized: false },
@@ -104,12 +105,14 @@ async function runAutoMigration() {
             await pool.query(`ALTER TABLE organizations ADD COLUMN prod_managed_env_id VARCHAR(500) DEFAULT NULL`);
         }
         
-        console.log('[DevOps DB] Seeding admin_email for estevia organization...');
+        const masterOrgId = process.env.MASTER_ORGANIZATION_ID || 'estevia';
+        const masterAdminEmail = process.env.MASTER_ADMIN_EMAIL || 'govind.m@esteviatech.com';
+        console.log(`[DevOps DB] Seeding admin_email for ${masterOrgId} organization...`);
         await pool.query(`
             UPDATE organizations 
-            SET admin_email = 'govind.m@esteviatech.com' 
-            WHERE id = 'estevia'
-        `);
+            SET admin_email = ? 
+            WHERE id = ?
+        `, [masterAdminEmail, masterOrgId]);
 
         // Create billing_invoices table if not exists
         console.log('[DevOps DB] Checking billing_invoices table...');
@@ -172,12 +175,13 @@ async function runAutoMigration() {
             { email: 'rajni.m@esteviatech.com', name: 'Rajni Menon', role: 'viewer' }
         ];
 
+        const tenantId = process.env.MICROSOFT_TENANT_ID || 'a39c526c-2005-4529-ab5a-f008fc5cbc57';
         for (const u of initialUsers) {
             await pool.query(`
                 INSERT INTO users (id, email, name, organization_id, role, tenant_id)
-                VALUES (?, ?, ?, 'estevia', ?, 'a39c526c-2005-4529-ab5a-f008fc5cbc57')
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE name = VALUES(name)
-            `, [u.email, u.email, u.name, u.role]);
+            `, [u.email, u.email, u.name, masterOrgId, u.role, tenantId]);
         }
         
         console.log('[DevOps DB] Database migrations check completed successfully.');
