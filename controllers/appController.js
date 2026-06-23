@@ -98,7 +98,7 @@ function _validatePipelineYml(ymlContent, pipelineProvider = 'azure_devops') {
                 // Look ahead a few lines for --container-name flag
                 const block = lines.slice(idx, idx + 8).join(' ');
                 if (!block.includes('--container-name')) {
-                    warnings.push({ ruleId: 'AZ_CONTAINERAPP_CONTAINER_NAME', message: `'az containerapp update/create' at line ${idx + 1} is missing the '--container-name' flag. This is optional for single-container apps, but required for multi-container deployments.`, severity: 'warning', line: idx + 1 });
+                    errors.push({ ruleId: 'AZ_CONTAINERAPP_CONTAINER_NAME', message: `'az containerapp update/create' at line ${idx + 1} is missing the required '--container-name' flag. Azure CLI requires this when updating a container image.`, severity: 'error', line: idx + 1 });
                 }
             }
         });
@@ -174,9 +174,28 @@ function _validateDockerfile(content) {
     });
 
     // Check COPY . . without obvious dockerignore comment
-    const hasCopyAll = instructions.some(l => l.text === 'COPY . .' || l.text.match(/^COPY\s+\.\s+\./));
-    if (hasCopyAll) {
-        warnings.push({ ruleId: 'DOCKER_COPY_DOT_DOT', message: "'COPY . .' copies all files including node_modules. Ensure a .dockerignore file excludes node_modules and other build artifacts.", severity: 'warning' });
+    let hasCopyAllWithoutIgnore = false;
+    let copyLineNum = undefined;
+    for (let idx = 0; idx < lines.length; idx++) {
+        const line = lines[idx].trim();
+        if (line.toUpperCase().startsWith('COPY') && (line === 'COPY . .' || line.match(/^COPY\s+\.\s+\./i))) {
+            // Check if preceding lines (up to 2 lines back) contain "dockerignore" in a comment
+            let hasComment = false;
+            for (let k = Math.max(0, idx - 2); k < idx; k++) {
+                if (lines[k].trim().startsWith('#') && lines[k].toLowerCase().includes('dockerignore')) {
+                    hasComment = true;
+                    break;
+                }
+            }
+            if (!hasComment) {
+                hasCopyAllWithoutIgnore = true;
+                copyLineNum = idx + 1;
+                break;
+            }
+        }
+    }
+    if (hasCopyAllWithoutIgnore) {
+        warnings.push({ ruleId: 'DOCKER_COPY_DOT_DOT', line: copyLineNum, message: "'COPY . .' copies all files including node_modules. Ensure a .dockerignore file excludes node_modules and other build artifacts.", severity: 'warning' });
     }
 
     const valid = errors.length === 0;
