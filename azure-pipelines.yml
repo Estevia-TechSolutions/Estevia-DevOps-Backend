@@ -5,32 +5,26 @@ trigger:
 
 # ============================================================
 # PIPELINE CONFIGURATION
-# Infrastructure values are sourced from Azure DevOps pipeline
-# variables or a linked variable group. Configure these in:
-# Azure DevOps → Pipeline → Edit → Variables
+# Update the variables below if infrastructure names change.
+# These are resource identifiers, not secrets.
 #
-# IMPORTANT: Service connection names (marked *literal*) must
-# match the actual service connection names defined in
-# Azure DevOps → Project Settings → Service connections.
-# They cannot be set via pipeline variables — Azure DevOps
-# validates them at parse time.
+# Actual secrets (DB password, JWT secret, OAuth keys, etc.)
+# are managed via Azure DevOps → Pipeline → Variables (secret)
+# or Azure Key Vault — never stored in this file.
 #
-# Pipeline variables required:
-#   CONTAINER_REGISTRY   - ACR login server (e.g. myacr.azurecr.io)
-#   IMAGE_REPOSITORY     - Container image name (e.g. api-evaops)
-#   CONTAINER_APP_NAME   - Azure Container App resource name
-#   AZURE_RESOURCE_GROUP - Azure Resource Group name
-#
-# Service connections (*literal* — set in Project Settings):
-#   ACR service connection:   estevia-acr-sc
-#   Azure service connection: protrack-azure-sc
+# Service connections are defined in:
+# Azure DevOps → Project Settings → Service Connections
 # ============================================================
 
 variables:
-  containerRegistry: $(CONTAINER_REGISTRY)
-  imageRepository: $(IMAGE_REPOSITORY)
-  containerAppName: $(CONTAINER_APP_NAME)
-  resourceGroup: $(AZURE_RESOURCE_GROUP)
+  # ACR login server — update if registry changes
+  containerRegistry: 'esteviacoreregistry.azurecr.io'
+  # Docker image name in ACR
+  imageRepository: 'api-evaops'
+  # Azure Container App resource name
+  containerAppName: 'api-evaops'
+  # Azure Resource Group containing the Container App
+  resourceGroup: 'Estevia-Prod-RG'
 
 stages:
 - stage: BuildAndPush
@@ -54,7 +48,7 @@ stages:
     - task: Docker@2
       displayName: 'Build and Push Image to ACR'
       inputs:
-        # Service connection name — must be a literal string (Azure DevOps parse-time validation)
+        # Service connection name — literal required (Azure DevOps parse-time validation)
         containerRegistry: 'estevia-acr-sc'
         repository: '$(imageRepository)'
         command: 'buildAndPush'
@@ -79,7 +73,7 @@ stages:
           - task: AzureCLI@2
             displayName: 'Deploy to Azure Container Apps'
             inputs:
-              # Service connection name — must be a literal string (Azure DevOps parse-time validation)
+              # Service connection name — literal required (Azure DevOps parse-time validation)
               azureSubscription: 'protrack-azure-sc'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
@@ -89,4 +83,3 @@ stages:
                   --name $(containerAppName) \
                   --resource-group $(resourceGroup) \
                   --image $(containerRegistry)/$(imageRepository):$(Build.BuildId)
-
