@@ -313,16 +313,55 @@ const appController = {
         const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
         const defaultDomain = orgSettings.default_dns_domain || DEFAULT_DOMAIN;
 
+        // Promise timeout helper
+        const promiseWithTimeout = (promise, ms, defaultValue = null) => {
+            let timeoutId;
+            const timeoutPromise = new Promise(resolve => {
+                timeoutId = setTimeout(() => {
+                    console.warn(`[AppController] Promise timed out after ${ms}ms.`);
+                    resolve(defaultValue);
+                }, ms);
+            });
+            return Promise.race([promise, timeoutPromise]).then(res => {
+                clearTimeout(timeoutId);
+                return res;
+            });
+        };
+
         const credential = await getAzureCredential(organizationId);
         const resourceClient = new ResourceManagementClient(credential, subscriptionId);
 
         const azureResources = [];
         try {
-            for await (const r of resourceClient.resources.listByResourceGroup(resourceGroup)) {
-                azureResources.push(r);
-            }
+            const listPromise = (async () => {
+                const list = [];
+                for await (const r of resourceClient.resources.listByResourceGroup(resourceGroup)) {
+                    list.push(r);
+                }
+                return list;
+            })();
+            const listed = await promiseWithTimeout(listPromise, 5000, []);
+            azureResources.push(...listed);
         } catch (err) {
             console.error('[AppController] Error listing resources for costing:', err.message);
+        }
+
+        // If no Azure resources could be fetched (timed out or connection error), fall back to DB records
+        if (azureResources.length === 0) {
+            console.log('[AppController] Azure resource listing returned empty or timed out. Generating fallback resources from database application records.');
+            for (const app of apps) {
+                const azureDetails = typeof app.azure_resource_details === 'string'
+                    ? JSON.parse(app.azure_resource_details || '{}')
+                    : (app.azure_resource_details || {});
+                
+                const rType = app.app_type === 'frontend' ? 'Microsoft.Web/staticSites' : 'Microsoft.App/containerApps';
+                azureResources.push({
+                    id: azureDetails.resourceId || `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/${rType}/${app.name}`,
+                    name: app.name,
+                    type: rType,
+                    location: azureDetails.location || 'Central US'
+                });
+            }
         }
 
         // Fetch applied remediations from database
@@ -335,55 +374,59 @@ const appController = {
         // Fetch Month-to-Date costs from Azure Cost Management API
         const azureCosts = new Map();
         try {
-            const tokenRes = await credential.getToken("https://management.azure.com/.default");
-            const token = tokenRes.token;
-            
-            const costUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.CostManagement/query?api-version=2023-03-01`;
-            const costBody = {
-                type: "Usage",
-                timeframe: "MonthToDate",
-                dataset: {
-                    granularity: "None",
-                    aggregation: {
-                        totalCost: {
-                            name: "PreTaxCost",
-                            function: "Sum"
-                        }
-                    },
-                    grouping: [
-                        {
-                            type: "Dimension",
-                            name: "ResourceId"
+            const tokenRes = await promiseWithTimeout(credential.getToken("https://management.azure.com/.default"), 4000);
+            if (tokenRes && tokenRes.token) {
+                const token = tokenRes.token;
+                
+                const costUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.CostManagement/query?api-version=2023-03-01`;
+                const costBody = {
+                    type: "Usage",
+                    timeframe: "MonthToDate",
+                    dataset: {
+                        granularity: "None",
+                        aggregation: {
+                            totalCost: {
+                                name: "PreTaxCost",
+                                function: "Sum"
+                            }
                         },
-                        {
-                            type: "Dimension",
-                            name: "ResourceType"
-                        }
-                    ]
-                }
-            };
-
-            const costRes = await axios.post(costUrl, costBody, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 8000
-            });
-
-            if (costRes.data && costRes.data.properties && costRes.data.properties.rows) {
-                for (const row of costRes.data.properties.rows) {
-                    let val = parseFloat(row[0]) || 0;
-                    const resId = (row[1] || '').toLowerCase();
-                    const currency = row[3] || 'USD';
-                    
-                    if (currency.toUpperCase() === 'INR') {
-                        val = val / 83.0;
+                        grouping: [
+                            {
+                                type: "Dimension",
+                                name: "ResourceId"
+                            },
+                            {
+                                type: "Dimension",
+                                name: "ResourceType"
+                            }
+                        ]
                     }
-                    
-                    azureCosts.set(resId, val);
+                };
+
+                const costRes = await axios.post(costUrl, costBody, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 8000
+                });
+
+                if (costRes.data && costRes.data.properties && costRes.data.properties.rows) {
+                    for (const row of costRes.data.properties.rows) {
+                        let val = parseFloat(row[0]) || 0;
+                        const resId = (row[1] || '').toLowerCase();
+                        const currency = row[3] || 'USD';
+                        
+                        if (currency.toUpperCase() === 'INR') {
+                            val = val / 83.0;
+                        }
+                        
+                        azureCosts.set(resId, val);
+                    }
+                    console.log(`[AppController] Successfully loaded ${azureCosts.size} live resource costs from Azure Cost Management.`);
                 }
-                console.log(`[AppController] Successfully loaded ${azureCosts.size} live resource costs from Azure Cost Management.`);
+            } else {
+                console.warn('[AppController] Azure token retrieval timed out or failed. Using fallback rates.');
             }
         } catch (costErr) {
             console.warn('[AppController] Failed to query live Azure Cost Management API, using standard rate fallbacks:', costErr.message);
