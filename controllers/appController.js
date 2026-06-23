@@ -8638,7 +8638,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                             'Accept': 'application/vnd.github.v3+json',
                             'User-Agent': getUserAgent(organizationId)
                         },
-                        timeout: 8000
+                        timeout: 15000
                     });
                     if (response.data && response.data.content) {
                         return Buffer.from(response.data.content, 'base64').toString('utf-8');
@@ -8660,7 +8660,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                             'Accept': 'application/vnd.github.v3+json',
                             'User-Agent': getUserAgent(organizationId)
                         },
-                        timeout: 8000
+                        timeout: 15000
                     });
                     if (Array.isArray(listResponse.data)) {
                         const ymlFiles = listResponse.data.filter(f => f.name.endsWith('.yml') || f.name.endsWith('.yaml'));
