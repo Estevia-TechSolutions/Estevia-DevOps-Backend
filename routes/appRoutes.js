@@ -51,6 +51,11 @@ router.get('/cost', appController.getCostData);
 // Apply cost optimization remediation suggestion
 router.post('/cost/apply-remediation', restrictTo('owner', 'admin', 'contributor'), appController.applyRemediation);
 
+// Azure Policy Compliance Auditing
+router.get('/compliance', appController.getComplianceStatus);
+router.post('/compliance/remediate', restrictTo('owner', 'admin', 'contributor'), appController.remediateCompliance);
+
+
 // Ask Eva AI about cost optimization
 router.post('/cost/ask-eva', restrictTo('owner', 'admin', 'contributor'), appController.askEva);
 
