@@ -6052,6 +6052,178 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
       console.error('[AppController] dnsSwap failed:', error);
       res.status(500).json({ message: 'Failed to perform DNS swap.', error: error.message });
     }
+  },
+
+  /**
+   * GET /api/apps/repo-integrity?organizationId=...&repoFullName=...
+   *
+   * Inspects every branch of a GitHub repo and classifies each as:
+   *   frontend | backend | mixed | unknown
+   * based on the presence of well-known indicator files at the root.
+   *
+   * Also cross-references the applications DB to show which ACA/SWA each branch is deployed as.
+   *
+   * Confidence:
+   *   high   — unambiguous primary signal (Dockerfile OR staticwebapp.config.json)
+   *   medium — secondary framework files (vite.config, next.config, etc.)
+   *   low    — only generic files, cannot determine definitively
+   */
+  checkRepoIntegrity: async (req, res) => {
+    try {
+      const { organizationId, repoFullName } = req.query;
+      if (!organizationId || !repoFullName) {
+        return res.status(400).json({ message: 'Missing organizationId or repoFullName parameter.' });
+      }
+
+      // ── Auth ──────────────────────────────────────────────────────────────
+      const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+      const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+      if (!githubToken) {
+        return res.status(400).json({ message: 'GitHub integration token not found.' });
+      }
+      const cleanRepo = repoFullName.replace('https://github.com/', '').replace(/\.git$/, '').replace(/\/$/, '');
+      const ghHeaders = {
+        'Authorization': `token ${githubToken}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': getUserAgent(organizationId)
+      };
+
+      // ── Signal tables ──────────────────────────────────────────────────────
+      // Files whose presence indicates backend (ACA) deployment
+      const BACKEND_SIGNALS = [
+        'dockerfile', 'docker-compose.yml', 'docker-compose.yaml',
+        'server.js', 'index.js', 'app.js', 'app.py', 'main.py',
+        'main.go', 'pom.xml', 'build.gradle', 'go.mod', 'cargo.toml',
+        'requirements.txt', 'wsgi.py', 'asgi.py'
+      ];
+      const BACKEND_EXTENSIONS = ['.csproj', '.sln', '.fsproj'];
+
+      // Files whose presence indicates frontend (SWA) deployment
+      const FRONTEND_SIGNALS = [
+        'staticwebapp.config.json', 'index.html',
+        'next.config.js', 'next.config.ts', 'next.config.mjs',
+        'vite.config.js', 'vite.config.ts', 'vite.config.mjs',
+        'angular.json', 'nuxt.config.js', 'nuxt.config.ts',
+        'remix.config.js', 'svelte.config.js', 'gatsby-config.js', '.storybook'
+      ];
+
+      // Primary signals are unambiguous on their own → high confidence
+      const PRIMARY_BACKEND = new Set(['dockerfile', 'docker-compose.yml', 'docker-compose.yaml']);
+      const PRIMARY_FRONTEND = new Set(['staticwebapp.config.json']);
+
+      function classifyRootFiles(fileNames) {
+        const lower = fileNames.map(f => f.toLowerCase());
+        const backendHits = BACKEND_SIGNALS.filter(s => lower.includes(s));
+        const backendExtHits = lower.filter(f => BACKEND_EXTENSIONS.some(ext => f.endsWith(ext)));
+        const frontendHits = FRONTEND_SIGNALS.filter(s => lower.includes(s));
+
+        const primaryBackend = backendHits.some(h => PRIMARY_BACKEND.has(h));
+        const primaryFrontend = frontendHits.some(h => PRIMARY_FRONTEND.has(h));
+        const hasBackend = backendHits.length > 0 || backendExtHits.length > 0;
+        const hasFrontend = frontendHits.length > 0;
+
+        let detectedType, confidence;
+        if (hasBackend && hasFrontend) {
+          detectedType = 'mixed';
+          confidence = (primaryBackend || primaryFrontend) ? 'high' : 'medium';
+        } else if (hasBackend) {
+          detectedType = 'backend';
+          confidence = primaryBackend ? 'high' : (backendHits.length >= 2 ? 'medium' : 'low');
+        } else if (hasFrontend) {
+          detectedType = 'frontend';
+          confidence = primaryFrontend ? 'high' : (frontendHits.length >= 2 ? 'medium' : 'low');
+        } else {
+          detectedType = 'unknown';
+          confidence = 'low';
+        }
+
+        return {
+          detectedType,
+          confidence,
+          signals: {
+            backendFiles: [...backendHits, ...backendExtHits],
+            frontendFiles: frontendHits,
+            hasCiYml: lower.includes('azure-pipelines.yml'),
+            hasDockerfile: lower.includes('dockerfile'),
+            hasSwaConfig: lower.includes('staticwebapp.config.json'),
+            hasPackageJson: lower.includes('package.json'),
+            allRootFiles: fileNames
+          }
+        };
+      }
+
+      // ── 1. Fetch all branches ────────────────────────────────────────────
+      const branchesRes = await axios.get(
+        `https://api.github.com/repos/${cleanRepo}/branches?per_page=100`,
+        { headers: ghHeaders }
+      );
+      const branches = branchesRes.data;
+
+      // ── 2. Fetch root contents for each branch in parallel ───────────────
+      const branchReports = await Promise.all(branches.map(async (branch) => {
+        try {
+          const contentsRes = await axios.get(
+            `https://api.github.com/repos/${cleanRepo}/contents/?ref=${encodeURIComponent(branch.name)}`,
+            { headers: ghHeaders, timeout: 8000 }
+          );
+          const rootFiles = Array.isArray(contentsRes.data) ? contentsRes.data.map(f => f.name) : [];
+          return { name: branch.name, protected: branch.protected, ...classifyRootFiles(rootFiles), deployedAs: null };
+        } catch (err) {
+          console.warn(`[checkRepoIntegrity] Branch ${branch.name} contents failed:`, err.message);
+          return {
+            name: branch.name, protected: branch.protected,
+            detectedType: 'unknown', confidence: 'low',
+            signals: { backendFiles: [], frontendFiles: [], hasCiYml: false, hasDockerfile: false, hasSwaConfig: false, hasPackageJson: false, allRootFiles: [] },
+            deployedAs: null
+          };
+        }
+      }));
+
+      // ── 3. Cross-reference with deployed apps in DB ──────────────────────
+      try {
+        const [dbApps] = await db.query(
+          `SELECT name, app_type, azure_resource_details FROM applications WHERE organization_id = ? AND (repo_url LIKE ? OR repo_url LIKE ?)`,
+          [organizationId, `%${cleanRepo}%`, `%${cleanRepo.toLowerCase()}%`]
+        );
+        for (const dbApp of dbApps) {
+          let details = {};
+          try { details = typeof dbApp.azure_resource_details === 'string' ? JSON.parse(dbApp.azure_resource_details || '{}') : (dbApp.azure_resource_details || {}); } catch (e) {}
+          const deployedBranch = details.branch || null;
+          if (deployedBranch) {
+            const report = branchReports.find(r => r.name.toLowerCase() === deployedBranch.toLowerCase());
+            if (report && !report.deployedAs) report.deployedAs = { name: dbApp.name, type: dbApp.app_type, branch: deployedBranch };
+          } else {
+            // No explicit branch — match by ACA name suffix
+            const appNameLower = dbApp.name.toLowerCase();
+            for (const report of branchReports) {
+              if (new RegExp(`-${report.name.toLowerCase()}(-|$)`).test(appNameLower) && !report.deployedAs) {
+                report.deployedAs = { name: dbApp.name, type: dbApp.app_type, branch: report.name };
+                break;
+              }
+            }
+          }
+        }
+      } catch (dbErr) {
+        console.warn('[checkRepoIntegrity] DB cross-reference failed (non-fatal):', dbErr.message);
+      }
+
+      // ── 4. Compute overall repo status ───────────────────────────────────
+      const issues = [];
+      const mixedBranches = branchReports.filter(r => r.detectedType === 'mixed').map(r => r.name);
+      const distinctTypes = new Set(branchReports.filter(r => r.detectedType !== 'unknown' && r.detectedType !== 'mixed').map(r => r.detectedType));
+
+      if (mixedBranches.length > 0) issues.push(`Branch(es) "${mixedBranches.join('", "')}" contain both frontend and backend code.`);
+      if (distinctTypes.has('frontend') && distinctTypes.has('backend')) issues.push(`This repo has branches of different types (some frontend, some backend). Ensure each is deployed to the correct resource type.`);
+
+      const overallStatus = mixedBranches.length > 0 ? 'mixed' : (issues.length > 0 ? 'warning' : 'ok');
+      console.log(`[AppController] checkRepoIntegrity: ${cleanRepo} → ${overallStatus} (${branchReports.length} branches)`);
+
+      res.json({ success: true, repo: cleanRepo, overallStatus, issues, branches: branchReports });
+
+    } catch (error) {
+      console.error('[AppController] checkRepoIntegrity failed:', error);
+      res.status(500).json({ message: 'Failed to check repo integrity.', error: error.message });
+    }
   }
 };
 

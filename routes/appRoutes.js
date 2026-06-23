@@ -80,6 +80,10 @@ router.get('/github-repos', appController.getGithubRepos);
 // Fetch repository branches dynamically
 router.get('/github-branches', appController.getGithubBranches);
 
+// Check repo integrity: classify each branch as frontend/backend/mixed and cross-ref with deployed apps
+router.get('/repo-integrity', appController.checkRepoIntegrity);
+
+
 // Expose Database management endpoints
 router.get('/db-servers', appController.getDbServers);
 router.get('/databases', appController.getDatabases);
