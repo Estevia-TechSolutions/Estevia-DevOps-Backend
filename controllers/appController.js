@@ -374,7 +374,7 @@ const appController = {
         // Fetch Month-to-Date costs from Azure Cost Management API
         const azureCosts = new Map();
         try {
-            const tokenRes = await promiseWithTimeout(credential.getToken("https://management.azure.com/.default"), 4000);
+            const tokenRes = await credential.getToken("https://management.azure.com/.default");
             if (tokenRes && tokenRes.token) {
                 const token = tokenRes.token;
                 
@@ -1230,7 +1230,7 @@ const appController = {
 
         // Fetch live Azure Advisor Recommendations
         try {
-            const tokenRes = await promiseWithTimeout(credential.getToken("https://management.azure.com/.default"), 4000);
+            const tokenRes = await credential.getToken("https://management.azure.com/.default");
             if (tokenRes && tokenRes.token) {
                 const token = tokenRes.token;
                 const advisorUrl = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Advisor/recommendations?api-version=2023-01-01`;
