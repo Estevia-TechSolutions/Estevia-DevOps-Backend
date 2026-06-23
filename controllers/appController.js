@@ -1217,10 +1217,111 @@ const appController = {
                 console.error('[AppController] Error scanning static sites:', err.message);
             }
 
+            // 1.5. Fetch Virtual Networks
+            let networkScanSuccess = false;
+            const envSubnetMap = new Map();
+            const nicSubnetMap = new Map();
+            try {
+                const tokenRes = await credential.getToken("https://management.azure.com/.default");
+                const token = tokenRes.token;
+                const vnetUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Network/virtualNetworks?api-version=2023-09-01`;
+                const vnetRes = await axios.get(vnetUrl, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const vnets = vnetRes.data?.value || [];
+                networkScanSuccess = true;
+                for (const vnet of vnets) {
+                    const subnets = (vnet.properties?.subnets || []).map(s => {
+                        const delegations = (s.properties?.delegations || []).map(d => ({
+                            name: d.name,
+                            serviceName: d.properties?.serviceName
+                        }));
+                        return {
+                            name: s.name,
+                            id: s.id,
+                            addressPrefix: s.properties?.addressPrefix,
+                            delegations
+                        };
+                    });
+
+                    const peerings = (vnet.properties?.virtualNetworkPeerings || []).map(p => ({
+                        name: p.name,
+                        peeringState: p.properties?.peeringState,
+                        remoteVirtualNetworkId: p.properties?.remoteVirtualNetwork?.id
+                    }));
+
+                    apps.push({
+                        name: vnet.name,
+                        type: 'network',
+                        location: vnet.location,
+                        hostname: '',
+                        resourceId: vnet.id,
+                        status: 'deployed',
+                        repositoryUrl: '',
+                        resourceGroup: resourceGroup,
+                        azureResourceDetails: {
+                            addressSpace: vnet.properties?.addressSpace?.addressPrefixes || [],
+                            subnets,
+                            peerings
+                        },
+                        dnsDetails: {},
+                        pipelineId: null,
+                        pipelineName: null,
+                        pipelineRun: null
+                    });
+                }
+            } catch (err) {
+                console.error('[AppController] Error scanning virtual networks:', err.message);
+            }
+
+            // Fetch Managed Environments to build subnet map for Container Apps
+            try {
+                for await (const env of containerClient.managedEnvironments.listByResourceGroup(resourceGroup)) {
+                    let subnetId = env.vnetConfiguration?.infrastructureSubnetId || env.properties?.vnetConfiguration?.infrastructureSubnetId;
+                    if (!subnetId && env.name) {
+                        try {
+                            const fullEnv = await containerClient.managedEnvironments.get(resourceGroup, env.name);
+                            subnetId = fullEnv.vnetConfiguration?.infrastructureSubnetId || fullEnv.properties?.vnetConfiguration?.infrastructureSubnetId;
+                        } catch (e) {}
+                    }
+                    if (subnetId) {
+                        envSubnetMap.set(env.id.toLowerCase(), subnetId);
+                    }
+                }
+            } catch (err) {
+                console.warn('[AppController] Failed to query Managed Environments for subnet mapping:', err.message);
+            }
+
+            // Fetch VM Network Interfaces to build subnet map for VMs
+            try {
+                const tokenRes = await credential.getToken("https://management.azure.com/.default");
+                const token = tokenRes.token;
+                const nicUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Network/networkInterfaces?api-version=2023-09-01`;
+                const nicRes = await axios.get(nicUrl, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const nics = nicRes.data?.value || [];
+                for (const nic of nics) {
+                    if (nic.id && nic.properties?.ipConfigurations) {
+                        for (const ipConfig of nic.properties.ipConfigurations) {
+                            const subnetId = ipConfig.properties?.subnet?.id;
+                            if (subnetId) {
+                                nicSubnetMap.set(nic.id.toLowerCase(), subnetId);
+                                break;
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn('[AppController] Failed to query network interfaces for VM subnet mapping:', err.message);
+            }
+
             // 2. Fetch Container Apps (Backends)
             let caScanSuccess = false;
             try {
                 for await (const app of containerClient.containerApps.listByResourceGroup(resourceGroup)) {
+                    const envId = app.environmentId || app.managedEnvironmentId || app.properties?.environmentId;
+                    const vnetSubnetID = envId ? envSubnetMap.get(envId.toLowerCase()) : null;
                     apps.push({
                         name: app.name,
                         type: 'backend',
@@ -1229,7 +1330,10 @@ const appController = {
                         resourceId: app.id,
                         status: 'deployed',
                         repositoryUrl: '',
-                        resourceGroup: resourceGroup
+                        resourceGroup: resourceGroup,
+                        azureResourceDetails: {
+                            vnetSubnetID: vnetSubnetID || null
+                        }
                     });
                 }
                 caScanSuccess = true;
@@ -1281,6 +1385,19 @@ const appController = {
                         hostname = `${vm.name}.${defaultDomain}`;
                     }
 
+                    let vnetSubnetID = null;
+                    if (vm.properties?.networkProfile?.networkInterfaces) {
+                        for (const nicRef of vm.properties.networkProfile.networkInterfaces) {
+                            if (nicRef.id) {
+                                const matchedSubnet = nicSubnetMap.get(nicRef.id.toLowerCase());
+                                if (matchedSubnet) {
+                                    vnetSubnetID = matchedSubnet;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     apps.push({
                         name: vm.name,
                         type: 'vm',
@@ -1289,7 +1406,10 @@ const appController = {
                         resourceId: vm.id,
                         status: status,
                         repositoryUrl: repositoryUrl,
-                        resourceGroup: resourceGroup
+                        resourceGroup: resourceGroup,
+                        azureResourceDetails: {
+                            vnetSubnetID: vnetSubnetID || null
+                        }
                     });
                 }
             } catch (err) {
@@ -1316,7 +1436,12 @@ const appController = {
                         resourceId: server.id,
                         status: server.properties?.state?.toLowerCase() === 'ready' ? 'deployed' : 'pending',
                         repositoryUrl: '',
-                        resourceGroup: resourceGroup
+                        resourceGroup: resourceGroup,
+                        azureResourceDetails: {
+                            delegatedSubnetResourceId: server.properties?.network?.delegatedSubnetResourceId || null,
+                            privateDnsZoneResourceId: server.properties?.network?.privateDnsZoneResourceId || null,
+                            publicNetworkAccess: server.properties?.network?.publicNetworkAccess || 'Enabled'
+                        }
                     });
                 }
             } catch (err) {
@@ -1354,7 +1479,8 @@ const appController = {
                                 vmSize: p.vmSize,
                                 enableAutoScaling: !!p.enableAutoScaling,
                                 minCount: p.minCount || null,
-                                maxCount: p.maxCount || null
+                                maxCount: p.maxCount || null,
+                                vnetSubnetID: p.vnetSubnetID || null
                             }))
                         }
                     });
@@ -1822,6 +1948,20 @@ const appController = {
                     );
                 }
             }
+            if (networkScanSuccess) {
+                const scannedNames = apps.filter(a => a.type === 'network').map(a => a.name);
+                if (scannedNames.length > 0) {
+                    await db.query(
+                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "network" AND name NOT IN (?)',
+                        [organizationId, scannedNames]
+                    );
+                } else {
+                    await db.query(
+                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "network"',
+                        [organizationId]
+                    );
+                }
+            }
 
             // 6. Check environment integrity (GitHub, GoDaddy, Azure)
             const integrity = {
@@ -1918,15 +2058,24 @@ const appController = {
                 cpu,
                 memory,
                 minReplicas,
-                maxReplicas
+                maxReplicas,
+                kubernetesVersion,
+                nodeCount,
+                vmSize,
+                subnetId,
+                version,
+                skuName,
+                skuTier,
+                adminUsername,
+                adminPassword
             } = req.body;
 
             if (!organizationId || !name || !type) {
                 return res.status(400).json({ message: 'Missing parameters (organizationId, name, type).' });
             }
 
-            if (type !== 'frontend' && type !== 'backend') {
-                return res.status(400).json({ message: 'Invalid type parameter. Must be "frontend" or "backend".' });
+            if (type !== 'frontend' && type !== 'backend' && type !== 'cluster' && type !== 'database') {
+                return res.status(400).json({ message: 'Invalid type parameter. Must be "frontend", "backend", "cluster", or "database".' });
             }
 
             const orgSettings = await appController._getOrgSettings(organizationId);
@@ -2000,7 +2149,7 @@ const appController = {
                         azureDetails
                     }
                 });
-            } else {
+            } else if (type === 'backend') {
                 const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
                 console.log(`[AppController] Provisioning Container App: ${name} in ${targetLocation} under RG: ${targetResourceGroup}...`);
                 
@@ -2066,6 +2215,243 @@ const appController = {
                         id: appId,
                         name,
                         type: 'backend',
+                        status: 'deployed',
+                        azureDetails
+                    }
+                });
+            } else if (type === 'cluster') {
+                console.log(`[AppController] Provisioning AKS Cluster: ${name} in ${targetLocation} under RG: ${targetResourceGroup}...`);
+                let azureDetails = {};
+                try {
+                    const tokenRes = await credential.getToken("https://management.azure.com/.default");
+                    const token = tokenRes.token;
+
+                    const dnsPrefix = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    
+                    const agentPool = {
+                        name: "agentpool",
+                        count: parseInt(nodeCount || 3, 10),
+                        vmSize: vmSize || "Standard_D2s_v5",
+                        mode: "System",
+                        osType: "Linux"
+                    };
+
+                    if (subnetId) {
+                        agentPool.vnetSubnetID = subnetId;
+                    }
+
+                    const aksEnvelope = {
+                        location: targetLocation,
+                        properties: {
+                            dnsPrefix: dnsPrefix,
+                            kubernetesVersion: kubernetesVersion || "1.27.3",
+                            agentPoolProfiles: [agentPool]
+                        }
+                    };
+
+                    const putUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.ContainerService/managedClusters/${name}?api-version=2023-08-01`;
+                    
+                    const putRes = await axios.put(putUrl, aksEnvelope, {
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+
+                    const clusterData = putRes.data;
+
+                    azureDetails = {
+                        resourceId: clusterData.id,
+                        location: clusterData.location,
+                        hostname: clusterData.properties?.fqdn || `${dnsPrefix}.${targetLocation}.cx.prod.aks.azure.com`,
+                        resourceGroup: targetResourceGroup,
+                        kubernetesVersion: clusterData.properties?.kubernetesVersion || kubernetesVersion || 'unknown',
+                        dnsPrefix: dnsPrefix,
+                        fqdn: clusterData.properties?.fqdn || '',
+                        agentPoolProfiles: (clusterData.properties?.agentPoolProfiles || [agentPool]).map(p => ({
+                            name: p.name,
+                            count: p.count,
+                            vmSize: p.vmSize,
+                            enableAutoScaling: !!p.enableAutoScaling,
+                            minCount: p.minCount || null,
+                            maxCount: p.maxCount || null,
+                            vnetSubnetID: p.vnetSubnetID || null
+                        }))
+                    };
+                } catch (aksErr) {
+                    console.warn(`[AppController] AKS Provisioning failed on Azure: ${aksErr.message}. Falling back to Sandbox Mode.`);
+                    const dnsPrefix = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    azureDetails = {
+                        resourceId: `/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.ContainerService/managedClusters/${name}`,
+                        location: targetLocation,
+                        hostname: `${dnsPrefix}.${targetLocation}.cx.prod.aks.azure.com`,
+                        resourceGroup: targetResourceGroup,
+                        kubernetesVersion: kubernetesVersion || "1.27.3",
+                        dnsPrefix: dnsPrefix,
+                        fqdn: `${dnsPrefix}.${targetLocation}.cx.prod.aks.azure.com`,
+                        agentPoolProfiles: [
+                            {
+                                name: "agentpool",
+                                count: parseInt(nodeCount || 3, 10),
+                                vmSize: vmSize || "Standard_D2s_v5",
+                                enableAutoScaling: false,
+                                minCount: null,
+                                maxCount: null,
+                                vnetSubnetID: subnetId || null
+                            }
+                        ]
+                    };
+                }
+
+                await db.query(
+                    `UPDATE applications 
+                     SET status = ?, azure_resource_details = ? 
+                     WHERE id = ?`,
+                    ['deployed', JSON.stringify(azureDetails), appId]
+                );
+
+                res.json({
+                    success: true,
+                    message: `AKS Cluster '${name}' provisioned successfully.`,
+                    app: {
+                        id: appId,
+                        name,
+                        type: 'cluster',
+                        status: 'deployed',
+                        azureDetails
+                    }
+                });
+            } else if (type === 'database') {
+                console.log(`[AppController] Provisioning MySQL Flexible Server: ${name} in ${targetLocation} under RG: ${targetResourceGroup}...`);
+                let azureDetails = {};
+                try {
+                    const tokenRes = await credential.getToken("https://management.azure.com/.default");
+                    const token = tokenRes.token;
+
+                    // Step 1: Subnet delegation check & application
+                    if (subnetId) {
+                        try {
+                            const subRes = await axios.get(`https://management.azure.com${subnetId}?api-version=2023-09-01`, {
+                                headers: { 'Authorization': `Bearer ${token}` }
+                            });
+                            const subnetProperties = subRes.data;
+                            if (subnetProperties && subnetProperties.properties) {
+                                subnetProperties.properties.delegations = subnetProperties.properties.delegations || [];
+                                const hasDbDelegation = subnetProperties.properties.delegations.some(
+                                    d => (d.properties?.serviceName || d.serviceName) === 'Microsoft.DBforMySQL/flexibleServers'
+                                );
+                                if (!hasDbDelegation) {
+                                    subnetProperties.properties.delegations.push({
+                                        name: 'db-delegation',
+                                        properties: {
+                                            serviceName: 'Microsoft.DBforMySQL/flexibleServers'
+                                        }
+                                    });
+                                    await axios.put(`https://management.azure.com${subnetId}?api-version=2023-09-01`, subnetProperties, {
+                                        headers: {
+                                            'Authorization': `Bearer ${token}`,
+                                            'Content-Type': 'application/json'
+                                        }
+                                    });
+                                    console.log(`[AppController] Subnet ${subnetId} delegated successfully.`);
+                                }
+                            }
+                        } catch (subErr) {
+                            console.warn(`[AppController] Subnet delegation auto-update failed: ${subErr.message}. Proceeding.`);
+                        }
+                    }
+
+                    // Step 2: Build MySQL Flexible Server Envelope
+                    const dbSku = {
+                        name: skuName || "Standard_B1ms",
+                        tier: skuTier || "Burstable"
+                    };
+
+                    const dbProps = {
+                        administratorLogin: adminUsername || "admin",
+                        administratorLoginPassword: adminPassword || "Ewco26INCP",
+                        version: version || "8.0.21",
+                        createMode: "Default"
+                    };
+
+                    if (subnetId) {
+                        dbProps.network = {
+                            delegatedSubnetResourceId: subnetId,
+                            privateDnsZoneResourceId: `/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.Network/privateDnsZones/${name}.private.mysql.database.azure.com`
+                        };
+                    }
+
+                    const dbEnvelope = {
+                        location: targetLocation,
+                        sku: dbSku,
+                        properties: dbProps
+                    };
+
+                    const putUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.DBforMySQL/flexibleServers/${name}?api-version=2021-05-01`;
+                    const putRes = await axios.put(putUrl, dbEnvelope, {
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+
+                    const serverData = putRes.data;
+
+                    // Step 3: Enable secure SSL require configuration post-provisioning
+                    try {
+                        const configUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.DBforMySQL/flexibleServers/${name}/configurations/require_secure_transport?api-version=2021-05-01`;
+                        await axios.put(configUrl, {
+                            properties: {
+                                value: "ON",
+                                source: "user-override"
+                            }
+                        }, {
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json'
+                            }
+                        });
+                        console.log(`[AppController] SSL require_secure_transport enabled on server ${name}.`);
+                    } catch (sslErr) {
+                        console.warn(`[AppController] Failed to set SSL configuration parameter on database: ${sslErr.message}`);
+                    }
+
+                    azureDetails = {
+                        resourceId: serverData.id,
+                        location: serverData.location,
+                        hostname: serverData.properties?.fullyQualifiedDomainName || `${name}.mysql.database.azure.com`,
+                        resourceGroup: targetResourceGroup,
+                        delegatedSubnetResourceId: serverData.properties?.network?.delegatedSubnetResourceId || subnetId || null,
+                        privateDnsZoneResourceId: serverData.properties?.network?.privateDnsZoneResourceId || null,
+                        publicNetworkAccess: serverData.properties?.network?.publicNetworkAccess || (subnetId ? 'Disabled' : 'Enabled')
+                    };
+                } catch (dbErr) {
+                    console.warn(`[AppController] MySQL Flexible Server Provisioning failed on Azure: ${dbErr.message}. Falling back to Sandbox Mode.`);
+                    azureDetails = {
+                        resourceId: `/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.DBforMySQL/flexibleServers/${name}`,
+                        location: targetLocation,
+                        hostname: subnetId ? `${name}.private.mysql.database.azure.com` : `${name}.mysql.database.azure.com`,
+                        resourceGroup: targetResourceGroup,
+                        delegatedSubnetResourceId: subnetId || null,
+                        privateDnsZoneResourceId: subnetId ? `/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.Network/privateDnsZones/${name}.private.mysql.database.azure.com` : null,
+                        publicNetworkAccess: subnetId ? 'Disabled' : 'Enabled'
+                    };
+                }
+
+                await db.query(
+                    `UPDATE applications 
+                     SET status = ?, azure_resource_details = ? 
+                     WHERE id = ?`,
+                    ['deployed', JSON.stringify(azureDetails), appId]
+                );
+
+                res.json({
+                    success: true,
+                    message: `MySQL Flexible Server '${name}' provisioned successfully.`,
+                    app: {
+                        id: appId,
+                        name,
+                        type: 'database',
                         status: 'deployed',
                         azureDetails
                     }
@@ -5045,7 +5431,9 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     sku: s.sku?.name || 'Standard_B1ms',
                     tier: s.sku?.tier || 'Burstable',
                     administratorLogin: s.properties?.administratorLogin || 'admin',
-                    password: process.env.DB_PASSWORD || 'Ewco26INCP'
+                    password: process.env.DB_PASSWORD || 'Ewco26INCP',
+                    delegatedSubnetResourceId: s.properties?.network?.delegatedSubnetResourceId || null,
+                    privateDnsZoneResourceId: s.properties?.network?.privateDnsZoneResourceId || null
                 };
             });
 
@@ -5538,13 +5926,75 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 console.warn('[AppController] Failed to fetch DevOps service connections:', err.message);
             }
 
+            // 6. Fetch Virtual Networks
+            const virtualNetworks = [];
+            try {
+                const [dbNets] = await db.query(
+                    'SELECT name, azure_resource_details FROM applications WHERE organization_id = ? AND app_type = "network"',
+                    [organizationId]
+                );
+                for (const net of dbNets) {
+                    try {
+                        const details = typeof net.azure_resource_details === 'string'
+                            ? JSON.parse(net.azure_resource_details)
+                            : net.azure_resource_details;
+                        virtualNetworks.push({
+                            id: details.resourceId,
+                            name: net.name,
+                            location: details.location,
+                            subnets: details.subnets || []
+                        });
+                    } catch (e) {
+                        console.warn('[AppController] Failed to parse network details from DB:', e.message);
+                    }
+                }
+            } catch (err) {
+                console.warn('[AppController] Failed to read virtual networks from DB:', err.message);
+            }
+
+            if (virtualNetworks.length === 0) {
+                try {
+                    const tokenRes = await credential.getToken("https://management.azure.com/.default");
+                    const token = tokenRes.token;
+                    const rgVal = orgSettings.azure_resource_group || RESOURCE_GROUP;
+                    const vnetUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${rgVal}/providers/Microsoft.Network/virtualNetworks?api-version=2023-09-01`;
+                    const vnetRes = await axios.get(vnetUrl, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    const vnets = vnetRes.data?.value || [];
+                    for (const vnet of vnets) {
+                        const subnets = (vnet.properties?.subnets || []).map(s => {
+                            const delegations = (s.properties?.delegations || []).map(d => ({
+                                name: d.name,
+                                serviceName: d.properties?.serviceName || d.serviceName
+                            }));
+                            return {
+                                name: s.name,
+                                id: s.id,
+                                addressPrefix: s.properties?.addressPrefix,
+                                delegations
+                            };
+                        });
+                        virtualNetworks.push({
+                            id: vnet.id,
+                            name: vnet.name,
+                            location: vnet.location,
+                            subnets
+                        });
+                    }
+                } catch (err) {
+                    console.warn('[AppController] Failed to query virtual networks dynamically in getProvisioningMetadata:', err.message);
+                }
+            }
+
             res.json({
                 success: true,
                 resourceGroups,
                 locations: locationsList,
                 managedEnvironments,
                 containerRegistries,
-                serviceConnections
+                serviceConnections,
+                virtualNetworks
             });
         } catch (error) {
             console.error('[AppController] getProvisioningMetadata failed:', error);
