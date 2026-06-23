@@ -2683,8 +2683,10 @@ const appController = {
      * Internal helper – check whether azure-pipelines.yml exists in the given GitHub repo
      * Returns { exists: bool, sha: string|null }
      */
-    async _checkYmlExists(githubToken, githubRepo, branch = 'main', organizationId) {
-        const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/azure-pipelines.yml?ref=${encodeURIComponent(branch)}`;
+    async _checkYmlExists(githubToken, githubRepo, branch = 'main', organizationId, pipelineProvider = 'azure_devops') {
+        const isGitHubAction = pipelineProvider === 'github_actions';
+        const filePath = isGitHubAction ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
+        const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/${filePath}?ref=${encodeURIComponent(branch)}`;
         try {
             const res = await axios.get(contentsUrl, {
                 headers: {
@@ -2701,7 +2703,7 @@ const appController = {
             throw err;
         }
     },
-    async _generateSmartYml(githubToken, githubRepo, branchList, orgSettings, mainBranch = 'main', explicitAppType = null, customAppLocation = null, customApiLocation = null, customOutputLocation = null) {
+    async _generateSmartYml(githubToken, githubRepo, branchList, orgSettings, mainBranch = 'main', explicitAppType = null, customAppLocation = null, customApiLocation = null, customOutputLocation = null, pipelineProvider = 'azure_devops') {
         const repoShortName = githubRepo.split('/').pop() || 'my-app';
         const defaultDnsDomain = orgSettings ? orgSettings.default_dns_domain || DEFAULT_DOMAIN : DEFAULT_DOMAIN;
         const pipelineVarGroup = orgSettings ? orgSettings.pipeline_variable_group || 'estevia-frontend-vars' : 'estevia-frontend-vars';
@@ -2731,6 +2733,114 @@ const appController = {
         }
 
         const azureResourceGroup = selectedResourceGroup || (orgSettings ? orgSettings.azure_resource_group || 'Estevia-Prod-RG' : 'Estevia-Prod-RG');
+
+        if (pipelineProvider === 'github_actions') {
+            const isBackend = appType === 'backend';
+            const triggerBranches = branchList || ['main', 'qa', 'dev'];
+            const appNameLower = repoShortName.toLowerCase();
+
+            if (isBackend) {
+                return [
+                    "name: Build and Deploy to Azure Container Apps",
+                    "",
+                    "on:",
+                    "  push:",
+                    "    branches:",
+                    ...triggerBranches.map(b => `      - ${b}`),
+                    "",
+                    "jobs:",
+                    "  build_and_deploy:",
+                    "    runs-on: ubuntu-latest",
+                    "    name: Build & Deploy Container App",
+                    "    steps:",
+                    "      - name: Checkout Code",
+                    "        uses: actions/checkout@v3",
+                    "",
+                    "      - name: Set up Node.js",
+                    "        uses: actions/setup-node@v3",
+                    "        with:",
+                    "          node-version: 20",
+                    "",
+                    "      - name: Set Environment Variables",
+                    "        run: |",
+                    "          BRANCH_NAME=\"${{ github.ref_name }}\"",
+                    "          if [ \"$BRANCH_NAME\" = \"main\" ]; then",
+                    "            echo \"ENV_NAME=production\" >> $GITHUB_ENV",
+                    `            echo \"CONTAINER_APP_NAME=${appNameLower}-prod\" >> $GITHUB_ENV`,
+                    "            echo \"ENV_FILE=.env.prod\" >> $GITHUB_ENV",
+                    "          elif [ \"$BRANCH_NAME\" = \"qa\" ]; then",
+                    "            echo \"ENV_NAME=qa\" >> $GITHUB_ENV",
+                    `            echo \"CONTAINER_APP_NAME=${appNameLower}-qa\" >> $GITHUB_ENV`,
+                    "            echo \"ENV_FILE=.env.qa\" >> $GITHUB_ENV",
+                    "          else",
+                    "            echo \"ENV_NAME=development\" >> $GITHUB_ENV",
+                    `            echo \"CONTAINER_APP_NAME=${appNameLower}-dev\" >> $GITHUB_ENV`,
+                    "            echo \"ENV_FILE=.env.dev\" >> $GITHUB_ENV",
+                    "          fi",
+                    "",
+                    "      - name: Log in to Azure",
+                    "        uses: azure/login@v1",
+                    "        with:",
+                    "          creds: ${{ secrets.AZURE_CREDENTIALS }}",
+                    "",
+                    "      - name: Build and Deploy Container App",
+                    "        uses: azure/container-apps-deploy-action@v1",
+                    "        with:",
+                    "          appSourcePath: ${{ github.workspace }}",
+                    "          acrName: ${{ secrets.ACR_NAME || 'esteviacoreregistry' }}",
+                    "          containerAppName: ${{ env.CONTAINER_APP_NAME }}",
+                    `          resourceGroup: \${{ secrets.RESOURCE_GROUP || '${azureResourceGroup}' }}`
+                ].join('\n');
+            } else {
+                return [
+                    "name: Deploy Static Web App to Azure SWA",
+                    "",
+                    "on:",
+                    "  push:",
+                    "    branches:",
+                    ...triggerBranches.map(b => `      - ${b}`),
+                    "",
+                    "jobs:",
+                    "  build_and_deploy:",
+                    "    runs-on: ubuntu-latest",
+                    "    name: Build & Deploy",
+                    "    steps:",
+                    "      - name: Checkout Code",
+                    "        uses: actions/checkout@v3",
+                    "",
+                    "      - name: Set up Node.js",
+                    "        uses: actions/setup-node@v3",
+                    "        with:",
+                    "          node-version: 20",
+                    "",
+                    "      - name: Install dependencies",
+                    "        run: |",
+                    "          if [ -f package-lock.json ]; then",
+                    "            npm ci",
+                    "          else",
+                    "            npm install",
+                    "          fi",
+                    "",
+                    "      - name: Run Tests",
+                    "        run: |",
+                    "          if npm run | grep -q \"test\"; then",
+                    "            npm test",
+                    "          else",
+                    "            echo \"No test script found in package.json, skipping.\"",
+                    "          fi",
+                    "",
+                    "      - name: Build and Deploy SWA",
+                    "        uses: Azure/static-web-apps-deploy@v1",
+                    "        with:",
+                    "          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}",
+                    "          repo_token: ${{ secrets.GITHUB_TOKEN }}",
+                    "          action: \"upload\"",
+                    `          app_location: \"${customAppLocation || '/'}\"`,
+                    `          api_location: \"${customApiLocation || ''}\"`,
+                    `          output_location: \"${customOutputLocation || 'dist'}\"`
+                ].join('\n');
+            }
+        }
 
         // 2. Fetch actual existing branches from GitHub API to perform branch filtering
         let existingBranches = [];
@@ -3222,7 +3332,7 @@ const appController = {
             "      displayName: 'Sync Version to Backend DB'"
         ].join('\n');
     },
-    async _commitYmlToRepo(githubToken, githubRepo, existingSha, orgSettings, branch = 'main', customYmlContent = null, customAppLocation = null, customApiLocation = null, customOutputLocation = null) {
+    async _commitYmlToRepo(githubToken, githubRepo, existingSha, orgSettings, branch = 'main', customYmlContent = null, customAppLocation = null, customApiLocation = null, customOutputLocation = null, pipelineProvider = 'azure_devops') {
         const standardBranches = ['main', 'qa', 'dev'];
         const branchesToInclude = Array.from(new Set([...standardBranches, branch]));
 
@@ -3235,13 +3345,17 @@ const appController = {
             null,
             customAppLocation,
             customApiLocation,
-            customOutputLocation
+            customOutputLocation,
+            pipelineProvider
         );
 
+        const isGitHubAction = pipelineProvider === 'github_actions';
+        const filePath = isGitHubAction ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
+
         const contentBase64 = Buffer.from(defaultYml).toString('base64');
-        const commitUrl = `https://api.github.com/repos/${githubRepo}/contents/azure-pipelines.yml`;
+        const commitUrl = `https://api.github.com/repos/${githubRepo}/contents/${filePath}`;
         const body = {
-            message: `chore: add azure-pipelines.yml for ${branch} [via Estevia DevOps Hub]`,
+            message: `chore: add ${filePath} for ${branch} [via Estevia DevOps Hub]`,
             content: contentBase64,
             branch: branch
         };
@@ -3495,6 +3609,185 @@ const appController = {
     },
 
     /**
+     * Internal helper – Retrieve the Service Principal object or client ID of a service connection in Azure DevOps.
+     */
+    async _getDevOpsServiceConnectionSpnObjectId(pat, cleanOrgUrl, devopsProject, connectionNameOrId) {
+        try {
+            if (!connectionNameOrId) return null;
+            const devopsUrl = `${cleanOrgUrl}/${devopsProject}/_apis/serviceendpoint/endpoints?api-version=7.1-preview.4`;
+            const devRes = await axios.get(devopsUrl, {
+                headers: {
+                    'Authorization': `Basic ${Buffer.from(':' + pat).toString('base64')}`
+                }
+            });
+            if (devRes.data && Array.isArray(devRes.data.value)) {
+                // Find by name or ID
+                const endpoint = devRes.data.value.find(e => 
+                    e.id === connectionNameOrId || 
+                    e.name?.toLowerCase() === connectionNameOrId.toLowerCase()
+                );
+                if (endpoint) {
+                    // Extract SPN object ID
+                    const spObjectId = endpoint.servicePrincipalObjectId ||
+                                       endpoint.authorization?.parameters?.servicePrincipalObjectId ||
+                                       endpoint.properties?.servicePrincipalObjectId ||
+                                       endpoint.authorization?.parameters?.serviceprincipalid;
+                    console.log(`[AppController] Found service connection ${connectionNameOrId} principal ID: ${spObjectId}`);
+                    return spObjectId;
+                }
+            }
+        } catch (err) {
+            console.warn(`[AppController] Failed to retrieve Service Connection principal ID for ${connectionNameOrId}:`, err.message);
+        }
+        return null;
+    },
+
+    /**
+     * Internal helper – Resolve an Azure Service Principal's client/app ID to its object/principal ID.
+     */
+    async _resolveSpnObjectIdByClientId(organizationId, clientId) {
+        try {
+            if (!clientId) return null;
+            // Validate if it looks like a UUID
+            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId)) {
+                return clientId;
+            }
+            
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const credential = await getAzureCredential(organizationId);
+            const tokenRes = await credential.getToken("https://management.azure.com/.default");
+            const token = tokenRes.token;
+
+            // Resolve the client ID to the service principal object ID using graph API within ARM management endpoint
+            const url = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/servicePrincipals?api-version=2018-05-01-preview&$filter=appId eq '${clientId}'`;
+            const res = await axios.get(url, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (res.data && Array.isArray(res.data.value) && res.data.value.length > 0) {
+                const resolvedId = res.data.value[0].id;
+                console.log(`[AppController] Resolved Client ID ${clientId} to SPN Object ID ${resolvedId}`);
+                return resolvedId;
+            }
+        } catch (err) {
+            console.warn(`[AppController] Failed to resolve SPN Client ID ${clientId} via Azure API:`, err.message);
+        }
+        return clientId;
+    },
+
+    /**
+     * Internal helper – Ensures that the specified Service Principal has AcrPush (write) permission on the Azure Container Registry.
+     */
+    async _ensureAcrPushAccess(organizationId, principalId, acrName) {
+        try {
+            if (!principalId || !acrName) return;
+
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const credential = await getAzureCredential(organizationId);
+            const tokenRes = await credential.getToken("https://management.azure.com/.default");
+            const token = tokenRes.token;
+
+            // Extract the clean name of ACR
+            const cleanAcrName = acrName.split('.')[0].replace(/https?:\/\//, '');
+
+            // 1. Find ACR Resource ID in the subscription
+            const targetResourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+            let acrResourceId = `/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.ContainerRegistry/registries/${cleanAcrName}`;
+
+            try {
+                const listUrl = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.ContainerRegistry/registries?api-version=2023-07-01`;
+                const registriesRes = await axios.get(listUrl, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (registriesRes.data && Array.isArray(registriesRes.data.value)) {
+                    const matched = registriesRes.data.value.find(r => r.name.toLowerCase() === cleanAcrName.toLowerCase());
+                    if (matched) {
+                        acrResourceId = matched.id;
+                    }
+                }
+            } catch (err) {
+                console.warn('[AppController] Failed to search ACR resource ID via Azure API:', err.message);
+            }
+
+            // 2. Generate UUID for role assignment dynamically
+            const crypto = require('crypto');
+            const hash = crypto.createHash('sha256').update(`${principalId}-${acrResourceId}`).digest('hex');
+            const roleAssignmentName = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
+
+            // AcrPush role definition ID is 8311e524-fc15-4dd3-979c-11402d4e6820
+            const acrPushRoleId = '8311e524-fc15-4dd3-979c-11402d4e6820';
+            const roleDefId = `/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleDefinitions/${acrPushRoleId}`;
+
+            console.log(`[AppController] Creating role assignment AcrPush for principal ${principalId} on ACR ${cleanAcrName}...`);
+            const putUrl = `https://management.azure.com${acrResourceId}/providers/Microsoft.Authorization/roleAssignments/${roleAssignmentName}?api-version=2022-04-01`;
+
+            await axios.put(
+                putUrl,
+                {
+                    properties: {
+                        roleDefinitionId: roleDefId,
+                        principalId: principalId
+                    }
+                },
+                {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+            console.log(`[AppController] Successfully assigned AcrPush role to principal ${principalId} on ACR ${cleanAcrName}.`);
+        } catch (error) {
+            console.warn('[AppController] Failed to create role assignment for ACR push access:', error.response?.data?.error?.message || error.message);
+        }
+    },
+
+    /**
+     * Internal helper – Orchestrates configuring ACR permissions during pipeline creation/registration.
+     */
+    async _configureAcrPermissionsForPipeline(organizationId, isGitHubAction, pat, devopsOrgUrl, devopsProject) {
+        try {
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const acrName = orgSettings.azure_container_registry || 'esteviacoreregistry';
+
+            // 1. Grant to DevOps Service Connections if using Azure DevOps
+            if (!isGitHubAction && pat && devopsOrgUrl && devopsProject) {
+                const dockerConnName = orgSettings.docker_registry_service_connection || 'estevia-acr-sc';
+                const devopsConnName = orgSettings.azure_devops_service_connection || 'protrack-azure-sc';
+                const cleanOrgUrl = devopsOrgUrl.replace(/\/$/, '');
+
+                // Grant to Docker Registry Service Connection
+                const dockerSpId = await appController._getDevOpsServiceConnectionSpnObjectId(pat, cleanOrgUrl, devopsProject, dockerConnName);
+                if (dockerSpId) {
+                    const resolvedId = await appController._resolveSpnObjectIdByClientId(organizationId, dockerSpId);
+                    await appController._ensureAcrPushAccess(organizationId, resolvedId, acrName);
+                }
+
+                // Grant to Azure RM Service Connection
+                const armSpId = await appController._getDevOpsServiceConnectionSpnObjectId(pat, cleanOrgUrl, devopsProject, devopsConnName);
+                if (armSpId) {
+                    const resolvedId = await appController._resolveSpnObjectIdByClientId(organizationId, armSpId);
+                    await appController._ensureAcrPushAccess(organizationId, resolvedId, acrName);
+                }
+            }
+
+            // 2. Grant to EvaOps' own principal (also used by GitHub Actions secrets)
+            try {
+                const azureSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure');
+                if (azureSecrets && azureSecrets.clientId) {
+                    const resolvedId = await appController._resolveSpnObjectIdByClientId(organizationId, azureSecrets.clientId);
+                    await appController._ensureAcrPushAccess(organizationId, resolvedId, acrName);
+                }
+            } catch (secErr) {
+                console.warn('[AppController] Failed to retrieve Azure secrets for ACR push permission onboarding:', secErr.message);
+            }
+        } catch (acrErr) {
+            console.warn('[AppController] Failed to configure ACR push access permissions:', acrErr.message);
+        }
+    },
+
+    /**
      * Internal helper – actually register the pipeline in Azure DevOps
      */
     async _registerAzureDevOpsPipeline(pat, cleanOrgUrl, devopsProject, githubRepo, appName) {
@@ -3597,6 +3890,87 @@ const appController = {
 
             if (!buildId) {
                 return res.status(400).json({ message: 'Missing parameter (buildId).' });
+            }
+
+            if (String(buildId).includes('/')) {
+                const parts = buildId.split('/');
+                const repoPath = parts.slice(0, -1).join('/');
+                const runId = parts[parts.length - 1];
+
+                const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+                const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+                if (!githubToken) {
+                    return res.status(400).json({ success: false, message: 'GitHub integration credentials not found.' });
+                }
+
+                // 1. Fetch Run details
+                const runUrl = `https://api.github.com/repos/${repoPath}/actions/runs/${runId}`;
+                console.log(`[AppController] Fetching GitHub Action run details from: ${runUrl}`);
+                const runRes = await axios.get(runUrl, {
+                    headers: {
+                        'Authorization': `token ${githubToken}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'User-Agent': getUserAgent(organizationId)
+                    }
+                });
+                const runData = runRes.data;
+
+                const pipelineRun = {
+                    id: `${repoPath}/${runData.id}`,
+                    name: `#${runData.run_number}`,
+                    state: runData.status === 'completed' ? 'completed' : (runData.status === 'queued' ? 'notStarted' : 'inProgress'),
+                    result: runData.conclusion === 'success' ? 'succeeded' : (runData.conclusion === 'failure' ? 'failed' : (runData.conclusion === 'cancelled' ? 'canceled' : null)),
+                    webUrl: runData.html_url,
+                    startTime: runData.run_started_at || runData.created_at,
+                    finishTime: runData.conclusion ? runData.updated_at : null,
+                    stages: []
+                };
+
+                // 2. Fetch Jobs & Steps
+                try {
+                    const jobsUrl = `https://api.github.com/repos/${repoPath}/actions/runs/${runId}/jobs`;
+                    const jobsRes = await axios.get(jobsUrl, {
+                        headers: {
+                            'Authorization': `token ${githubToken}`,
+                            'Accept': 'application/vnd.github.v3+json',
+                            'User-Agent': getUserAgent(organizationId)
+                        }
+                    });
+                    const ghJobs = jobsRes.data?.jobs || [];
+
+                    pipelineRun.stages = [{
+                        id: 'workflow-execution-stage',
+                        name: 'Workflow Execution',
+                        displayName: 'Workflow Execution',
+                        state: pipelineRun.state,
+                        result: pipelineRun.result,
+                        startTime: pipelineRun.startTime,
+                        finishTime: pipelineRun.finishTime,
+                        jobs: ghJobs.map(job => ({
+                            id: String(job.id),
+                            name: job.name,
+                            displayName: job.name,
+                            state: job.status === 'completed' ? 'completed' : (job.status === 'queued' ? 'notStarted' : 'inProgress'),
+                            result: job.conclusion === 'success' ? 'succeeded' : (job.conclusion === 'failure' ? 'failed' : null),
+                            startTime: job.started_at,
+                            finishTime: job.completed_at,
+                            steps: (job.steps || []).map((step, idx) => ({
+                                id: `${job.id}:${idx + 1}`,
+                                name: step.name,
+                                displayName: step.name,
+                                state: step.status === 'completed' ? 'completed' : (step.status === 'queued' ? 'notStarted' : 'inProgress'),
+                                result: step.conclusion === 'success' ? 'succeeded' : (step.conclusion === 'failure' ? 'failed' : null),
+                                startTime: step.started_at || null,
+                                finishTime: step.completed_at || null,
+                                logId: String(job.id)
+                            }))
+                        }))
+                    }];
+                } catch (jobsErr) {
+                    console.warn(`[AppController] Failed to fetch GitHub Jobs for run ${runId}:`, jobsErr.message);
+                }
+
+                return res.json({ success: true, pipelineRun });
             }
 
             const orgSettings = await appController._getOrgSettings(organizationId);
@@ -3717,6 +4091,86 @@ const appController = {
 
             if (!pipelineId) {
                 return res.status(400).json({ success: false, message: 'Missing parameter (pipelineId).' });
+            }
+
+            if (String(pipelineId).startsWith('github-actions:')) {
+                const repoPath = pipelineId.split(':').slice(1).join(':');
+                const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+                const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+                if (!githubToken) {
+                    return res.status(400).json({ success: false, message: 'GitHub integration credentials not found.' });
+                }
+
+                const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=1${branchName ? '&branch=' + encodeURIComponent(branchName) : ''}`;
+                console.log(`[AppController] getLatestPipelineBuild (GitHub): Fetching runs for ${repoPath} from: ${runsUrl}`);
+                const runsRes = await axios.get(runsUrl, {
+                    headers: {
+                        'Authorization': `token ${githubToken}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'User-Agent': getUserAgent(organizationId)
+                    }
+                });
+
+                const latestRun = runsRes.data?.workflow_runs?.[0];
+                if (!latestRun) {
+                    return res.json({ success: true, pipelineRun: null });
+                }
+
+                const pipelineRun = {
+                    id: `${repoPath}/${latestRun.id}`,
+                    name: `#${latestRun.run_number}`,
+                    state: latestRun.status === 'completed' ? 'completed' : (latestRun.status === 'queued' ? 'notStarted' : 'inProgress'),
+                    result: latestRun.conclusion === 'success' ? 'succeeded' : (latestRun.conclusion === 'failure' ? 'failed' : (latestRun.conclusion === 'cancelled' ? 'canceled' : null)),
+                    webUrl: latestRun.html_url,
+                    startTime: latestRun.run_started_at || latestRun.created_at,
+                    finishTime: latestRun.conclusion ? latestRun.updated_at : null,
+                    stages: []
+                };
+
+                try {
+                    const jobsUrl = `https://api.github.com/repos/${repoPath}/actions/runs/${latestRun.id}/jobs`;
+                    const jobsRes = await axios.get(jobsUrl, {
+                        headers: {
+                            'Authorization': `token ${githubToken}`,
+                            'Accept': 'application/vnd.github.v3+json',
+                            'User-Agent': getUserAgent(organizationId)
+                        }
+                    });
+                    const ghJobs = jobsRes.data?.jobs || [];
+
+                    pipelineRun.stages = [{
+                        id: 'workflow-execution-stage',
+                        name: 'Workflow Execution',
+                        displayName: 'Workflow Execution',
+                        state: pipelineRun.state,
+                        result: pipelineRun.result,
+                        startTime: pipelineRun.startTime,
+                        finishTime: pipelineRun.finishTime,
+                        jobs: ghJobs.map(job => ({
+                            id: String(job.id),
+                            name: job.name,
+                            displayName: job.name,
+                            state: job.status === 'completed' ? 'completed' : (job.status === 'queued' ? 'notStarted' : 'inProgress'),
+                            result: job.conclusion === 'success' ? 'succeeded' : (job.conclusion === 'failure' ? 'failed' : null),
+                            startTime: job.started_at,
+                            finishTime: job.completed_at,
+                            steps: (job.steps || []).map((step, idx) => ({
+                                id: `${job.id}:${idx + 1}`,
+                                name: step.name,
+                                displayName: step.name,
+                                state: step.status === 'completed' ? 'completed' : (step.status === 'queued' ? 'notStarted' : 'inProgress'),
+                                result: step.conclusion === 'success' ? 'succeeded' : (step.conclusion === 'failure' ? 'failed' : null),
+                                startTime: step.started_at || null,
+                                finishTime: step.completed_at || null,
+                                logId: String(job.id)
+                            }))
+                        }))
+                    }];
+                } catch (jobsErr) {
+                    console.warn(`[AppController] Failed to fetch jobs for latest run ${latestRun.id}:`, jobsErr.message);
+                }
+
+                return res.json({ success: true, pipelineRun });
             }
 
             const orgSettings = await appController._getOrgSettings(organizationId);
@@ -3847,6 +4301,41 @@ const appController = {
                 return res.status(400).json({ success: false, message: 'Missing parameter (pipelineId).' });
             }
 
+            if (String(pipelineId).startsWith('github-actions:')) {
+                const repoPath = pipelineId.split(':').slice(1).join(':');
+                const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+                const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+                if (!githubToken) {
+                    return res.status(400).json({ success: false, message: 'GitHub integration credentials not found.' });
+                }
+
+                const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=${top}`;
+                console.log(`[AppController] getBuildHistory (GitHub): Fetching runs for ${repoPath} from: ${runsUrl}`);
+                const runsRes = await axios.get(runsUrl, {
+                    headers: {
+                        'Authorization': `token ${githubToken}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'User-Agent': getUserAgent(organizationId)
+                    }
+                });
+
+                const runs = runsRes.data?.workflow_runs || [];
+                const mappedBuilds = runs.map(run => ({
+                    id: `${repoPath}/${run.id}`,
+                    buildNumber: run.run_number,
+                    branch: run.head_branch,
+                    result: run.conclusion === 'success' ? 'succeeded' : (run.conclusion === 'failure' ? 'failed' : (run.conclusion === 'cancelled' ? 'canceled' : null)),
+                    startTime: run.run_started_at || run.created_at,
+                    finishTime: run.conclusion ? run.updated_at : null,
+                    sourceVersion: run.head_sha,
+                    requestedFor: run.triggering_actor?.login || 'GitHub',
+                    webUrl: run.html_url,
+                    commitMessage: run.head_commit?.message || ''
+                }));
+
+                return res.json({ success: true, builds: mappedBuilds });
+            }
+
             const orgSettings = await appController._getOrgSettings(organizationId);
             const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
             const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
@@ -3917,6 +4406,60 @@ const appController = {
                 return res.status(403).json({ 
                     success: false, 
                     message: `Forbidden: Only Administrator or Owner roles can re-deploy to production-related branch: ${cleanBranchName}.` 
+                });
+            }
+
+            if (String(pipelineId).startsWith('github-actions:')) {
+                const repoPath = pipelineId.split(':').slice(1).join(':');
+                const runId = String(buildId).includes('/') ? buildId.split('/').pop() : buildId;
+
+                const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+                const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+                if (!githubToken) {
+                    return res.status(400).json({ success: false, message: 'GitHub integration credentials not found.' });
+                }
+
+                const rerunUrl = `https://api.github.com/repos/${repoPath}/actions/runs/${runId}/rerun`;
+                console.log(`[AppController] reDeployBuild (GitHub): Requesting workflow rerun from: ${rerunUrl}`);
+
+                await axios.post(rerunUrl, {}, {
+                    headers: {
+                        'Authorization': `token ${githubToken}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'User-Agent': getUserAgent(organizationId)
+                    }
+                });
+
+                // Trigger Teams notification
+                try {
+                    const { sendTeamsNotification } = require('../utils/teamsNotifier');
+                    const triggerUser = req.user?.name || req.user?.email || 'Unknown User';
+                    
+                    await sendTeamsNotification(organizationId, {
+                        title: '🔄 Application Re-deploy Triggered (GitHub Actions)',
+                        text: `A workflow re-run has been triggered for repository **${repoPath}** run ID **${runId}**.`,
+                        themeColor: isProductionBranch ? 'FF8C00' : '0078D4',
+                        facts: [
+                            { name: 'Target Branch', value: cleanBranchName },
+                            { name: 'Target Commit', value: sourceVersion.substring(0, 7) },
+                            { name: 'Triggered By', value: `${triggerUser} (${userRole})` }
+                        ],
+                        actions: [
+                            {
+                                type: 'OpenUri',
+                                name: 'View Run in GitHub',
+                                targets: [{ os: 'default', uri: `https://github.com/${repoPath}/actions/runs/${runId}` }]
+                            }
+                        ]
+                    });
+                } catch (notifyErr) {
+                    console.warn('[AppController] Failed to send Teams notification for re-deploy:', notifyErr.message);
+                }
+
+                return res.json({ 
+                    success: true, 
+                    message: `Re-deploy run successfully triggered.`, 
+                    buildId: buildId
                 });
             }
 
@@ -4002,20 +4545,25 @@ const appController = {
      */
     createPipeline: async (req, res) => {
         try {
-            const { organizationId, appName, githubRepo, devopsOrgUrl, devopsProject, branch } = req.body;
+            const { organizationId, appName, githubRepo, devopsOrgUrl, devopsProject, branch, pipelineProvider } = req.body;
 
-            if (!organizationId || !appName || !githubRepo || !devopsOrgUrl || !devopsProject) {
+            const isGitHubAction = pipelineProvider === 'github_actions';
+
+            if (!organizationId || !appName || !githubRepo || (!isGitHubAction && (!devopsOrgUrl || !devopsProject))) {
                 return res.status(400).json({ message: 'Missing parameters (organizationId, appName, githubRepo, devopsOrgUrl, devopsProject).' });
             }
 
-            // Retrieve Azure DevOps decrypted PAT
-            const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
-            if (!devopsSecrets || !devopsSecrets.pat) {
-                return res.status(400).json({ message: 'Azure DevOps integration credentials not found for organization.' });
+            let pat = null;
+            if (!isGitHubAction) {
+                // Retrieve Azure DevOps decrypted PAT
+                const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
+                if (!devopsSecrets || !devopsSecrets.pat) {
+                    return res.status(400).json({ message: 'Azure DevOps integration credentials not found for organization.' });
+                }
+                pat = devopsSecrets.pat;
             }
-            const pat = devopsSecrets.pat;
 
-            // ---- Check if azure-pipelines.yml exists in GitHub repo ----
+            // ---- Check if yml/workflow exists in GitHub repo ----
             let githubToken = null;
             try {
                 const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
@@ -4060,38 +4608,44 @@ const appController = {
                     }
                 }
 
-                const ymlStatus = await appController._checkYmlExists(githubToken, githubRepo, branch || 'main', organizationId);
+                const ymlStatus = await appController._checkYmlExists(githubToken, githubRepo, branch || 'main', organizationId, pipelineProvider || 'azure_devops');
                 if (!ymlStatus.exists) {
-                    console.log(`[AppController] azure-pipelines.yml NOT found in ${githubRepo}. Returning YML_MISSING.`);
+                    const fileLabel = isGitHubAction ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
+                    console.log(`[AppController] ${fileLabel} NOT found in ${githubRepo}. Returning YML_MISSING.`);
                     return res.status(200).json({
                         success: false,
                         code: 'YML_MISSING',
-                        message: `azure-pipelines.yml was not found in the repository "${githubRepo}". Would you like to create a default one and then register the pipeline?`,
+                        message: `${fileLabel} was not found in the repository "${githubRepo}". Would you like to create a default one and then register the pipeline?`,
                         githubRepo
                     });
                 }
-                console.log(`[AppController] azure-pipelines.yml found in ${githubRepo}. Proceeding to register pipeline.`);
+                console.log(`[AppController] ${isGitHubAction ? 'deploy.yml' : 'azure-pipelines.yml'} found in ${githubRepo}. Proceeding to register pipeline.`);
             } else {
                 console.warn('[AppController] No GitHub token available – skipping YML existence check.');
             }
 
-            // ---- Register or Reuse the Azure DevOps pipeline ----
+            // ---- Register or Reuse the pipeline ----
             let pipelineId = null;
             let pipelineUrl = '';
 
-            const [sameRepoApps] = await db.query(
-                'SELECT pipeline_id FROM applications WHERE organization_id = ? AND (repo_url = ? OR repo_url = ? OR repo_url LIKE ?) AND pipeline_id IS NOT NULL LIMIT 1',
-                [organizationId, `https://github.com/${githubRepo}`, `https://github.com/${githubRepo}/`, `%${githubRepo}%`]
-            );
-
-            if (sameRepoApps.length > 0) {
-                pipelineId = sameRepoApps[0].pipeline_id;
-                console.log(`[AppController] Pipeline already exists for repository (pipelineId: ${pipelineId}). Skipping creation.`);
+            if (isGitHubAction) {
+                pipelineId = 'github-actions';
+                pipelineUrl = `https://github.com/${githubRepo}/actions`;
             } else {
-                const cleanOrgUrl = devopsOrgUrl.replace(/\/$/, '');
-                const pipelineData = await appController._registerAzureDevOpsPipeline(pat, cleanOrgUrl, devopsProject, githubRepo, appName);
-                pipelineId = pipelineData.id;
-                pipelineUrl = pipelineData._links?.web?.href || '';
+                const [sameRepoApps] = await db.query(
+                    'SELECT pipeline_id FROM applications WHERE organization_id = ? AND (repo_url = ? OR repo_url = ? OR repo_url LIKE ?) AND pipeline_id IS NOT NULL LIMIT 1',
+                    [organizationId, `https://github.com/${githubRepo}`, `https://github.com/${githubRepo}/`, `%${githubRepo}%`]
+                );
+
+                if (sameRepoApps.length > 0) {
+                    pipelineId = sameRepoApps[0].pipeline_id;
+                    console.log(`[AppController] Pipeline already exists for repository (pipelineId: ${pipelineId}). Skipping creation.`);
+                } else {
+                    const cleanOrgUrl = devopsOrgUrl.replace(/\/$/, '');
+                    const pipelineData = await appController._registerAzureDevOpsPipeline(pat, cleanOrgUrl, devopsProject, githubRepo, appName);
+                    pipelineId = pipelineData.id;
+                    pipelineUrl = pipelineData._links?.web?.href || '';
+                }
             }
 
             await db.query(
@@ -4099,14 +4653,19 @@ const appController = {
                 [String(pipelineId), appName, organizationId]
             );
 
-            // Sync SWA token to DevOps Variable Group
-            await appController._syncSwaTokenToDevOps(organizationId, appName, githubRepo, branch || 'main');
+            // Grant ACR write permissions to pipeline service principal/credentials
+            await appController._configureAcrPermissionsForPipeline(organizationId, isGitHubAction, pat, devopsOrgUrl, devopsProject);
+
+            if (!isGitHubAction) {
+                // Sync SWA token to DevOps Variable Group
+                await appController._syncSwaTokenToDevOps(organizationId, appName, githubRepo, branch || 'main');
+            }
 
             res.json({
                 success: true,
-                message: sameRepoApps.length > 0 
-                    ? `Azure DevOps pipeline associated successfully (reused existing).` 
-                    : `Azure DevOps pipeline created successfully.`,
+                message: isGitHubAction 
+                    ? `GitHub Actions pipeline registered successfully.`
+                    : `Azure DevOps pipeline associated successfully.`,
                 pipelineId,
                 pipelineUrl
             });
@@ -4120,8 +4679,8 @@ const appController = {
     },
 
     /**
-     * Commit a default azure-pipelines.yml to the GitHub repo, then register the
-     * Azure DevOps pipeline.  Called when the frontend user chooses to create the
+     * Commit a default pipeline config to the GitHub repo, then register the
+     * pipeline. Called when the frontend user chooses to create the
      * YML file on-the-fly after a YML_MISSING response.
      */
     createPipelineYml: async (req, res) => {
@@ -4137,11 +4696,14 @@ const appController = {
                 customYml,
                 customAppLocation,
                 customApiLocation,
-                customOutputLocation
+                customOutputLocation,
+                pipelineProvider
             } = req.body;
 
-            if (!organizationId || !appName || !githubRepo || !devopsOrgUrl || !devopsProject) {
-                return res.status(400).json({ message: 'Missing parameters (organizationId, appName, githubRepo, devopsOrgUrl, devopsProject).' });
+            const isGitHubAction = pipelineProvider === 'github_actions';
+
+            if (!organizationId || !appName || !githubRepo || (!isGitHubAction && (!devopsOrgUrl || !devopsProject))) {
+                return res.status(400).json({ message: 'Missing parameters (organizationId, appName, githubRepo).' });
             }
 
             // 1. Get GitHub token
@@ -4152,13 +4714,14 @@ const appController = {
             }
 
             // 2. Check if file already exists (to get sha for update)
-            const ymlStatus = await appController._checkYmlExists(githubToken, githubRepo, branch || 'main', organizationId);
+            const ymlStatus = await appController._checkYmlExists(githubToken, githubRepo, branch || 'main', organizationId, pipelineProvider || 'azure_devops');
 
             // Fetch organization dynamic settings
             const orgSettings = await appController._getOrgSettings(organizationId);
 
             // 3. Commit the default yml
-            console.log(`[AppController] Committing azure-pipelines.yml to ${githubRepo} (exists: ${ymlStatus.exists}) on branch ${branch || 'main'}...`);
+            const fileLabel = isGitHubAction ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
+            console.log(`[AppController] Committing ${fileLabel} to ${githubRepo} (exists: ${ymlStatus.exists}) on branch ${branch || 'main'}...`);
             await appController._commitYmlToRepo(
                 githubToken, 
                 githubRepo, 
@@ -4168,42 +4731,48 @@ const appController = {
                 customYml,
                 customAppLocation,
                 customApiLocation,
-                customOutputLocation
+                customOutputLocation,
+                pipelineProvider || 'azure_devops'
             );
-            console.log(`[AppController] azure-pipelines.yml committed successfully.`);
+            console.log(`[AppController] ${fileLabel} committed successfully.`);
 
             if (skipRegistration) {
                 return res.json({
                     success: true,
-                    message: `azure-pipelines.yml created in "${githubRepo}" on branch "${branch || 'main'}".`,
+                    message: `${fileLabel} created in "${githubRepo}" on branch "${branch || 'main'}".`,
                     ymlCreated: true
                 });
             }
 
-            // 4. Get Azure DevOps PAT
-            const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
-            if (!devopsSecrets || !devopsSecrets.pat) {
-                return res.status(400).json({ message: 'Azure DevOps integration credentials not found for organization.' });
-            }
-            const pat = devopsSecrets.pat;
-
-            // 5. Register or Reuse pipeline
             let pipelineId = null;
             let pipelineUrl = '';
 
-            const [sameRepoApps] = await db.query(
-                'SELECT pipeline_id FROM applications WHERE organization_id = ? AND (repo_url = ? OR repo_url = ? OR repo_url LIKE ?) AND pipeline_id IS NOT NULL LIMIT 1',
-                [organizationId, `https://github.com/${githubRepo}`, `https://github.com/${githubRepo}/`, `%${githubRepo}%`]
-            );
-
-            if (sameRepoApps.length > 0) {
-                pipelineId = sameRepoApps[0].pipeline_id;
-                console.log(`[AppController] Pipeline already exists for repository (pipelineId: ${pipelineId}). Skipping creation.`);
+            if (isGitHubAction) {
+                pipelineId = 'github-actions';
+                pipelineUrl = `https://github.com/${githubRepo}/actions`;
             } else {
-                const cleanOrgUrl = devopsOrgUrl.replace(/\/$/, '');
-                const pipelineData = await appController._registerAzureDevOpsPipeline(pat, cleanOrgUrl, devopsProject, githubRepo, appName);
-                pipelineId = pipelineData.id;
-                pipelineUrl = pipelineData._links?.web?.href || '';
+                // 4. Get Azure DevOps PAT
+                const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
+                if (!devopsSecrets || !devopsSecrets.pat) {
+                    return res.status(400).json({ message: 'Azure DevOps integration credentials not found for organization.' });
+                }
+                const pat = devopsSecrets.pat;
+
+                // 5. Register or Reuse pipeline
+                const [sameRepoApps] = await db.query(
+                    'SELECT pipeline_id FROM applications WHERE organization_id = ? AND (repo_url = ? OR repo_url = ? OR repo_url LIKE ?) AND pipeline_id IS NOT NULL LIMIT 1',
+                    [organizationId, `https://github.com/${githubRepo}`, `https://github.com/${githubRepo}/`, `%${githubRepo}%`]
+                );
+
+                if (sameRepoApps.length > 0) {
+                    pipelineId = sameRepoApps[0].pipeline_id;
+                    console.log(`[AppController] Pipeline already exists for repository (pipelineId: ${pipelineId}). Skipping creation.`);
+                } else {
+                    const cleanOrgUrl = devopsOrgUrl.replace(/\/$/, '');
+                    const pipelineData = await appController._registerAzureDevOpsPipeline(pat, cleanOrgUrl, devopsProject, githubRepo, appName);
+                    pipelineId = pipelineData.id;
+                    pipelineUrl = pipelineData._links?.web?.href || '';
+                }
             }
 
             await db.query(
@@ -4211,14 +4780,21 @@ const appController = {
                 [String(pipelineId), appName, organizationId]
             );
 
-            // Sync SWA token to DevOps Variable Group
-            await appController._syncSwaTokenToDevOps(organizationId, appName, githubRepo, branch || 'main');
+            // Grant ACR write permissions to pipeline service principal/credentials
+            const devopsSecrets = isGitHubAction ? null : await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
+            const pat = devopsSecrets?.pat || null;
+            await appController._configureAcrPermissionsForPipeline(organizationId, isGitHubAction, pat, devopsOrgUrl, devopsProject);
+
+            if (!isGitHubAction) {
+                // Sync SWA token to DevOps Variable Group
+                await appController._syncSwaTokenToDevOps(organizationId, appName, githubRepo, branch || 'main');
+            }
 
             res.json({
                 success: true,
-                message: sameRepoApps.length > 0
-                    ? `azure-pipelines.yml created in "${githubRepo}" and Azure DevOps pipeline associated successfully (reused existing).`
-                    : `azure-pipelines.yml created in "${githubRepo}" and Azure DevOps pipeline registered successfully.`,
+                message: sameRepoApps && sameRepoApps.length > 0
+                    ? `Pipeline associated successfully (reused existing).`
+                    : `Pipeline registered successfully.`,
                 pipelineId,
                 pipelineUrl,
                 ymlCreated: true
@@ -5047,7 +5623,7 @@ const appController = {
      */
     getYml: async (req, res) => {
         try {
-            const { organizationId, githubRepo, branch } = req.query;
+            const { organizationId, githubRepo, branch, pipelineProvider } = req.query;
             if (!organizationId || !githubRepo) {
                 return res.status(400).json({ message: 'Missing organizationId or githubRepo parameters.' });
             }
@@ -5057,8 +5633,10 @@ const appController = {
                 return res.status(400).json({ message: 'GitHub integration token not found.' });
             }
             
+            const isGitHubAction = pipelineProvider === 'github_actions';
+            const filePath = isGitHubAction ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
             const branchName = branch || 'main';
-            const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/azure-pipelines.yml?ref=${encodeURIComponent(branchName)}`;
+            const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/${filePath}?ref=${encodeURIComponent(branchName)}`;
             
             try {
                 const response = await axios.get(contentsUrl, {
@@ -5083,7 +5661,7 @@ const appController = {
             }
         } catch (error) {
             console.error('[AppController] getYml failed:', error);
-            res.status(500).json({ message: 'Failed to fetch azure-pipelines.yml.', error: error.message });
+            res.status(500).json({ message: 'Failed to fetch pipeline configuration.', error: error.message });
         }
     },
 
@@ -5093,7 +5671,7 @@ const appController = {
      */
     getDefaultYml: async (req, res) => {
         try {
-            const { organizationId, githubRepo, branches, appType, customAppLocation, customApiLocation, customOutputLocation } = req.query;
+            const { organizationId, githubRepo, branches, appType, customAppLocation, customApiLocation, customOutputLocation, pipelineProvider } = req.query;
             if (!organizationId || !githubRepo) {
                 return res.status(400).json({ message: 'Missing organizationId or githubRepo parameters.' });
             }
@@ -5120,7 +5698,8 @@ const appController = {
                 appType,
                 customAppLocation,
                 customApiLocation,
-                customOutputLocation
+                customOutputLocation,
+                pipelineProvider || 'azure_devops'
             );
 
             res.json({ success: true, content: defaultYml });
