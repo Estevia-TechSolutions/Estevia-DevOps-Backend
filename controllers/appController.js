@@ -65,13 +65,15 @@ function _validatePipelineYml(ymlContent, pipelineProvider = 'azure_devops') {
             errors.push({ ruleId: 'GH_MISSING_JOBS', message: 'Missing required \'jobs:\' block. At least one job must be defined.', severity: 'error' });
         } else {
             for (const [jobName, job] of Object.entries(parsed.jobs || {})) {
-                if (!job || !job['runs-on']) {
+                if (!job || (!job['runs-on'] && !job['uses'])) {
                     errors.push({ ruleId: 'GH_JOB_NO_RUNS_ON', message: `Job '${jobName}' is missing required 'runs-on:' field.`, severity: 'error' });
                 }
-                const steps = job?.steps || [];
-                const hasCheckout = steps.some(s => s.uses && s.uses.includes('actions/checkout'));
-                if (!hasCheckout) {
-                    warnings.push({ ruleId: 'GH_MISSING_CHECKOUT', message: `Job '${jobName}' does not include an 'actions/checkout' step. The workspace may not be initialized.`, severity: 'warning' });
+                if (job && job.steps) {
+                    const steps = job.steps || [];
+                    const hasCheckout = steps.some(s => s && s.uses && s.uses.includes('actions/checkout'));
+                    if (!hasCheckout) {
+                        warnings.push({ ruleId: 'GH_MISSING_CHECKOUT', message: `Job '${jobName}' does not include an 'actions/checkout' step. The workspace may not be initialized.`, severity: 'warning' });
+                    }
                 }
             }
         }
@@ -81,16 +83,17 @@ function _validatePipelineYml(ymlContent, pipelineProvider = 'azure_devops') {
     } else {
         // Azure DevOps rules
         if (!parsed || !parsed.trigger) {
-            errors.push({ ruleId: 'AZ_MISSING_TRIGGER', message: 'Missing \'trigger:\' block. Azure pipeline must define which branches trigger the pipeline.', severity: 'error' });
+            warnings.push({ ruleId: 'AZ_MISSING_TRIGGER', message: 'Missing \'trigger:\' block. Azure pipeline should define which branches trigger the pipeline.', severity: 'warning' });
         }
-        if (!parsed || (!parsed.stages && !parsed.jobs)) {
-            errors.push({ ruleId: 'AZ_MISSING_STAGES_OR_JOBS', message: 'Pipeline must define either \'stages:\' or \'jobs:\' at the top level.', severity: 'error' });
+        if (!parsed || (!parsed.stages && !parsed.jobs && !parsed.steps && !parsed.extends)) {
+            errors.push({ ruleId: 'AZ_MISSING_STAGES_OR_JOBS', message: 'Pipeline must define either \'stages:\', \'jobs:\', \'steps:\', or \'extends:\' at the top level.', severity: 'error' });
         }
 
         // Check az containerapp update/create missing --container-name
         const lines = ymlContent.split('\n');
         lines.forEach((line, idx) => {
             const trimmed = line.trim();
+            if (trimmed.startsWith('#')) return; // ignore comments
             if ((trimmed.includes('az containerapp update') || trimmed.includes('az containerapp create')) && !trimmed.includes('--container-name')) {
                 // Look ahead a few lines for --container-name flag
                 const block = lines.slice(idx, idx + 8).join(' ');
@@ -100,28 +103,17 @@ function _validatePipelineYml(ymlContent, pipelineProvider = 'azure_devops') {
             }
         });
 
-        // Check Docker@2 task missing containerRegistry
-        if (ymlContent.includes('Docker@2') && !ymlContent.includes('containerRegistry:')) {
+        // Check Docker@2 task missing containerRegistry (ignoring comments)
+        const hasDockerTask = lines.some(line => {
+            const trimmed = line.trim();
+            return trimmed.includes('Docker@2') && !trimmed.startsWith('#');
+        });
+        const hasContainerRegistry = lines.some(line => {
+            const trimmed = line.trim();
+            return trimmed.startsWith('containerRegistry:') && !trimmed.startsWith('#');
+        });
+        if (hasDockerTask && !hasContainerRegistry) {
             errors.push({ ruleId: 'AZ_DOCKER_MISSING_REGISTRY', message: 'Docker@2 task is present but \'containerRegistry:\' input is missing. The task will fail without a registry service connection.', severity: 'error' });
-        }
-
-        // Check undefined variables ($(varName) not in variables block)
-        if (parsed && parsed.variables) {
-            const definedVars = new Set();
-            const vars = parsed.variables;
-            if (Array.isArray(vars)) {
-                vars.forEach(v => { if (v.name) definedVars.add(v.name); });
-            } else if (typeof vars === 'object') {
-                Object.keys(vars).forEach(k => definedVars.add(k));
-            }
-            // Conditional variable blocks like ${{ if ... }} are not in parsed.variables — skip those
-            const varRefs = [...ymlContent.matchAll(/\$\(([^)]+)\)/g)].map(m => m[1]);
-            const specialVars = new Set(['Build.BuildId', 'Build.SourceBranchName', 'Build.Repository.Name', 'System.DefaultWorkingDirectory', 'Pipeline.Workspace', 'Agent.BuildDirectory']);
-            const uniqueRefs = [...new Set(varRefs)].filter(v => !specialVars.has(v) && !definedVars.has(v));
-            // Only warn for vars not found in variables block and not in the conditional blocks section
-            uniqueRefs.slice(0, 5).forEach(v => {
-                warnings.push({ ruleId: 'AZ_UNDEFINED_VARIABLE', message: `Variable '$(${v})' is referenced but not found in the top-level 'variables:' block. It may be defined conditionally (using \${{ if }}) which is fine, or it may be undefined.`, severity: 'warning' });
-            });
         }
 
         // Check dependsOn references
@@ -130,14 +122,13 @@ function _validatePipelineYml(ymlContent, pipelineProvider = 'azure_devops') {
             (parsed.stages || []).forEach(stage => {
                 const deps = Array.isArray(stage.dependsOn) ? stage.dependsOn : (stage.dependsOn ? [stage.dependsOn] : []);
                 deps.forEach(dep => {
-                    if (!stageNames.has(dep)) {
+                    if (dep !== 'none' && !stageNames.has(dep)) {
                         warnings.push({ ruleId: 'AZ_DANGLING_DEPENDS_ON', message: `Stage '${stage.stage || stage.displayName}' depends on '${dep}' which is not defined as a stage in this pipeline.`, severity: 'warning' });
                     }
                 });
             });
         }
     }
-
     const valid = errors.length === 0;
     return { valid, errors, warnings };
 }
@@ -8078,7 +8069,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const branchName = branch || 'main';
             const provider = pipelineProvider || 'azure_devops';
             const isGitHub = provider === 'github_actions';
-            const ymlPath = isGitHub ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
+            let ymlPath = isGitHub ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
 
             const fetchGithubFile = async (path) => {
                 try {
@@ -8099,6 +8090,31 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     throw e;
                 }
             };
+
+            // Dynamic workflows resolution for GitHub Actions
+            if (isGitHub) {
+                try {
+                    const listUrl = `https://api.github.com/repos/${githubRepo}/contents/.github/workflows?ref=${encodeURIComponent(branchName)}`;
+                    const listResponse = await axios.get(listUrl, {
+                        headers: {
+                            'Authorization': `token ${githubToken}`,
+                            'Accept': 'application/vnd.github.v3+json',
+                            'User-Agent': getUserAgent(organizationId)
+                        }
+                    });
+                    if (Array.isArray(listResponse.data)) {
+                        const ymlFiles = listResponse.data.filter(f => f.name.endsWith('.yml') || f.name.endsWith('.yaml'));
+                        if (ymlFiles.length > 0) {
+                            // Prefer deploy.yml, main.yml, or ci.yml if present, otherwise default to first yml file
+                            const preferred = ymlFiles.find(f => f.name === 'deploy.yml' || f.name === 'main.yml' || f.name === 'ci.yml') || ymlFiles[0];
+                            ymlPath = preferred.path;
+                            console.log(`[AppController] Dynamically resolved GitHub workflow path to: ${ymlPath}`);
+                        }
+                    }
+                } catch (e) {
+                    console.log(`[AppController] Could not auto-discover workflows in .github/workflows/, falling back to default path: ${ymlPath}`, e.message);
+                }
+            }
 
             // Validate YAML
             const ymlContent = await fetchGithubFile(ymlPath);
