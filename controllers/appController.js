@@ -3232,6 +3232,7 @@ const appController = {
                 '                az containerapp update \\',
                 '                  --name $(containerAppName) \\',
                 '                  --resource-group $(resourceGroup) \\',
+                '                  --container-name $(imageRepository) \\',
                 '                  --image $(containerRegistry)/$(imageRepository):$(Build.BuildId)',
                 '',
                 '          - script: |',
