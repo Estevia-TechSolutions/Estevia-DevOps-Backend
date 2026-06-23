@@ -1786,7 +1786,8 @@ const appController = {
                 pipelineName: app.pipelineName,
                 resourceGroup: app.resourceGroup || resourceGroup,
                 branch: app.branch || null,
-                ...(app.azureResourceDetails || {})
+                ...(app.azureResourceDetails || {}),
+                pipelineRun: app.pipelineRun || null
             });
 
             if (existing.length > 0) {
@@ -1867,7 +1868,7 @@ const appController = {
                         dnsDetails,
                         pipelineId: app.pipeline_id,
                         pipelineName: details.pipelineName || null,
-                        pipelineRun: null,
+                        pipelineRun: details.pipelineRun || null,
                         azureResourceDetails: details
                     };
                 });
@@ -2704,7 +2705,8 @@ const appController = {
                     pipelineName: app.pipelineName,
                     resourceGroup: app.resourceGroup || resourceGroup,
                     branch: app.branch || null,
-                    ...(app.azureResourceDetails || {})
+                    ...(app.azureResourceDetails || {}),
+                    pipelineRun: app.pipelineRun || null
                 });
 
                 if (existing.length > 0) {
