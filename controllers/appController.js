@@ -7498,7 +7498,7 @@ const appController = {
      */
     getYml: async (req, res) => {
         try {
-            const { organizationId, githubRepo, branch, pipelineProvider } = req.query;
+            const { organizationId, githubRepo, branch, pipelineProvider, filePath } = req.query;
             if (!organizationId || !githubRepo) {
                 return res.status(400).json({ message: 'Missing organizationId or githubRepo parameters.' });
             }
@@ -7509,9 +7509,10 @@ const appController = {
             }
             
             const isGitHubAction = pipelineProvider === 'github_actions';
-            const filePath = isGitHubAction ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
+            const defaultPath = isGitHubAction ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
+            const resolvedPath = filePath || defaultPath;
             const branchName = branch || 'main';
-            const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/${filePath}?ref=${encodeURIComponent(branchName)}`;
+            const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/${resolvedPath}?ref=${encodeURIComponent(branchName)}`;
             
             try {
                 const response = await axios.get(contentsUrl, {
