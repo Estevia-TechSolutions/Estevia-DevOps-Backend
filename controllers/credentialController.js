@@ -20,7 +20,14 @@ const credentialController = {
             }
 
             const keyVaultUrl = orgs[0]?.azure_key_vault_url;
-            const secretsString = typeof secrets === 'string' ? secrets : JSON.stringify(secrets);
+            let secretsObj = typeof secrets === 'string' ? JSON.parse(secrets) : secrets;
+            if (provider === 'azure' && secretsObj && (secretsObj.clientId === 'SYSTEM_MANAGED_IDENTITY' || secretsObj.type === 'managed_identity')) {
+                secretsObj = {
+                    type: 'managed_identity',
+                    tenantId: secretsObj.tenantId || process.env.AZURE_TENANT_ID || process.env.MICROSOFT_TENANT_ID || ""
+                };
+            }
+            const secretsString = JSON.stringify(secretsObj);
             
             let encrypted, iv, authTag;
 
@@ -267,11 +274,12 @@ const credentialController = {
             }
 
             else if (provider === 'azure') {
+                const type = secrets.type || 'service_principal';
                 const clientId = secrets.clientId;
                 const clientSecret = secrets.clientSecret;
                 const tenantId = secrets.tenantId;
                 
-                if (!clientId || !clientSecret || !tenantId) {
+                if (type !== 'managed_identity' && (!clientId || !clientSecret || !tenantId)) {
                     return res.status(400).json({ message: 'Invalid Azure credentials structure. Expected tenantId, clientId, and clientSecret.' });
                 }
 
@@ -285,11 +293,13 @@ const credentialController = {
                     return res.status(400).json({ message: 'Azure Subscription ID is not configured for organization.' });
                 }
 
-                const { ClientSecretCredential } = require('@azure/identity');
+                const { ClientSecretCredential, DefaultAzureCredential } = require('@azure/identity');
                 const { ResourceManagementClient } = require('@azure/arm-resources');
 
                 try {
-                    const credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+                    const credential = type === 'managed_identity' 
+                        ? new DefaultAzureCredential() 
+                        : new ClientSecretCredential(tenantId, clientId, clientSecret);
                     const client = new ResourceManagementClient(credential, subscriptionId);
                     
                     // Verify access by trying to list resource groups (limit to first 2 for speed)
@@ -300,7 +310,8 @@ const credentialController = {
                         count++;
                         if (count >= 2) break;
                     }
-                    return res.json({ success: true, message: `Azure Service Principal authenticated. Discovered resource groups: ${groups.join(', ')}` });
+                    const identityTypeLabel = type === 'managed_identity' ? 'Managed Identity' : 'Service Principal';
+                    return res.json({ success: true, message: `Azure ${identityTypeLabel} authenticated. Discovered resource groups: ${groups.join(', ')}` });
                 } catch (err) {
                     return res.status(400).json({ message: `Azure connection test failed: ${err.message}` });
                 }
@@ -331,9 +342,75 @@ const credentialController = {
 
             const clientId = process.env.AZURE_CLIENT_ID || "";
             const clientSecret = process.env.AZURE_CLIENT_SECRET || "";
-            const tenantId = process.env.AZURE_TENANT_ID || process.env.MICROSOFT_TENANT_ID || "";
+            let tenantId = process.env.AZURE_TENANT_ID || process.env.MICROSOFT_TENANT_ID || "";
 
             if (!clientId && !clientSecret) {
+                // Fallback: Check if DefaultAzureCredential is functional (Managed Identity or CLI session)
+                const { DefaultAzureCredential } = require('@azure/identity');
+                let managedIdentity = false;
+                let discoveredSubscriptionId = "";
+
+                try {
+                    const credential = new DefaultAzureCredential();
+                    const tokenRes = await credential.getToken("https://management.azure.com/.default");
+                    if (tokenRes && tokenRes.token) {
+                        managedIdentity = true;
+                        // Decode Tenant ID from JWT tid claim
+                        try {
+                            const base64Url = tokenRes.token.split('.')[1];
+                            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                            const jsonPayload = decodeURIComponent(Buffer.from(base64, 'base64').toString().split('').map(function(c) {
+                                return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+                            }).join(''));
+                            const payload = JSON.parse(jsonPayload);
+                            if (payload && payload.tid) {
+                                tenantId = payload.tid;
+                            }
+                        } catch (jwtErr) {
+                            console.warn('[CredentialController] Failed to parse JWT tid claim:', jwtErr.message);
+                        }
+
+                        // Dynamically discover subscriptions the credential has access to
+                        try {
+                            const axios = require('axios');
+                            const subUrl = `https://management.azure.com/subscriptions?api-version=2020-01-01`;
+                            const subRes = await axios.get(subUrl, {
+                                headers: { 'Authorization': `Bearer ${tokenRes.token}` },
+                                timeout: 5000
+                            });
+                            const subscriptions = subRes.data?.value || [];
+                            if (subscriptions.length > 0) {
+                                discoveredSubscriptionId = subscriptions[0].subscriptionId;
+                                console.log(`[CredentialController] Auto-discovered Subscription ID: ${discoveredSubscriptionId} (${subscriptions[0].displayName})`);
+                                
+                                // Auto-update organization's subscription ID if not configured
+                                if (orgs[0] && !orgs[0].azure_subscription_id) {
+                                    await db.query(
+                                        'UPDATE organizations SET azure_subscription_id = ? WHERE id = ?',
+                                        [discoveredSubscriptionId, organizationId]
+                                    );
+                                }
+                            }
+                        } catch (subErr) {
+                            console.warn('[CredentialController] Failed to list subscriptions via Managed Identity token:', subErr.message);
+                        }
+                    }
+                } catch (authErr) {
+                    console.warn('[CredentialController] DefaultAzureCredential validation failed:', authErr.message);
+                }
+
+                if (managedIdentity) {
+                    return res.json({
+                        success: true,
+                        secrets: {
+                            clientId: "SYSTEM_MANAGED_IDENTITY",
+                            clientSecret: "SYSTEM_MANAGED_IDENTITY",
+                            tenantId: tenantId,
+                            subscriptionId: discoveredSubscriptionId
+                        }
+                    });
+                }
+
                 return res.json({ success: false, message: 'No Azure credentials configured in the server environment.' });
             }
 

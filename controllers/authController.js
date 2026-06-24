@@ -9,13 +9,19 @@ const { sendTeamsNotification } = require('../utils/teamsNotifier');
 async function getAzureCredential(organizationId) {
     try {
         const azureSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure');
-        if (azureSecrets && azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
-            console.log(`[AzureAuth] Using ClientSecretCredential for organization: ${organizationId}`);
-            return new ClientSecretCredential(
-                azureSecrets.tenantId,
-                azureSecrets.clientId,
-                azureSecrets.clientSecret
-            );
+        if (azureSecrets) {
+            if (azureSecrets.type === 'managed_identity') {
+                console.log(`[AzureAuth] Using DefaultAzureCredential (Managed Identity) for organization: ${organizationId}`);
+                return new DefaultAzureCredential();
+            }
+            if (azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
+                console.log(`[AzureAuth] Using ClientSecretCredential for organization: ${organizationId}`);
+                return new ClientSecretCredential(
+                    azureSecrets.tenantId,
+                    azureSecrets.clientId,
+                    azureSecrets.clientSecret
+                );
+            }
         }
     } catch (err) {
         console.warn(`[AzureAuth] Failed to retrieve Azure credentials for organization ${organizationId}:`, err.message);

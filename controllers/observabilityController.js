@@ -15,8 +15,13 @@ async function getAzureCredential(organizationId) {
     try {
         const credentialController = require('./credentialController');
         const azureSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure');
-        if (azureSecrets && azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
-            return new ClientSecretCredential(azureSecrets.tenantId, azureSecrets.clientId, azureSecrets.clientSecret);
+        if (azureSecrets) {
+            if (azureSecrets.type === 'managed_identity') {
+                return new DefaultAzureCredential();
+            }
+            if (azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
+                return new ClientSecretCredential(azureSecrets.tenantId, azureSecrets.clientId, azureSecrets.clientSecret);
+            }
         }
     } catch (err) {
         console.warn(`[Observability] Failed to retrieve Azure credentials for organization ${organizationId}:`, err.message);
@@ -156,11 +161,31 @@ const observabilityController = {
                 });
             }
 
-            let workspaceId;
+            let workspaceId = null;
             try {
-                workspaceId = await resolveWorkspaceId(orgId);
-            } catch (err) {
-                console.warn('[Observability] Failed to resolve workspace ID:', err.message);
+                const [appRows] = await db.query(
+                    'SELECT azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
+                    [orgId, appName]
+                );
+                if (appRows.length > 0 && appRows[0].azure_resource_details) {
+                    const details = typeof appRows[0].azure_resource_details === 'string'
+                        ? JSON.parse(appRows[0].azure_resource_details)
+                        : appRows[0].azure_resource_details;
+                    if (details?.workspaceId) {
+                        workspaceId = details.workspaceId;
+                        console.log(`[Observability] Resolved app-specific workspace ID from database: ${workspaceId} for app: ${appName}`);
+                    }
+                }
+            } catch (dbErr) {
+                console.warn(`[Observability] Database lookup failed for app '${appName}' workspaceId:`, dbErr.message);
+            }
+
+            if (!workspaceId) {
+                try {
+                    workspaceId = await resolveWorkspaceId(orgId);
+                } catch (err) {
+                    console.warn('[Observability] Failed to resolve organization-level workspace ID:', err.message);
+                }
             }
 
             if (!workspaceId) {

@@ -462,13 +462,19 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
 async function getAzureCredential(organizationId) {
     try {
         const azureSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure');
-        if (azureSecrets && azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
-            console.log(`[AzureAuth] Using ClientSecretCredential for organization: ${organizationId}`);
-            return new ClientSecretCredential(
-                azureSecrets.tenantId,
-                azureSecrets.clientId,
-                azureSecrets.clientSecret
-            );
+        if (azureSecrets) {
+            if (azureSecrets.type === 'managed_identity') {
+                console.log(`[AzureAuth] Using DefaultAzureCredential (Managed Identity) for organization: ${organizationId}`);
+                return new DefaultAzureCredential();
+            }
+            if (azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
+                console.log(`[AzureAuth] Using ClientSecretCredential for organization: ${organizationId}`);
+                return new ClientSecretCredential(
+                    azureSecrets.tenantId,
+                    azureSecrets.clientId,
+                    azureSecrets.clientSecret
+                );
+            }
         }
     } catch (err) {
         console.warn(`[AzureAuth] Failed to retrieve Azure credentials for organization ${organizationId}:`, err.message);
@@ -2838,10 +2844,12 @@ const appController = {
                 console.error('[AppController] Error scanning virtual networks:', err.message);
             }
 
-            // Fetch Managed Environments to build subnet map for Container Apps
+            // Fetch Managed Environments to build subnet map and workspace ID map for Container Apps
+            const envWorkspaceMap = new Map();
             try {
                 for await (const env of containerClient.managedEnvironments.listByResourceGroup(resourceGroup)) {
                     let subnetId = env.vnetConfiguration?.infrastructureSubnetId || env.properties?.vnetConfiguration?.infrastructureSubnetId;
+                    const workspaceId = env.appLogsConfiguration?.logAnalyticsConfiguration?.customerId || env.properties?.appLogsConfiguration?.logAnalyticsConfiguration?.customerId;
                     if (!subnetId && env.name) {
                         try {
                             const fullEnv = await containerClient.managedEnvironments.get(resourceGroup, env.name);
@@ -2851,9 +2859,12 @@ const appController = {
                     if (subnetId) {
                         envSubnetMap.set(env.id.toLowerCase(), subnetId);
                     }
+                    if (workspaceId) {
+                        envWorkspaceMap.set(env.id.toLowerCase(), workspaceId);
+                    }
                 }
             } catch (err) {
-                console.warn('[AppController] Failed to query Managed Environments for subnet mapping:', err.message);
+                console.warn('[AppController] Failed to query Managed Environments for subnet/workspace mapping:', err.message);
             }
 
             // Fetch VM Network Interfaces to build subnet map for VMs
@@ -2888,6 +2899,7 @@ const appController = {
                 for await (const app of containerClient.containerApps.listByResourceGroup(resourceGroup)) {
                     const envId = app.environmentId || app.managedEnvironmentId || app.properties?.environmentId;
                     const vnetSubnetID = envId ? envSubnetMap.get(envId.toLowerCase()) : null;
+                    const workspaceId = envId ? envWorkspaceMap.get(envId.toLowerCase()) : null;
                     caApps.push({
                         name: app.name,
                         type: 'backend',
@@ -2898,7 +2910,9 @@ const appController = {
                         repositoryUrl: '',
                         resourceGroup: resourceGroup,
                         azureResourceDetails: {
-                            vnetSubnetID: vnetSubnetID || null
+                            vnetSubnetID: vnetSubnetID || null,
+                            environmentId: envId || null,
+                            workspaceId: workspaceId || null
                         }
                     });
                 }
