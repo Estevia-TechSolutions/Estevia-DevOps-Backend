@@ -2,6 +2,10 @@ const mysql = require('mysql2/promise');
 require('dotenv').config();
 
 async function main() {
+    if (process.env.NODE_ENV === 'test') {
+        console.log('[DevOps DB] Skipping migrations & database connection check in test/mock mode.');
+        return;
+    }
     const host = process.env.DB_HOST || '127.0.0.1';
     const user = process.env.DB_USER || 'root';
     const password = process.env.DB_PASSWORD || '';

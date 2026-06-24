@@ -7890,7 +7890,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                             resourceGroup: rgName,
                             location: r.location,
                             vnetName: envDetail.vnetConfiguration?.infrastructureSubnetId 
-                                ? envDetail.vnetConfiguration.infrastructureSubnetId.match(/\/virtualNetworks\/([^\/]+)/)?.[1] || 'Custom VPC'
+                                ? envDetail.vnetConfiguration.infrastructureSubnetId.match(/\/virtualnetworks\/([^\/]+)/i)?.[1] || 'Custom VPC'
                                 : 'None (Public Cloud)'
                         });
                     } catch (e) {
