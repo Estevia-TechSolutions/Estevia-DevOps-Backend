@@ -2041,6 +2041,116 @@ const appController = {
                         }
 
                         if (latestRun) {
+                            if (details.pipelineRun && String(details.pipelineRun.id) === String(latestRun.id) && Array.isArray(details.pipelineRun.stages) && details.pipelineRun.stages.length > 0) {
+                                latestRun.stages = details.pipelineRun.stages;
+                            } else {
+                                if (String(app.pipelineId).startsWith('github-actions:')) {
+                                    if (githubToken) {
+                                        try {
+                                            const repoPath = app.pipelineId.split(':').slice(1).join(':');
+                                            const runId = latestRun.id.split('/').pop();
+                                            const jobsUrl = `https://api.github.com/repos/${repoPath}/actions/runs/${runId}/jobs`;
+                                            const jobsRes = await axios.get(jobsUrl, {
+                                                headers: {
+                                                    'Authorization': `token ${githubToken}`,
+                                                    'Accept': 'application/vnd.github.v3+json',
+                                                    'User-Agent': getUserAgent(organizationId)
+                                                },
+                                                timeout: 5000
+                                            });
+                                            const ghJobs = jobsRes.data?.jobs || [];
+                                            latestRun.stages = [{
+                                                id: 'workflow-execution-stage',
+                                                name: 'Workflow Execution',
+                                                displayName: 'Workflow Execution',
+                                                state: latestRun.state,
+                                                result: latestRun.result,
+                                                startTime: latestRun.startTime,
+                                                finishTime: latestRun.finishTime,
+                                                jobs: ghJobs.map(job => ({
+                                                    id: String(job.id),
+                                                    name: job.name,
+                                                    displayName: job.name,
+                                                    state: job.status === 'completed' ? 'completed' : (job.status === 'queued' ? 'notStarted' : 'inProgress'),
+                                                    result: job.conclusion === 'success' ? 'succeeded' : (job.conclusion === 'failure' ? 'failed' : null),
+                                                    startTime: job.started_at,
+                                                    finishTime: job.completed_at,
+                                                    steps: (job.steps || []).map((step, idx) => ({
+                                                        id: `${job.id}:${idx + 1}`,
+                                                        name: step.name,
+                                                        displayName: step.name,
+                                                        state: step.status === 'completed' ? 'completed' : (step.status === 'queued' ? 'notStarted' : 'inProgress'),
+                                                        result: step.conclusion === 'success' ? 'succeeded' : (step.conclusion === 'failure' ? 'failed' : null),
+                                                        startTime: step.started_at || null,
+                                                        finishTime: step.completed_at || null,
+                                                        logId: String(job.id)
+                                                    }))
+                                                }))
+                                            }];
+                                        } catch (jobsErr) {
+                                            console.warn(`[AppController] buildsOnly: Failed to fetch GitHub Jobs for run ${latestRun.id}:`, jobsErr.message);
+                                        }
+                                    }
+                                } else if (devopsSecrets && devopsSecrets.pat) {
+                                    try {
+                                        const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
+                                        const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
+                                        const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
+                                        const timelineUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds/${latestRun.id}/timeline?api-version=7.1`;
+                                        const tlRes = await axios.get(timelineUrl, {
+                                            headers: { 'Authorization': authHeader, 'Accept': 'application/json' },
+                                            timeout: 5000
+                                        });
+                                        if (tlRes.data && Array.isArray(tlRes.data.records)) {
+                                            const allRecords = tlRes.data.records;
+                                            const stages = allRecords.filter(r => r.type === 'Stage').sort((a, b) => (a.order || 0) - (b.order || 0));
+                                            const jobs = allRecords.filter(r => r.type === 'Job');
+                                            const phases = allRecords.filter(r => r.type === 'Phase');
+                                            latestRun.stages = stages.map(stage => {
+                                                const stageJobs = jobs.filter(job => {
+                                                    if (job.parentId === stage.id) return true;
+                                                    const parentPhase = phases.find(p => p.id === job.parentId);
+                                                    return parentPhase && parentPhase.parentId === stage.id;
+                                                }).sort((a, b) => (a.order || 0) - (b.order || 0))
+                                                  .map(j => ({
+                                                    id: j.id,
+                                                    name: j.name,
+                                                    displayName: j.displayName || j.name,
+                                                    state: j.state,
+                                                    result: j.result,
+                                                    startTime: j.startTime || null,
+                                                    finishTime: j.finishTime || null,
+                                                    steps: allRecords
+                                                        .filter(r => r.type === 'Task' && r.parentId === j.id)
+                                                        .sort((a, b) => (a.order || 0) - (b.order || 0))
+                                                        .map(t => ({
+                                                            id: t.id,
+                                                            name: t.name,
+                                                            displayName: t.displayName || t.name,
+                                                            state: t.state,
+                                                            result: t.result,
+                                                            startTime: t.startTime || null,
+                                                            finishTime: t.finishTime || null,
+                                                            logId: t.log ? t.log.id : null
+                                                        }))
+                                                }));
+                                                return {
+                                                    id: stage.id,
+                                                    name: stage.name,
+                                                    displayName: stage.displayName || stage.name,
+                                                    state: stage.state,
+                                                    result: stage.result,
+                                                    startTime: stage.startTime || null,
+                                                    finishTime: stage.finishTime || null,
+                                                    jobs: stageJobs
+                                                };
+                                            });
+                                        }
+                                    } catch (tlErr) {
+                                        console.warn(`[AppController] buildsOnly: Failed to fetch Azure timeline for build ${latestRun.id}:`, tlErr.message);
+                                    }
+                                }
+                            }
                             app.pipelineRun = latestRun;
                             details.pipelineRun = latestRun;
                             try {
