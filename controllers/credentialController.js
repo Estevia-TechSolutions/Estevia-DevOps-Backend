@@ -343,12 +343,13 @@ const credentialController = {
             const clientId = process.env.AZURE_CLIENT_ID || "";
             const clientSecret = process.env.AZURE_CLIENT_SECRET || "";
             let tenantId = process.env.AZURE_TENANT_ID || process.env.MICROSOFT_TENANT_ID || "";
+            let secretsObj = null;
+            let managedIdentity = false;
+            let discoveredSubscriptionId = "";
 
             if (!clientId && !clientSecret) {
                 // Fallback: Check if DefaultAzureCredential is functional (Managed Identity or CLI session)
                 const { DefaultAzureCredential } = require('@azure/identity');
-                let managedIdentity = false;
-                let discoveredSubscriptionId = "";
 
                 try {
                     const credential = new DefaultAzureCredential();
@@ -400,27 +401,83 @@ const credentialController = {
                 }
 
                 if (managedIdentity) {
-                    return res.json({
-                        success: true,
-                        secrets: {
-                            clientId: "SYSTEM_MANAGED_IDENTITY",
-                            clientSecret: "SYSTEM_MANAGED_IDENTITY",
-                            tenantId: tenantId,
-                            subscriptionId: discoveredSubscriptionId
-                        }
-                    });
+                    secretsObj = {
+                        type: 'managed_identity',
+                        clientId: 'SYSTEM_MANAGED_IDENTITY',
+                        clientSecret: 'SYSTEM_MANAGED_IDENTITY',
+                        tenantId: tenantId,
+                        subscriptionId: discoveredSubscriptionId
+                    };
                 }
+            } else {
+                secretsObj = {
+                    clientId,
+                    clientSecret,
+                    tenantId
+                };
+            }
 
+            if (!secretsObj) {
                 return res.json({ success: false, message: 'No Azure credentials configured in the server environment.' });
+            }
+
+            // Encrypt and save to database/vault
+            const keyVaultUrl = orgs[0]?.azure_key_vault_url;
+            const secretsString = JSON.stringify(secretsObj);
+            let encrypted, iv, authTag;
+
+            if (keyVaultUrl) {
+                try {
+                    const { SecretClient } = require('@azure/keyvault-secrets');
+                    const { DefaultAzureCredential } = require('@azure/identity');
+                    const credential = new DefaultAzureCredential();
+                    const client = new SecretClient(keyVaultUrl, credential);
+                    const secretName = `${organizationId}-azure`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+                    
+                    console.log(`[CredentialController] Auto-discover: Writing secret '${secretName}' to Key Vault: ${keyVaultUrl}`);
+                    await client.setSecret(secretName, secretsString);
+                    
+                    encrypted = 'stored-in-azure-key-vault';
+                    iv = 'kv';
+                    authTag = 'kv';
+                } catch (kvErr) {
+                    console.error('[CredentialController] Auto-discover Key Vault storage failed:', kvErr.message);
+                    return res.status(500).json({ message: `Azure Key Vault storage failed: ${kvErr.message}` });
+                }
+            } else {
+                const encResult = encrypt(secretsString);
+                encrypted = encResult.encrypted;
+                iv = encResult.iv;
+                authTag = encResult.authTag;
+            }
+
+            const [existing] = await db.query(
+                'SELECT id FROM integration_credentials WHERE organization_id = ? AND provider = ?',
+                [organizationId, 'azure']
+            );
+
+            const credentialName = managedIdentity ? 'Azure Managed Identity (Auto-Discovered)' : 'Azure Service Principal (Auto-Discovered)';
+
+            if (existing.length > 0) {
+                await db.query(
+                    `UPDATE integration_credentials 
+                     SET credential_name = ?, encrypted_secrets = ?, iv = ?, auth_tag = ?
+                     WHERE organization_id = ? AND provider = ?`,
+                    [credentialName, encrypted, iv, authTag, organizationId, 'azure']
+                );
+            } else {
+                await db.query(
+                    `INSERT INTO integration_credentials 
+                     (organization_id, provider, credential_name, encrypted_secrets, iv, auth_tag) 
+                     VALUES (?, ?, ?, ?, ?, ?)`,
+                    [organizationId, 'azure', credentialName, encrypted, iv, authTag]
+                );
             }
 
             res.json({
                 success: true,
-                secrets: {
-                    clientId,
-                    clientSecret,
-                    tenantId
-                }
+                message: 'Azure credentials auto-discovered and registered successfully.',
+                secrets: secretsObj
             });
         } catch (error) {
             console.error('[CredentialController] Error discovering environment credentials:', error);
