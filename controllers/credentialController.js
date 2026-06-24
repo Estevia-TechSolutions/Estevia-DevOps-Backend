@@ -334,7 +334,7 @@ const credentialController = {
             const tenantId = process.env.AZURE_TENANT_ID || process.env.MICROSOFT_TENANT_ID || "";
 
             if (!clientId && !clientSecret) {
-                return res.status(404).json({ message: 'No Azure credentials configured in the server environment.' });
+                return res.json({ success: false, message: 'No Azure credentials configured in the server environment.' });
             }
 
             res.json({
