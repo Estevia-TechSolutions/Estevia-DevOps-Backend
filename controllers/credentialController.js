@@ -311,6 +311,44 @@ const credentialController = {
             console.error('[CredentialController] Validation failed:', error);
             res.status(500).json({ message: 'Validation failed.', error: error.message });
         }
+    },
+
+    /**
+     * Auto-discover Azure Service Principal credentials from the server environment
+     */
+    discoverAzureEnvCredentials: async (req, res) => {
+        try {
+            const { organizationId } = req.query;
+            if (!organizationId) {
+                return res.status(400).json({ message: 'Missing organizationId parameter.' });
+            }
+
+            // Verify organization exists
+            const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [organizationId]);
+            if (orgs.length === 0) {
+                return res.status(404).json({ message: `Organization "${organizationId}" not found.` });
+            }
+
+            const clientId = process.env.AZURE_CLIENT_ID || "";
+            const clientSecret = process.env.AZURE_CLIENT_SECRET || "";
+            const tenantId = process.env.AZURE_TENANT_ID || process.env.MICROSOFT_TENANT_ID || "";
+
+            if (!clientId && !clientSecret) {
+                return res.status(404).json({ message: 'No Azure credentials configured in the server environment.' });
+            }
+
+            res.json({
+                success: true,
+                secrets: {
+                    clientId,
+                    clientSecret,
+                    tenantId
+                }
+            });
+        } catch (error) {
+            console.error('[CredentialController] Error discovering environment credentials:', error);
+            res.status(500).json({ message: 'Internal server error.', error: error.message });
+        }
     }
 };
 

@@ -12,6 +12,9 @@ router.get('/decrypt', restrictTo('owner', 'admin'), credentialController.getDec
 // Test/validate credentials health
 router.post('/validate', restrictTo('owner', 'admin'), credentialController.validateCredentials);
 
+// Auto-discover credentials from environment
+router.get('/discover-env', restrictTo('owner', 'admin'), credentialController.discoverAzureEnvCredentials);
+
 // List credentials (metadata only)
 router.get('/', restrictTo('owner', 'admin'), credentialController.getCredentialsList);
 
