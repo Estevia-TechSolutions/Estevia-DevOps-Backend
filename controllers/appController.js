@@ -9,92 +9,68 @@ const jsYaml = require('js-yaml');
 const fs = require('fs');
 const path = require('path');
 
-function scrapeBackendUrlFromLocalRepo(repoUrl, envType) {
-    if (!repoUrl) return null;
-    const repoName = repoUrl.split('/').pop().replace(/\.git$/, '');
-    const baseWorkspace = '/Users/gmenon/WorkSpace/Estevia/CodeBase/Estevia-Workspace';
-    if (!fs.existsSync(baseWorkspace)) return null;
-    const dirs = fs.readdirSync(baseWorkspace);
-    const matchedDir = dirs.find(d => d.toLowerCase() === repoName.toLowerCase());
-    if (!matchedDir) return null;
-    const repoPath = path.join(baseWorkspace, matchedDir);
-    
-    // Priority 1: env files
-    let envFiles = [];
-    if (envType === 'dev') {
-        envFiles = ['.env.development', '.env.dev', '.env'];
-    } else if (envType === 'qa') {
-        envFiles = ['.env.qa', '.env.staging', '.env'];
-    } else {
-        envFiles = ['.env.production', '.env.prod', '.env'];
-    }
-    
-    for (const f of envFiles) {
-        const p = path.join(repoPath, f);
-        if (fs.existsSync(p)) {
-            try {
-                const content = fs.readFileSync(p, 'utf8');
-                const lines = content.split('\n');
-                for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (trimmed.startsWith('#')) continue;
-                    const match = trimmed.match(/^(?:VITE_API_URL|REACT_APP_API_URL|API_URL|API_BASE_URL)\s*=\s*['"]?(https?:\/\/[^\s'"]+)['"]?/);
-                    if (match) {
-                        return match[1];
-                    }
-                }
-            } catch (err) {}
+function parseBackendUrlFromEnvContent(content) {
+    const lines = content.split('\n');
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('#')) continue;
+        const match = trimmed.match(/^(?:VITE_API_URL|REACT_APP_API_URL|API_URL|API_BASE_URL|VITE_API_BASE)\s*=\s*['"]?(https?:\/\/[^\s'"]+)['"]?/);
+        if (match) {
+            return match[1];
         }
     }
-    
-    // Priority 2: pipeline files
-    const pipelinePaths = [
-        path.join(repoPath, 'azure-pipelines.yml'),
-        path.join(repoPath, 'azure-pipelines-prod.yml'),
-        path.join(repoPath, 'azure-pipelines-qa.yml'),
-        path.join(repoPath, 'azure-pipelines-dev.yml')
-    ];
-    const workflowsDir = path.join(repoPath, '.github/workflows');
-    if (fs.existsSync(workflowsDir)) {
-        try {
-            const files = fs.readdirSync(workflowsDir);
-            for (const file of files) {
-                if (file.endsWith('.yml') || file.endsWith('.yaml')) {
-                    pipelinePaths.push(path.join(workflowsDir, file));
-                }
-            }
-        } catch (e) {}
-    }
-    
-    for (const p of pipelinePaths) {
-        if (fs.existsSync(p)) {
-            try {
-                const content = fs.readFileSync(p, 'utf8');
-                const matches = content.match(/https?:\/\/[a-zA-Z0-9.-]+\/api[^\s'"]*/g) || [];
-                for (const m of matches) {
-                    const url = m.replace(/\\n$/, '').replace(/['"]$/, '').trim();
-                    if (envType === 'dev' && url.includes('dev')) return url;
-                    if (envType === 'qa' && url.includes('qa')) return url;
-                    if (envType === 'prod' && !url.includes('dev') && !url.includes('qa')) return url;
-                }
-            } catch (err) {}
-        }
-    }
-    
     return null;
 }
 
-function scrapeDbHostFromLocalRepo(repoUrl, envType) {
+function parseBackendUrlFromPipelineContent(content, envType) {
+    const matches = content.match(/https?:\/\/[a-zA-Z0-9.-]+\/api[^\s'"]*/g) || [];
+    for (const m of matches) {
+        const url = m.replace(/\\n$/, '').replace(/['"]$/, '').trim();
+        if (envType === 'dev' && url.includes('dev')) return url;
+        if (envType === 'qa' && url.includes('qa')) return url;
+        if (envType === 'prod' && !url.includes('dev') && !url.includes('qa')) return url;
+    }
+    return null;
+}
+
+function parseDbHostFromEnvContent(content) {
+    const lines = content.split('\n');
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('#')) continue;
+        const match = trimmed.match(/^(?:DB_HOST)\s*=\s*['"]?([^\s'"]+)['"]?/);
+        if (match) {
+            return match[1];
+        }
+    }
+    return null;
+}
+
+function parseDbHostFromPipelineContent(content) {
+    const matches = content.match(/DB_HOST\s*[:=]\s*['"]?([a-zA-Z0-9.-]+\.database\.azure\.com|[a-zA-Z0-9.-]+)['"]?/g) || [];
+    for (const m of matches) {
+        const host = m.split(/[:=]/)[1].replace(/['"]/g, '').trim();
+        if (host) return host;
+    }
+    return null;
+}
+
+async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
     if (!repoUrl) return null;
     const repoName = repoUrl.split('/').pop().replace(/\.git$/, '');
     const baseWorkspace = '/Users/gmenon/WorkSpace/Estevia/CodeBase/Estevia-Workspace';
-    if (!fs.existsSync(baseWorkspace)) return null;
-    const dirs = fs.readdirSync(baseWorkspace);
-    const matchedDir = dirs.find(d => d.toLowerCase() === repoName.toLowerCase());
-    if (!matchedDir) return null;
-    const repoPath = path.join(baseWorkspace, matchedDir);
+    let localMatchedPath = null;
     
-    // env files to check based on envType
+    console.log(`[Scraper] [START] Scraping Backend URL | Repo: ${repoUrl} | Env: ${envType} | Branch: ${branch || 'default'}`);
+    
+    if (fs.existsSync(baseWorkspace)) {
+        const dirs = fs.readdirSync(baseWorkspace);
+        const matchedDir = dirs.find(d => d.toLowerCase() === repoName.toLowerCase());
+        if (matchedDir) {
+            localMatchedPath = path.join(baseWorkspace, matchedDir);
+        }
+    }
+    
     let envFiles = [];
     if (envType === 'dev') {
         envFiles = ['.env.development', '.env.dev', '.env'];
@@ -104,58 +80,257 @@ function scrapeDbHostFromLocalRepo(repoUrl, envType) {
         envFiles = ['.env.production', '.env.prod', '.env'];
     }
     
-    for (const f of envFiles) {
-        const p = path.join(repoPath, f);
-        if (fs.existsSync(p)) {
-            try {
-                const content = fs.readFileSync(p, 'utf8');
-                const lines = content.split('\n');
-                for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (trimmed.startsWith('#')) continue;
-                    const match = trimmed.match(/^(?:DB_HOST)\s*=\s*['"]?([^\s'"]+)['"]?/);
-                    if (match) {
-                        return match[1];
+    if (localMatchedPath) {
+        console.log(`[Scraper] Found local directory: ${localMatchedPath}. Reading files...`);
+        // 1. Check local env files
+        for (const f of envFiles) {
+            const p = path.join(localMatchedPath, f);
+            if (fs.existsSync(p)) {
+                try {
+                    const content = fs.readFileSync(p, 'utf8');
+                    const url = parseBackendUrlFromEnvContent(content);
+                    if (url) {
+                        console.log(`[Scraper] Local env match resolved from ${f}: ${url}`);
+                        return url;
                     }
-                }
-            } catch (err) {}
-        }
-    }
-    
-    // Check pipeline/yml files
-    const pipelinePaths = [
-        path.join(repoPath, 'azure-pipelines.yml'),
-        path.join(repoPath, 'azure-pipelines-prod.yml'),
-        path.join(repoPath, 'azure-pipelines-qa.yml'),
-        path.join(repoPath, 'azure-pipelines-dev.yml')
-    ];
-    const workflowsDir = path.join(repoPath, '.github/workflows');
-    if (fs.existsSync(workflowsDir)) {
-        try {
-            const files = fs.readdirSync(workflowsDir);
-            for (const file of files) {
-                if (file.endsWith('.yml') || file.endsWith('.yaml')) {
-                    pipelinePaths.push(path.join(workflowsDir, file));
+                } catch (err) {
+                    console.warn(`[Scraper] Error reading local file ${f}:`, err.message);
                 }
             }
-        } catch (e) {}
-    }
-    
-    for (const p of pipelinePaths) {
-        if (fs.existsSync(p)) {
-            try {
-                const content = fs.readFileSync(p, 'utf8');
-                const matches = content.match(/DB_HOST\s*[:=]\s*['"]?([a-zA-Z0-9.-]+\.database\.azure\.com|[a-zA-Z0-9.-]+)['"]?/g) || [];
-                for (const m of matches) {
-                    const host = m.split(/[:=]/)[1].replace(/['"]/g, '').trim();
-                    if (envType === 'dev' && host.includes('dev')) return host;
-                    if (envType === 'qa' && host.includes('qa')) return host;
-                    if (envType === 'prod' && !host.includes('dev') && !host.includes('qa')) return host;
+        }
+        
+        // 2. Check local pipeline files
+        const pipelinePaths = [
+            path.join(localMatchedPath, 'azure-pipelines.yml'),
+            path.join(localMatchedPath, 'azure-pipelines-prod.yml'),
+            path.join(localMatchedPath, 'azure-pipelines-qa.yml'),
+            path.join(localMatchedPath, 'azure-pipelines-dev.yml')
+        ];
+        for (const p of pipelinePaths) {
+            if (fs.existsSync(p)) {
+                try {
+                    const content = fs.readFileSync(p, 'utf8');
+                    const url = parseBackendUrlFromPipelineContent(content, envType);
+                    if (url) {
+                        console.log(`[Scraper] Local pipeline match resolved from ${p}: ${url}`);
+                        return url;
+                    }
+                } catch (err) {
+                    console.warn(`[Scraper] Error reading local pipeline ${p}:`, err.message);
                 }
-            } catch (err) {}
+            }
+        }
+        console.log(`[Scraper] Scraped local files for ${repoName} but found no match.`);
+    } else {
+        console.log(`[Scraper] Local workspace not found. Falling back to GitHub REST API.`);
+        if (!githubToken) {
+            console.warn(`[Scraper] GitHub token is missing. Bypassing GitHub remote scan.`);
+            return null;
+        }
+        
+        const gitMatch = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
+        if (gitMatch) {
+            const owner = gitMatch[1];
+            const repo = gitMatch[2].replace(/\.git$/, '');
+            const targetBranch = branch || 'main';
+            console.log(`[Scraper] GitHub Repository resolved: ${owner}/${repo} | ref: ${targetBranch}`);
+            
+            // 1. Try env files from GitHub
+            for (const f of envFiles) {
+                try {
+                    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${f}?ref=${targetBranch}`;
+                    console.log(`[Scraper] Fetching remote file: ${f}...`);
+                    const res = await axios.get(url, {
+                        headers: {
+                            'Authorization': `token ${githubToken}`,
+                            'Accept': 'application/vnd.github.v3.raw',
+                            'User-Agent': 'EvaOps-Scraper'
+                        },
+                        timeout: 5000
+                    });
+                    if (res.data) {
+                        const urlVal = parseBackendUrlFromEnvContent(res.data);
+                        if (urlVal) {
+                            console.log(`[Scraper] GitHub remote match resolved from ${f}: ${urlVal}`);
+                            return urlVal;
+                        }
+                    }
+                } catch (err) {
+                    console.log(`[Scraper] GitHub remote file lookup failed for ${f}:`, err.response?.status || err.message);
+                }
+            }
+            
+            // 2. Try pipeline files from GitHub
+            const commonPipelines = [
+                'azure-pipelines.yml',
+                'azure-pipelines-prod.yml',
+                'azure-pipelines-qa.yml',
+                'azure-pipelines-dev.yml'
+            ];
+            for (const p of commonPipelines) {
+                try {
+                    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${p}?ref=${targetBranch}`;
+                    console.log(`[Scraper] Fetching remote pipeline: ${p}...`);
+                    const res = await axios.get(url, {
+                        headers: {
+                            'Authorization': `token ${githubToken}`,
+                            'Accept': 'application/vnd.github.v3.raw',
+                            'User-Agent': 'EvaOps-Scraper'
+                        },
+                        timeout: 5000
+                    });
+                    if (res.data) {
+                        const urlVal = parseBackendUrlFromPipelineContent(res.data, envType);
+                        if (urlVal) {
+                            console.log(`[Scraper] GitHub remote pipeline match resolved from ${p}: ${urlVal}`);
+                            return urlVal;
+                        }
+                    }
+                } catch (err) {
+                    console.log(`[Scraper] GitHub remote file lookup failed for pipeline ${p}:`, err.response?.status || err.message);
+                }
+            }
+        }
+    }
+    return null;
+}
+
+async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
+    if (!repoUrl) return null;
+    const repoName = repoUrl.split('/').pop().replace(/\.git$/, '');
+    const baseWorkspace = '/Users/gmenon/WorkSpace/Estevia/CodeBase/Estevia-Workspace';
+    let localMatchedPath = null;
+    
+    console.log(`[Scraper] [START] Scraping Database Host | Repo: ${repoUrl} | Env: ${envType} | Branch: ${branch || 'default'}`);
+    
+    if (fs.existsSync(baseWorkspace)) {
+        const dirs = fs.readdirSync(baseWorkspace);
+        const matchedDir = dirs.find(d => d.toLowerCase() === repoName.toLowerCase());
+        if (matchedDir) {
+            localMatchedPath = path.join(baseWorkspace, matchedDir);
         }
     }
     
+    let envFiles = [];
+    if (envType === 'dev') {
+        envFiles = ['.env.development', '.env.dev', '.env'];
+    } else if (envType === 'qa') {
+        envFiles = ['.env.qa', '.env.staging', '.env'];
+    } else {
+        envFiles = ['.env.production', '.env.prod', '.env'];
+    }
+    
+    if (localMatchedPath) {
+        console.log(`[Scraper] Found local directory: ${localMatchedPath}. Reading files...`);
+        // 1. Check local env files
+        for (const f of envFiles) {
+            const p = path.join(localMatchedPath, f);
+            if (fs.existsSync(p)) {
+                try {
+                    const content = fs.readFileSync(p, 'utf8');
+                    const host = parseDbHostFromEnvContent(content);
+                    if (host) {
+                        console.log(`[Scraper] Local env match resolved from ${f}: ${host}`);
+                        return host;
+                    }
+                } catch (err) {
+                    console.warn(`[Scraper] Error reading local file ${f}:`, err.message);
+                }
+            }
+        }
+        
+        // 2. Check local pipeline files
+        const pipelinePaths = [
+            path.join(localMatchedPath, 'azure-pipelines.yml'),
+            path.join(localMatchedPath, 'azure-pipelines-prod.yml'),
+            path.join(localMatchedPath, 'azure-pipelines-qa.yml'),
+            path.join(localMatchedPath, 'azure-pipelines-dev.yml')
+        ];
+        for (const p of pipelinePaths) {
+            if (fs.existsSync(p)) {
+                try {
+                    const content = fs.readFileSync(p, 'utf8');
+                    const host = parseDbHostFromPipelineContent(content);
+                    if (host) {
+                        console.log(`[Scraper] Local pipeline match resolved from ${p}: ${host}`);
+                        return host;
+                    }
+                } catch (err) {
+                    console.warn(`[Scraper] Error reading local pipeline ${p}:`, err.message);
+                }
+            }
+        }
+    } else {
+        console.log(`[Scraper] Local workspace not found. Falling back to GitHub REST API.`);
+        if (!githubToken) {
+            console.warn(`[Scraper] GitHub token is missing. Bypassing GitHub remote scan.`);
+            return null;
+        }
+        
+        const gitMatch = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
+        if (gitMatch) {
+            const owner = gitMatch[1];
+            const repo = gitMatch[2].replace(/\.git$/, '');
+            const targetBranch = branch || 'main';
+            console.log(`[Scraper] GitHub Repository resolved: ${owner}/${repo} | ref: ${targetBranch}`);
+            
+            // 1. Try env files from GitHub
+            for (const f of envFiles) {
+                try {
+                    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${f}?ref=${targetBranch}`;
+                    console.log(`[Scraper] Fetching remote file: ${f}...`);
+                    const res = await axios.get(url, {
+                        headers: {
+                            'Authorization': `token ${githubToken}`,
+                            'Accept': 'application/vnd.github.v3.raw',
+                            'User-Agent': 'EvaOps-Scraper'
+                        },
+                        timeout: 5000
+                    });
+                    if (res.data) {
+                        const host = parseDbHostFromEnvContent(res.data);
+                        if (host) {
+                            console.log(`[Scraper] GitHub remote match resolved from ${f}: ${host}`);
+                            return host;
+                        }
+                    }
+                } catch (err) {
+                    console.log(`[Scraper] GitHub remote file lookup failed for ${f}:`, err.response?.status || err.message);
+                }
+            }
+            
+            // 2. Try pipeline files from GitHub
+            const commonPipelines = [
+                'azure-pipelines.yml',
+                'azure-pipelines-prod.yml',
+                'azure-pipelines-qa.yml',
+                'azure-pipelines-dev.yml'
+            ];
+            for (const p of commonPipelines) {
+                try {
+                    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${p}?ref=${targetBranch}`;
+                    console.log(`[Scraper] Fetching remote pipeline: ${p}...`);
+                    const res = await axios.get(url, {
+                        headers: {
+                            'Authorization': `token ${githubToken}`,
+                            'Accept': 'application/vnd.github.v3.raw',
+                            'User-Agent': 'EvaOps-Scraper'
+                        },
+                        timeout: 5000
+                    });
+                    if (res.data) {
+                        const host = parseDbHostFromPipelineContent(res.data);
+                        if (host) {
+                            console.log(`[Scraper] GitHub remote pipeline match resolved from ${p}: ${host}`);
+                            return host;
+                        }
+                    }
+                } catch (err) {
+                    console.log(`[Scraper] GitHub remote file lookup failed for pipeline ${p}:`, err.response?.status || err.message);
+                }
+            }
+        }
+    }
     return null;
 }
 
@@ -1681,12 +1856,12 @@ const appController = {
             const currentType = app.type || category;
             app.azureResourceDetails = app.azureResourceDetails || {};
             if (currentType === 'frontend') {
-                const configuredBackendUrl = scrapeBackendUrlFromLocalRepo(app.repositoryUrl, envType);
+                const configuredBackendUrl = await scrapeBackendUrlFromRepo(app.repositoryUrl, envType, app.branch, githubToken);
                 if (configuredBackendUrl) {
                     app.azureResourceDetails.configuredBackendUrl = configuredBackendUrl;
                 }
             } else if (currentType === 'backend') {
-                const configuredDbHost = scrapeDbHostFromLocalRepo(app.repositoryUrl, envType);
+                const configuredDbHost = await scrapeDbHostFromRepo(app.repositoryUrl, envType, app.branch, githubToken);
                 if (configuredDbHost) {
                     app.azureResourceDetails.configuredDbHost = configuredDbHost;
                 }
