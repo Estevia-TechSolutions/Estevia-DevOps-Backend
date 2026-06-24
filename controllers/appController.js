@@ -6,11 +6,182 @@ const { ContainerAppsAPIClient } = require('@azure/arm-appcontainers');
 const { ResourceManagementClient } = require('@azure/arm-resources');
 const axios = require('axios');
 const jsYaml = require('js-yaml');
+const fs = require('fs');
+const path = require('path');
+
+function scrapeBackendUrlFromLocalRepo(repoUrl, envType) {
+    if (!repoUrl) return null;
+    const repoName = repoUrl.split('/').pop().replace(/\.git$/, '');
+    const baseWorkspace = '/Users/gmenon/WorkSpace/Estevia/CodeBase/Estevia-Workspace';
+    const repoPath = path.join(baseWorkspace, repoName);
+    if (!fs.existsSync(repoPath)) return null;
+    
+    // Priority 1: env files
+    let envFiles = [];
+    if (envType === 'dev') {
+        envFiles = ['.env.development', '.env.dev', '.env'];
+    } else if (envType === 'qa') {
+        envFiles = ['.env.qa', '.env.staging', '.env'];
+    } else {
+        envFiles = ['.env.production', '.env.prod', '.env'];
+    }
+    
+    for (const f of envFiles) {
+        const p = path.join(repoPath, f);
+        if (fs.existsSync(p)) {
+            try {
+                const content = fs.readFileSync(p, 'utf8');
+                const lines = content.split('\n');
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (trimmed.startsWith('#')) continue;
+                    const match = trimmed.match(/^(?:VITE_API_URL|REACT_APP_API_URL|API_URL|API_BASE_URL)\s*=\s*['"]?(https?:\/\/[^\s'"]+)['"]?/);
+                    if (match) {
+                        return match[1];
+                    }
+                }
+            } catch (err) {}
+        }
+    }
+    
+    // Priority 2: pipeline files
+    const pipelinePaths = [
+        path.join(repoPath, 'azure-pipelines.yml'),
+        path.join(repoPath, 'azure-pipelines-prod.yml'),
+        path.join(repoPath, 'azure-pipelines-qa.yml'),
+        path.join(repoPath, 'azure-pipelines-dev.yml')
+    ];
+    const workflowsDir = path.join(repoPath, '.github/workflows');
+    if (fs.existsSync(workflowsDir)) {
+        try {
+            const files = fs.readdirSync(workflowsDir);
+            for (const file of files) {
+                if (file.endsWith('.yml') || file.endsWith('.yaml')) {
+                    pipelinePaths.push(path.join(workflowsDir, file));
+                }
+            }
+        } catch (e) {}
+    }
+    
+    for (const p of pipelinePaths) {
+        if (fs.existsSync(p)) {
+            try {
+                const content = fs.readFileSync(p, 'utf8');
+                const matches = content.match(/https?:\/\/[a-zA-Z0-9.-]+\/api[^\s'"]*/g) || [];
+                for (const m of matches) {
+                    const url = m.replace(/\\n$/, '').replace(/['"]$/, '').trim();
+                    if (envType === 'dev' && url.includes('dev')) return url;
+                    if (envType === 'qa' && url.includes('qa')) return url;
+                    if (envType === 'prod' && !url.includes('dev') && !url.includes('qa')) return url;
+                }
+            } catch (err) {}
+        }
+    }
+    
+    return null;
+}
+
+function scrapeDbHostFromLocalRepo(repoUrl, envType) {
+    if (!repoUrl) return null;
+    const repoName = repoUrl.split('/').pop().replace(/\.git$/, '');
+    const baseWorkspace = '/Users/gmenon/WorkSpace/Estevia/CodeBase/Estevia-Workspace';
+    const repoPath = path.join(baseWorkspace, repoName);
+    if (!fs.existsSync(repoPath)) return null;
+    
+    // env files to check based on envType
+    let envFiles = [];
+    if (envType === 'dev') {
+        envFiles = ['.env.development', '.env.dev', '.env'];
+    } else if (envType === 'qa') {
+        envFiles = ['.env.qa', '.env.staging', '.env'];
+    } else {
+        envFiles = ['.env.production', '.env.prod', '.env'];
+    }
+    
+    for (const f of envFiles) {
+        const p = path.join(repoPath, f);
+        if (fs.existsSync(p)) {
+            try {
+                const content = fs.readFileSync(p, 'utf8');
+                const lines = content.split('\n');
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (trimmed.startsWith('#')) continue;
+                    const match = trimmed.match(/^(?:DB_HOST)\s*=\s*['"]?([^\s'"]+)['"]?/);
+                    if (match) {
+                        return match[1];
+                    }
+                }
+            } catch (err) {}
+        }
+    }
+    
+    // Check pipeline/yml files
+    const pipelinePaths = [
+        path.join(repoPath, 'azure-pipelines.yml'),
+        path.join(repoPath, 'azure-pipelines-prod.yml'),
+        path.join(repoPath, 'azure-pipelines-qa.yml'),
+        path.join(repoPath, 'azure-pipelines-dev.yml')
+    ];
+    const workflowsDir = path.join(repoPath, '.github/workflows');
+    if (fs.existsSync(workflowsDir)) {
+        try {
+            const files = fs.readdirSync(workflowsDir);
+            for (const file of files) {
+                if (file.endsWith('.yml') || file.endsWith('.yaml')) {
+                    pipelinePaths.push(path.join(workflowsDir, file));
+                }
+            }
+        } catch (e) {}
+    }
+    
+    for (const p of pipelinePaths) {
+        if (fs.existsSync(p)) {
+            try {
+                const content = fs.readFileSync(p, 'utf8');
+                const matches = content.match(/DB_HOST\s*[:=]\s*['"]?([a-zA-Z0-9.-]+\.database\.azure\.com|[a-zA-Z0-9.-]+)['"]?/g) || [];
+                for (const m of matches) {
+                    const host = m.split(/[:=]/)[1].replace(/['"]/g, '').trim();
+                    if (envType === 'dev' && host.includes('dev')) return host;
+                    if (envType === 'qa' && host.includes('qa')) return host;
+                    if (envType === 'prod' && !host.includes('dev') && !host.includes('qa')) return host;
+                }
+            } catch (err) {}
+        }
+    }
+    
+    return null;
+}
+
 
 function getUserAgent(orgId) {
     const cleanId = (typeof orgId === 'string' ? orgId : (orgId?.id || orgId?.organizationId)) || 'global';
     return `EvaOps-DevOps-Hub/${cleanId}`;
 }
+
+const branchToEnv = (branch) => {
+    if (!branch) return null;
+    const b = branch.toLowerCase().trim();
+    if (['main', 'master', 'prod', 'production', 'release'].includes(b)) return 'prod';
+    if (['dev', 'develop', 'development'].includes(b)) return 'dev';
+    if (['qa', 'staging', 'test', 'testing'].includes(b)) return 'qa';
+    return null;
+};
+
+const hasEnvSegment = (n, seg) => {
+    return new RegExp(`-${seg}(-|$)`).test(n.toLowerCase());
+};
+
+const getEnvType = (name, branch) => {
+    if (branch) {
+        const fromBranch = branchToEnv(branch);
+        if (fromBranch) return fromBranch;
+    }
+    const n = name.toLowerCase();
+    if (hasEnvSegment(n, 'dev') || n.includes('development')) return 'dev';
+    if (hasEnvSegment(n, 'qa') || n.includes('staging') || hasEnvSegment(n, 'test') || n.includes('testing')) return 'qa';
+    return 'prod';
+};
 
 const MASTER_ORGANIZATION_ID = process.env.MASTER_ORGANIZATION_ID || 'estevia';
 
@@ -657,9 +828,17 @@ const appController = {
                 details = liveCost !== undefined ? `${readableType} (Live: $${appCost.toFixed(2)}/mo)` : readableType;
             }
 
-            const isTestResource = rName.toLowerCase().includes('test') || 
-                                   rName.toLowerCase().includes('dev') || 
-                                   rName.toLowerCase().includes('qa') || 
+            let branch = null;
+            if (matchedApp) {
+                const detailsJson = typeof matchedApp.azure_resource_details === 'string'
+                    ? JSON.parse(matchedApp.azure_resource_details || '{}')
+                    : (matchedApp.azure_resource_details || {});
+                branch = detailsJson.branch || null;
+            }
+
+            const envType = getEnvType(rName, branch);
+            const isTestResource = envType === 'dev' || 
+                                   envType === 'qa' || 
                                    rName.toLowerCase().includes('sandbox') || 
                                    rName.toLowerCase().includes('temp') || 
                                    rName.toLowerCase().includes('demo') ||
@@ -775,7 +954,8 @@ const appController = {
                 details: details,
                 fqdn: fqdn,
                 repositoryUrl: matchedApp?.repo_url || null,
-                isTestResource: !!isTestResource
+                isTestResource: !!isTestResource,
+                branch: branch || null
             });
         }
 
@@ -874,9 +1054,10 @@ const appController = {
                     fqdn = dnsDetails.fqdn || `${dnsDetails.subdomain}.${defaultDomain}`;
                 }
 
-                const isTestResource = app.name.toLowerCase().includes('test') || 
-                                       app.name.toLowerCase().includes('dev') || 
-                                       app.name.toLowerCase().includes('qa') || 
+                const branch = azureDetails.branch || null;
+                const envType = getEnvType(app.name, branch);
+                const isTestResource = envType === 'dev' || 
+                                       envType === 'qa' || 
                                        app.name.toLowerCase().includes('sandbox') || 
                                        app.name.toLowerCase().includes('temp') || 
                                        app.name.toLowerCase().includes('demo');
@@ -991,7 +1172,8 @@ const appController = {
                     details: details,
                     fqdn: fqdn,
                     repositoryUrl: app.repo_url || null,
-                    isTestResource: !!isTestResource
+                    isTestResource: !!isTestResource,
+                    branch: branch || null
                 });
             }
         }
@@ -1000,10 +1182,8 @@ const appController = {
         for (const item of detailedCosts) {
             // Container App dynamic suggestions
             if (item.type === 'backend') {
-                const isDevOrQa = item.name.toLowerCase().includes('dev') || 
-                                 item.name.toLowerCase().includes('qa') || 
-                                 item.name.toLowerCase().includes('test') || 
-                                 item.isTestResource;
+                const envType = getEnvType(item.name, item.branch);
+                const isDevOrQa = envType === 'dev' || envType === 'qa' || item.isTestResource;
                 
                 if (isDevOrQa) {
                     const isFeedbackDev = item.name.toLowerCase() === 'estevia-feedback-api-dev';
@@ -1069,7 +1249,8 @@ const appController = {
 
             // SWA dynamic suggestions
             if (item.type === 'frontend') {
-                const isDev = item.name.toLowerCase().includes('dev') || item.name.toLowerCase().includes('qa') || item.name.toLowerCase().includes('test') || item.isTestResource;
+                const envType = getEnvType(item.name, item.branch);
+                const isDev = envType === 'dev' || envType === 'qa' || item.isTestResource;
                 if (isDev) {
                     const optId = `opt-tier-${item.id}`;
                     const dynamicSavings = Math.round(item.resourceCost * 1.00 * 100) / 100;
@@ -1091,10 +1272,8 @@ const appController = {
 
             // AKS Cluster dynamic suggestions
             if (item.type === 'cluster') {
-                const isDevOrQa = item.name.toLowerCase().includes('dev') || 
-                                 item.name.toLowerCase().includes('qa') || 
-                                 item.name.toLowerCase().includes('test') || 
-                                 item.isTestResource;
+                const envType = getEnvType(item.name, item.branch);
+                const isDevOrQa = envType === 'dev' || envType === 'qa' || item.isTestResource;
                 
                 if (isDevOrQa) {
                     const optId = `opt-aks-spot-${item.id}`;
@@ -1488,6 +1667,22 @@ const appController = {
                             break;
                         }
                     }
+                }
+            }
+
+            // Scrape codebase variables for network/DB validations
+            const envType = getEnvType(app.name, app.branch);
+            const currentType = app.type || category;
+            app.azureResourceDetails = app.azureResourceDetails || {};
+            if (currentType === 'frontend') {
+                const configuredBackendUrl = scrapeBackendUrlFromLocalRepo(app.repositoryUrl, envType);
+                if (configuredBackendUrl) {
+                    app.azureResourceDetails.configuredBackendUrl = configuredBackendUrl;
+                }
+            } else if (currentType === 'backend') {
+                const configuredDbHost = scrapeDbHostFromLocalRepo(app.repositoryUrl, envType);
+                if (configuredDbHost) {
+                    app.azureResourceDetails.configuredDbHost = configuredDbHost;
                 }
             }
 
