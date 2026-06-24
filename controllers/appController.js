@@ -13,8 +13,11 @@ function scrapeBackendUrlFromLocalRepo(repoUrl, envType) {
     if (!repoUrl) return null;
     const repoName = repoUrl.split('/').pop().replace(/\.git$/, '');
     const baseWorkspace = '/Users/gmenon/WorkSpace/Estevia/CodeBase/Estevia-Workspace';
-    const repoPath = path.join(baseWorkspace, repoName);
-    if (!fs.existsSync(repoPath)) return null;
+    if (!fs.existsSync(baseWorkspace)) return null;
+    const dirs = fs.readdirSync(baseWorkspace);
+    const matchedDir = dirs.find(d => d.toLowerCase() === repoName.toLowerCase());
+    if (!matchedDir) return null;
+    const repoPath = path.join(baseWorkspace, matchedDir);
     
     // Priority 1: env files
     let envFiles = [];
@@ -85,8 +88,11 @@ function scrapeDbHostFromLocalRepo(repoUrl, envType) {
     if (!repoUrl) return null;
     const repoName = repoUrl.split('/').pop().replace(/\.git$/, '');
     const baseWorkspace = '/Users/gmenon/WorkSpace/Estevia/CodeBase/Estevia-Workspace';
-    const repoPath = path.join(baseWorkspace, repoName);
-    if (!fs.existsSync(repoPath)) return null;
+    if (!fs.existsSync(baseWorkspace)) return null;
+    const dirs = fs.readdirSync(baseWorkspace);
+    const matchedDir = dirs.find(d => d.toLowerCase() === repoName.toLowerCase());
+    if (!matchedDir) return null;
+    const repoPath = path.join(baseWorkspace, matchedDir);
     
     // env files to check based on envType
     let envFiles = [];
