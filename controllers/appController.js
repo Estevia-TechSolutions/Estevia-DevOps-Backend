@@ -544,7 +544,7 @@ function _validatePipelineYml(ymlContent, pipelineProvider = 'azure_devops') {
             }
         }
         if (ymlContent.includes('secrets.')) {
-            warnings.push({ ruleId: 'GH_SECRET_REMINDER', message: 'This workflow references GitHub Secrets (secrets.*). Ensure all referenced secrets are added to your repository Settings → Secrets and variables → Actions.', severity: 'warning' });
+            warnings.push({ ruleId: 'GH_SECRET_REMINDER', message: 'This workflow references GitHub Secrets (secrets.*). Ensure all referenced secrets are added to your repository Settings → Secrets and variables → Actions.', severity: 'info' });
         }
     } else {
         // Azure DevOps rules
@@ -9661,7 +9661,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     exists: true,
                     valid: result.valid,
                     errorCount: result.errors.length,
-                    warningCount: result.warnings.length,
+                    warningCount: result.warnings.filter(w => w.severity === 'warning').length,
                     errors: result.errors,
                     warnings: result.warnings
                 };
