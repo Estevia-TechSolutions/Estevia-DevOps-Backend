@@ -350,6 +350,72 @@ async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
     return { value: null, searchedFiles };
 }
 
+async function scrapeBackendUrlFromARM(appName, organizationId, subscriptionId, resourceGroup) {
+    try {
+        console.log(`[Scraper] [ARM SWA] Attempting fallback for ${appName} (ResourceGroup: ${resourceGroup})`);
+        const credential = await getAzureCredential(organizationId);
+        const webClient = new WebSiteManagementClient(credential, subscriptionId);
+        const settings = await webClient.staticSites.listStaticSiteAppSettings(resourceGroup, appName);
+        const props = settings.properties || {};
+        // Look for API URL keys
+        const apiKeys = ['VITE_API_URL', 'REACT_APP_API_URL', 'API_URL', 'API_BASE_URL', 'VITE_API_BASE', 'VITE_API_BASE_URL'];
+        for (const key of apiKeys) {
+            if (props[key]) {
+                console.log(`[Scraper] [ARM SWA] Found match in app settings for key ${key}: ${props[key]}`);
+                return { 
+                    value: props[key], 
+                    file: `Azure ARM (Static Web App Settings: ${key})`, 
+                    content: JSON.stringify(props, null, 2) 
+                };
+            }
+        }
+    } catch (err) {
+        console.warn(`[Scraper] [ARM SWA] SWA app settings fallback failed for ${appName}:`, err.message);
+    }
+    return { value: null };
+}
+
+async function scrapeDbHostFromARM(appName, organizationId, subscriptionId, resourceGroup) {
+    try {
+        console.log(`[Scraper] [ARM ACA] Attempting fallback for ${appName} (ResourceGroup: ${resourceGroup})`);
+        const credential = await getAzureCredential(organizationId);
+        const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
+        const app = await containerClient.containerApps.get(resourceGroup, appName);
+        const envVars = app.properties?.template?.containers?.[0]?.env || [];
+        const dbHostVar = envVars.find(e => e.name === 'DB_HOST');
+        if (dbHostVar) {
+            if (dbHostVar.value) {
+                console.log(`[Scraper] [ARM ACA] Found DB_HOST value directly: ${dbHostVar.value}`);
+                return { 
+                    value: dbHostVar.value, 
+                    file: 'Azure ARM (Container App Environment Variables)', 
+                    content: JSON.stringify(envVars, null, 2) 
+                };
+            }
+            if (dbHostVar.secretRef) {
+                console.log(`[Scraper] [ARM ACA] Found DB_HOST reference to secret: ${dbHostVar.secretRef}. Fetching secrets...`);
+                try {
+                    const secrets = await containerClient.containerApps.listSecrets(resourceGroup, appName);
+                    const matchedSecret = secrets.value?.find(s => s.name === dbHostVar.secretRef);
+                    if (matchedSecret?.value) {
+                        console.log(`[Scraper] [ARM ACA] Resolved secret ${dbHostVar.secretRef}: ${matchedSecret.value}`);
+                        return { 
+                            value: matchedSecret.value, 
+                            file: `Azure ARM (Container App Secret Reference: ${dbHostVar.secretRef})`, 
+                            content: JSON.stringify(envVars, null, 2) 
+                        };
+                    }
+                } catch (secErr) {
+                    console.warn(`[Scraper] [ARM ACA] Failed to list secrets for ${appName}:`, secErr.message);
+                }
+            }
+        }
+    } catch (err) {
+        console.warn(`[Scraper] [ARM ACA] Fallback failed for ${appName}:`, err.message);
+    }
+    return { value: null };
+}
+
 
 function getUserAgent(orgId) {
     const cleanId = (typeof orgId === 'string' ? orgId : (orgId?.id || orgId?.organizationId)) || 'global';
@@ -1872,28 +1938,62 @@ const appController = {
             const currentType = app.type || category;
             app.azureResourceDetails = app.azureResourceDetails || {};
             if (currentType === 'frontend') {
-                const result = await scrapeBackendUrlFromRepo(app.repositoryUrl, envType, app.branch, githubToken);
+                let result = await scrapeBackendUrlFromRepo(app.repositoryUrl, envType, app.branch, githubToken);
+                if (!result || !result.value) {
+                    const subscriptionId = orgSettings?.azure_subscription_id || SUBSCRIPTION_ID;
+                    const armResult = await scrapeBackendUrlFromARM(app.name, organizationId, subscriptionId, resourceGroup);
+                    if (armResult && armResult.value) {
+                        result = {
+                            ...result,
+                            value: armResult.value,
+                            file: armResult.file,
+                            content: armResult.content
+                        };
+                    }
+                }
                 if (result && result.value) {
                     app.azureResourceDetails.configuredBackendUrl = result.value;
                     app.azureResourceDetails.scrapedSourceFile = result.file;
                     app.azureResourceDetails.scrapedSourceContent = result.content;
                     // Clear any stale searched-files list from a previous failed attempt
                     delete app.azureResourceDetails.scrapedSearchedFiles;
-                } else if (result && result.searchedFiles && result.searchedFiles.length > 0) {
-                    // Persist the list of files that were tried but yielded no result
-                    app.azureResourceDetails.scrapedSearchedFiles = result.searchedFiles;
+                } else {
+                    if (result && result.searchedFiles && result.searchedFiles.length > 0) {
+                        // Persist the list of files that were tried but yielded no result
+                        app.azureResourceDetails.scrapedSearchedFiles = result.searchedFiles;
+                    }
+                    delete app.azureResourceDetails.configuredBackendUrl;
+                    delete app.azureResourceDetails.scrapedSourceFile;
+                    delete app.azureResourceDetails.scrapedSourceContent;
                 }
             } else if (currentType === 'backend') {
-                const result = await scrapeDbHostFromRepo(app.repositoryUrl, envType, app.branch, githubToken);
+                let result = await scrapeDbHostFromRepo(app.repositoryUrl, envType, app.branch, githubToken);
+                if (!result || !result.value) {
+                    const subscriptionId = orgSettings?.azure_subscription_id || SUBSCRIPTION_ID;
+                    const armResult = await scrapeDbHostFromARM(app.name, organizationId, subscriptionId, resourceGroup);
+                    if (armResult && armResult.value) {
+                        result = {
+                            ...result,
+                            value: armResult.value,
+                            file: armResult.file,
+                            content: armResult.content
+                        };
+                    }
+                }
                 if (result && result.value) {
                     app.azureResourceDetails.configuredDbHost = result.value;
                     app.azureResourceDetails.scrapedSourceFile = result.file;
                     app.azureResourceDetails.scrapedSourceContent = result.content;
                     // Clear any stale searched-files list from a previous failed attempt
                     delete app.azureResourceDetails.scrapedSearchedFiles;
-                } else if (result && result.searchedFiles && result.searchedFiles.length > 0) {
-                    // Persist the list of files that were tried but yielded no result
-                    app.azureResourceDetails.scrapedSearchedFiles = result.searchedFiles;
+                } else {
+                    if (result && result.searchedFiles && result.searchedFiles.length > 0) {
+                        // Persist the list of files that were tried but yielded no result
+                        app.azureResourceDetails.scrapedSearchedFiles = result.searchedFiles;
+                    }
+                    delete app.azureResourceDetails.configuredDbHost;
+                    delete app.azureResourceDetails.scrapedSourceFile;
+                    delete app.azureResourceDetails.scrapedSourceContent;
                 }
             }
 
