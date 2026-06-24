@@ -4368,7 +4368,32 @@ const appController = {
      */
     async _checkYmlExists(githubToken, githubRepo, branch = 'main', organizationId, pipelineProvider = 'azure_devops') {
         const isGitHubAction = pipelineProvider === 'github_actions';
-        const filePath = isGitHubAction ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
+        let filePath = isGitHubAction ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
+        
+        // If GitHub actions, first try dynamically discovering workflow files
+        if (isGitHubAction) {
+            try {
+                const listUrl = `https://api.github.com/repos/${githubRepo}/contents/.github/workflows?ref=${encodeURIComponent(branch)}`;
+                const listResponse = await axios.get(listUrl, {
+                    headers: {
+                        'Authorization': `token ${githubToken}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'User-Agent': getUserAgent(organizationId)
+                    },
+                    timeout: 8000
+                });
+                if (Array.isArray(listResponse.data)) {
+                    const ymlFiles = listResponse.data.filter(f => f.name.endsWith('.yml') || f.name.endsWith('.yaml'));
+                    if (ymlFiles.length > 0) {
+                        const preferred = ymlFiles.find(f => f.name === 'deploy.yml' || f.name === 'main.yml' || f.name === 'ci.yml' || f.name.startsWith('azure-static-web-apps')) || ymlFiles[0];
+                        filePath = preferred.path;
+                    }
+                }
+            } catch (e) {
+                // ignore and fallback to default path
+            }
+        }
+
         const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/${filePath}?ref=${encodeURIComponent(branch)}`;
         try {
             const res = await axios.get(contentsUrl, {
@@ -4382,7 +4407,47 @@ const appController = {
             return { exists: true, sha: res.data.sha || null };
         } catch (err) {
             if (err.response && err.response.status === 404) {
-                return { exists: false, sha: null };
+                // Try fallback to check other provider
+                const fallbackProvider = pipelineProvider === 'github_actions' ? 'azure_devops' : 'github_actions';
+                let fallbackPath = fallbackProvider === 'github_actions' ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
+                
+                if (fallbackProvider === 'github_actions') {
+                    try {
+                        const listUrl = `https://api.github.com/repos/${githubRepo}/contents/.github/workflows?ref=${encodeURIComponent(branch)}`;
+                        const listResponse = await axios.get(listUrl, {
+                            headers: {
+                                'Authorization': `token ${githubToken}`,
+                                'Accept': 'application/vnd.github.v3+json',
+                                'User-Agent': getUserAgent(organizationId)
+                            },
+                            timeout: 8000
+                        });
+                        if (Array.isArray(listResponse.data)) {
+                            const ymlFiles = listResponse.data.filter(f => f.name.endsWith('.yml') || f.name.endsWith('.yaml'));
+                            if (ymlFiles.length > 0) {
+                                const preferred = ymlFiles.find(f => f.name === 'deploy.yml' || f.name === 'main.yml' || f.name === 'ci.yml' || f.name.startsWith('azure-static-web-apps')) || ymlFiles[0];
+                                fallbackPath = preferred.path;
+                            }
+                        }
+                    } catch (e) {
+                        // ignore and use fallbackPath
+                    }
+                }
+                
+                const fallbackUrl = `https://api.github.com/repos/${githubRepo}/contents/${fallbackPath}?ref=${encodeURIComponent(branch)}`;
+                try {
+                    const fallbackRes = await axios.get(fallbackUrl, {
+                        headers: {
+                            'Authorization': `token ${githubToken}`,
+                            'Accept': 'application/vnd.github.v3+json',
+                            'User-Agent': getUserAgent(organizationId)
+                        },
+                        timeout: 8000
+                    });
+                    return { exists: true, sha: fallbackRes.data.sha || null };
+                } catch (fallbackErr) {
+                    return { exists: false, sha: null };
+                }
             }
             throw err;
         }
@@ -9641,8 +9706,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     if (Array.isArray(listResponse.data)) {
                         const ymlFiles = listResponse.data.filter(f => f.name.endsWith('.yml') || f.name.endsWith('.yaml'));
                         if (ymlFiles.length > 0) {
-                            // Prefer deploy.yml, main.yml, or ci.yml if present, otherwise default to first yml file
-                            const preferred = ymlFiles.find(f => f.name === 'deploy.yml' || f.name === 'main.yml' || f.name === 'ci.yml') || ymlFiles[0];
+                            // Prefer deploy.yml, main.yml, ci.yml, or azure-static-web-apps-... if present, otherwise default to first yml file
+                            const preferred = ymlFiles.find(f => f.name === 'deploy.yml' || f.name === 'main.yml' || f.name === 'ci.yml' || f.name.startsWith('azure-static-web-apps')) || ymlFiles[0];
                             ymlPath = preferred.path;
                             console.log(`[AppController] Dynamically resolved GitHub workflow path to: ${ymlPath}`);
                         }
@@ -9653,17 +9718,58 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             }
 
             // Validate YAML
-            const ymlContent = await fetchGithubFile(ymlPath);
+            let ymlContent = await fetchGithubFile(ymlPath);
+            let activeProvider = provider;
+            
+            if (ymlContent === null) {
+                // Try fallback to check the other provider
+                const fallbackProvider = provider === 'github_actions' ? 'azure_devops' : 'github_actions';
+                let fallbackPath = fallbackProvider === 'github_actions' ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
+                
+                // For GitHub Actions fallback, try dynamically discovering workflows
+                if (fallbackProvider === 'github_actions') {
+                    try {
+                        const listUrl = `https://api.github.com/repos/${githubRepo}/contents/.github/workflows?ref=${encodeURIComponent(branchName)}`;
+                        const listResponse = await axios.get(listUrl, {
+                            headers: {
+                                'Authorization': `token ${githubToken}`,
+                                'Accept': 'application/vnd.github.v3+json',
+                                'User-Agent': getUserAgent(organizationId)
+                            },
+                            timeout: 10000
+                        });
+                        if (Array.isArray(listResponse.data)) {
+                            const ymlFiles = listResponse.data.filter(f => f.name.endsWith('.yml') || f.name.endsWith('.yaml'));
+                            if (ymlFiles.length > 0) {
+                                const preferred = ymlFiles.find(f => f.name === 'deploy.yml' || f.name === 'main.yml' || f.name === 'ci.yml' || f.name.startsWith('azure-static-web-apps')) || ymlFiles[0];
+                                fallbackPath = preferred.path;
+                            }
+                        }
+                    } catch (e) {
+                        // ignore listing error
+                    }
+                }
+                
+                const fallbackContent = await fetchGithubFile(fallbackPath);
+                if (fallbackContent !== null) {
+                    ymlContent = fallbackContent;
+                    activeProvider = fallbackProvider;
+                    ymlPath = fallbackPath;
+                    console.log(`[AppController] Auto-detected and switched pipeline provider to: ${activeProvider} using path: ${ymlPath}`);
+                }
+            }
+
             let ymlHealth = { exists: false, valid: true, errorCount: 0, warningCount: 0, errors: [], warnings: [] };
             if (ymlContent !== null) {
-                const result = _validatePipelineYml(ymlContent, provider);
+                const result = _validatePipelineYml(ymlContent, activeProvider);
                 ymlHealth = {
                     exists: true,
                     valid: result.valid,
                     errorCount: result.errors.length,
                     warningCount: result.warnings.filter(w => w.severity === 'warning').length,
                     errors: result.errors,
-                    warnings: result.warnings
+                    warnings: result.warnings,
+                    filePath: ymlPath
                 };
             }
 
