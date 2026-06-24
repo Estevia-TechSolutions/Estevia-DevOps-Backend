@@ -381,19 +381,35 @@ async function scrapeDbHostFromARM(appName, organizationId, subscriptionId, reso
         const credential = await getAzureCredential(organizationId);
         const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
         const app = await containerClient.containerApps.get(resourceGroup, appName);
-        const envVars = app.properties?.template?.containers?.[0]?.env || [];
-        const dbHostVar = envVars.find(e => e.name === 'DB_HOST');
+        
+        const containers = app.template?.containers || app.properties?.template?.containers || [];
+        let dbHostVar = null;
+        let envVars = [];
+        let containerName = '';
+        
+        for (const container of containers) {
+            if (container.env) {
+                const found = container.env.find(e => e.name === 'DB_HOST');
+                if (found) {
+                    dbHostVar = found;
+                    envVars = container.env;
+                    containerName = container.name || '';
+                    break;
+                }
+            }
+        }
+        
         if (dbHostVar) {
             if (dbHostVar.value) {
-                console.log(`[Scraper] [ARM ACA] Found DB_HOST value directly: ${dbHostVar.value}`);
+                console.log(`[Scraper] [ARM ACA] Found DB_HOST value directly in container ${containerName}: ${dbHostVar.value}`);
                 return { 
                     value: dbHostVar.value, 
-                    file: 'Azure ARM (Container App Environment Variables)', 
+                    file: `Azure ARM (Container: ${containerName})`, 
                     content: JSON.stringify(envVars, null, 2) 
                 };
             }
             if (dbHostVar.secretRef) {
-                console.log(`[Scraper] [ARM ACA] Found DB_HOST reference to secret: ${dbHostVar.secretRef}. Fetching secrets...`);
+                console.log(`[Scraper] [ARM ACA] Found DB_HOST reference to secret ${dbHostVar.secretRef} in container ${containerName}. Fetching secrets...`);
                 try {
                     const secrets = await containerClient.containerApps.listSecrets(resourceGroup, appName);
                     const matchedSecret = secrets.value?.find(s => s.name === dbHostVar.secretRef);
@@ -401,7 +417,7 @@ async function scrapeDbHostFromARM(appName, organizationId, subscriptionId, reso
                         console.log(`[Scraper] [ARM ACA] Resolved secret ${dbHostVar.secretRef}: ${matchedSecret.value}`);
                         return { 
                             value: matchedSecret.value, 
-                            file: `Azure ARM (Container App Secret Reference: ${dbHostVar.secretRef})`, 
+                            file: `Azure ARM (Container: ${containerName} | Secret: ${dbHostVar.secretRef})`, 
                             content: JSON.stringify(envVars, null, 2) 
                         };
                     }
@@ -6931,6 +6947,7 @@ const appController = {
                 dockerRegistryServiceConnection,
                 teamsWebhookUrl,
                 logAnalyticsWorkspaceId,
+                prodLogAnalyticsWorkspaceId,
                 azureKeyVaultUrl,
                 devDbHost,
                 qaDbHost,
@@ -6950,16 +6967,20 @@ const appController = {
 
             // Load existing org settings to check for changes
             const [existingOrg] = await db.query(
-                'SELECT azure_subscription_id, azure_resource_group, log_analytics_workspace_id FROM organizations WHERE id = ?',
+                'SELECT azure_subscription_id, azure_resource_group, log_analytics_workspace_id, prod_log_analytics_workspace_id FROM organizations WHERE id = ?',
                 [organizationId]
             );
-            let resolvedWorkspaceId = existingOrg[0]?.log_analytics_workspace_id || null;
+            let resolvedWorkspaceId = logAnalyticsWorkspaceId || existingOrg[0]?.log_analytics_workspace_id || null;
+            let resolvedProdWorkspaceId = prodLogAnalyticsWorkspaceId || existingOrg[0]?.prod_log_analytics_workspace_id || null;
 
             const subChanged = existingOrg[0]?.azure_subscription_id !== azureSubscriptionId;
             const rgChanged = existingOrg[0]?.azure_resource_group !== azureResourceGroup;
 
-            if (subChanged || rgChanged || !resolvedWorkspaceId) {
-                resolvedWorkspaceId = null; // Reset to re-discover
+            if (subChanged || rgChanged || !resolvedWorkspaceId || !resolvedProdWorkspaceId) {
+                if (subChanged || rgChanged) {
+                    resolvedWorkspaceId = null;
+                    resolvedProdWorkspaceId = null;
+                }
                 if (azureSubscriptionId && azureResourceGroup) {
                     try {
                         const credential = await getAzureCredential(organizationId);
@@ -6967,9 +6988,15 @@ const appController = {
                         for await (const env of containerClient.managedEnvironments.listByResourceGroup(azureResourceGroup)) {
                             const customerId = env.appLogsConfiguration?.logAnalyticsConfiguration?.customerId || env.properties?.appLogsConfiguration?.logAnalyticsConfiguration?.customerId;
                             if (customerId) {
-                                resolvedWorkspaceId = customerId;
-                                console.log(`[AppController] Settings Save - Auto-discovered Log Analytics Workspace ID: ${resolvedWorkspaceId}`);
-                                break;
+                                const envName = (env.name || '').toLowerCase();
+                                if (envName.includes('dev') || envName.includes('qa') || envName.includes('staging')) {
+                                    if (!resolvedWorkspaceId) resolvedWorkspaceId = customerId;
+                                } else if (envName.includes('prod') || envName.includes('live')) {
+                                    if (!resolvedProdWorkspaceId) resolvedProdWorkspaceId = customerId;
+                                } else {
+                                    if (!resolvedWorkspaceId) resolvedWorkspaceId = customerId;
+                                    else if (!resolvedProdWorkspaceId) resolvedProdWorkspaceId = customerId;
+                                }
                             }
                         }
                     } catch (discoveryErr) {
@@ -6992,6 +7019,7 @@ const appController = {
                     docker_registry_service_connection = ?,
                     teams_webhook_url = ?,
                     log_analytics_workspace_id = ?,
+                    prod_log_analytics_workspace_id = ?,
                     azure_key_vault_url = ?,
                     dev_db_host = ?,
                     qa_db_host = ?,
@@ -7012,6 +7040,7 @@ const appController = {
                 dockerRegistryServiceConnection || null,
                 teamsWebhookUrl !== undefined ? (teamsWebhookUrl || null) : null,
                 resolvedWorkspaceId,
+                resolvedProdWorkspaceId,
                 azureKeyVaultUrl || null,
                 devDbHost || null,
                 qaDbHost || null,
@@ -7055,27 +7084,40 @@ const appController = {
                 return res.status(400).json({ success: false, message: 'Azure Subscription ID and Resource Group must be configured first under the Azure tab.' });
             }
 
-            let discoveredId = null;
+            let devWorkspaceId = null;
+            let prodWorkspaceId = null;
             try {
                 const credential = await getAzureCredential(organizationId);
                 const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
                 for await (const env of containerClient.managedEnvironments.listByResourceGroup(resourceGroup)) {
                     const customerId = env.appLogsConfiguration?.logAnalyticsConfiguration?.customerId || env.properties?.appLogsConfiguration?.logAnalyticsConfiguration?.customerId;
                     if (customerId) {
-                        discoveredId = customerId;
-                        break;
+                        const envName = (env.name || '').toLowerCase();
+                        if (envName.includes('dev') || envName.includes('qa') || envName.includes('staging')) {
+                            devWorkspaceId = customerId;
+                        } else if (envName.includes('prod') || envName.includes('live')) {
+                            prodWorkspaceId = customerId;
+                        } else {
+                            if (!devWorkspaceId) devWorkspaceId = customerId;
+                            else if (!prodWorkspaceId) prodWorkspaceId = customerId;
+                        }
                     }
                 }
             } catch (err) {
                 return res.status(500).json({ success: false, message: `Azure API Error: ${err.message}` });
             }
 
-            if (discoveredId) {
+            if (devWorkspaceId || prodWorkspaceId) {
                 await db.query(
-                    'UPDATE organizations SET log_analytics_workspace_id = ? WHERE id = ?',
-                    [discoveredId, organizationId]
+                    'UPDATE organizations SET log_analytics_workspace_id = ?, prod_log_analytics_workspace_id = ? WHERE id = ?',
+                    [devWorkspaceId, prodWorkspaceId, organizationId]
                 );
-                return res.json({ success: true, message: 'Log Analytics Workspace discovered successfully.', workspaceId: discoveredId });
+                return res.json({ 
+                    success: true, 
+                    message: 'Log Analytics Workspaces discovered successfully.', 
+                    workspaceId: devWorkspaceId, 
+                    prodWorkspaceId: prodWorkspaceId 
+                });
             } else {
                 return res.status(404).json({ success: false, message: 'No Container App Managed Environments found in resource group to discover workspace from.' });
             }

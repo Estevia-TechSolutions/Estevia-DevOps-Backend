@@ -104,6 +104,10 @@ async function runAutoMigration() {
             console.log('[DevOps DB] Adding column prod_managed_env_id to organizations...');
             await pool.query(`ALTER TABLE organizations ADD COLUMN prod_managed_env_id VARCHAR(500) DEFAULT NULL`);
         }
+        if (!columnNames.includes('prod_log_analytics_workspace_id')) {
+            console.log('[DevOps DB] Adding column prod_log_analytics_workspace_id to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN prod_log_analytics_workspace_id VARCHAR(255) DEFAULT NULL`);
+        }
         
         const masterOrgId = process.env.MASTER_ORGANIZATION_ID || 'estevia';
         const masterAdminEmail = process.env.MASTER_ADMIN_EMAIL || 'govind.m@esteviatech.com';

@@ -162,6 +162,7 @@ const observabilityController = {
             }
 
             let workspaceId = null;
+            let isProd = false;
             try {
                 const [appRows] = await db.query(
                     'SELECT azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
@@ -175,6 +176,11 @@ const observabilityController = {
                         workspaceId = details.workspaceId;
                         console.log(`[Observability] Resolved app-specific workspace ID from database: ${workspaceId} for app: ${appName}`);
                     }
+                    const envId = details?.environmentId || '';
+                    const appNameLower = appName.toLowerCase();
+                    if (appNameLower.includes('-prod') || appNameLower.includes('production') || appNameLower.includes('-live') || envId.toLowerCase().includes('prod')) {
+                        isProd = true;
+                    }
                 }
             } catch (dbErr) {
                 console.warn(`[Observability] Database lookup failed for app '${appName}' workspaceId:`, dbErr.message);
@@ -182,7 +188,15 @@ const observabilityController = {
 
             if (!workspaceId) {
                 try {
-                    workspaceId = await resolveWorkspaceId(orgId);
+                    const [rows] = await db.query(
+                        'SELECT log_analytics_workspace_id, prod_log_analytics_workspace_id FROM organizations WHERE id = ?',
+                        [orgId]
+                    );
+                    if (rows.length > 0) {
+                        workspaceId = isProd 
+                            ? (rows[0].prod_log_analytics_workspace_id || rows[0].log_analytics_workspace_id) 
+                            : rows[0].log_analytics_workspace_id;
+                    }
                 } catch (err) {
                     console.warn('[Observability] Failed to resolve organization-level workspace ID:', err.message);
                 }
@@ -235,13 +249,10 @@ const observabilityController = {
                 if (result.status === 'Success' && result.tables && result.tables.length > 0) {
                     const logs = parseLogAnalyticsRows(result.tables[0]);
                     console.log(`[Observability] Returned ${logs.length} real log lines for '${appName}'.`);
-                    if (logs.length > 0) {
-                        return res.json({ success: true, source: 'log-analytics', timeRange, logs });
-                    }
+                    return res.json({ success: true, source: 'log-analytics', timeRange, logs });
                 }
 
-                // Empty result — no logs in this window
-                console.log(`[Observability] Log Analytics returned 0 rows for '${appName}' in range '${label}'. Falling back to mock logs.`);
+                // If KQL failed or returned no table, fallback to mock
                 const logs = generateMockLogs(appName);
                 return res.json({
                     success: true,
