@@ -73,12 +73,20 @@ async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
     
     let envFiles = [];
     if (envType === 'dev') {
-        envFiles = ['.env.development', '.env.dev', '.env'];
+        envFiles = ['.env.development', '.env.dev', '.env.deployment', '.env.deploy', '.env'];
     } else if (envType === 'qa') {
-        envFiles = ['.env.qa', '.env.staging', '.env'];
+        envFiles = ['.env.qa', '.env.staging', '.env.deployment', '.env.deploy', '.env'];
     } else {
-        envFiles = ['.env.production', '.env.prod', '.env'];
+        envFiles = ['.env.production', '.env.prod', '.env.deployment', '.env.deploy', '.env'];
     }
+
+    const searchedFiles = [
+        ...envFiles,
+        'azure-pipelines.yml',
+        'azure-pipelines-prod.yml',
+        'azure-pipelines-qa.yml',
+        'azure-pipelines-dev.yml'
+    ];
     
     if (localMatchedPath) {
         console.log(`[Scraper] Found local directory: ${localMatchedPath}. Reading files...`);
@@ -91,7 +99,7 @@ async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
                     const url = parseBackendUrlFromEnvContent(content);
                     if (url) {
                         console.log(`[Scraper] Local env match resolved from ${f}: ${url}`);
-                        return url;
+                        return { value: url, file: f, content: content };
                     }
                 } catch (err) {
                     console.warn(`[Scraper] Error reading local file ${f}:`, err.message);
@@ -113,7 +121,7 @@ async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
                     const url = parseBackendUrlFromPipelineContent(content, envType);
                     if (url) {
                         console.log(`[Scraper] Local pipeline match resolved from ${p}: ${url}`);
-                        return url;
+                        return { value: url, file: path.basename(p), content: content };
                     }
                 } catch (err) {
                     console.warn(`[Scraper] Error reading local pipeline ${p}:`, err.message);
@@ -125,7 +133,7 @@ async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
         console.log(`[Scraper] Local workspace not found. Falling back to GitHub REST API.`);
         if (!githubToken) {
             console.warn(`[Scraper] GitHub token is missing. Bypassing GitHub remote scan.`);
-            return null;
+            return { value: null, searchedFiles };
         }
         
         const gitMatch = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
@@ -152,7 +160,7 @@ async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
                         const urlVal = parseBackendUrlFromEnvContent(res.data);
                         if (urlVal) {
                             console.log(`[Scraper] GitHub remote match resolved from ${f}: ${urlVal}`);
-                            return urlVal;
+                            return { value: urlVal, file: f, content: res.data };
                         }
                     }
                 } catch (err) {
@@ -183,7 +191,7 @@ async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
                         const urlVal = parseBackendUrlFromPipelineContent(res.data, envType);
                         if (urlVal) {
                             console.log(`[Scraper] GitHub remote pipeline match resolved from ${p}: ${urlVal}`);
-                            return urlVal;
+                            return { value: urlVal, file: p, content: res.data };
                         }
                     }
                 } catch (err) {
@@ -192,7 +200,7 @@ async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
             }
         }
     }
-    return null;
+    return { value: null, searchedFiles };
 }
 
 async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
@@ -213,12 +221,20 @@ async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
     
     let envFiles = [];
     if (envType === 'dev') {
-        envFiles = ['.env.development', '.env.dev', '.env'];
+        envFiles = ['.env.development', '.env.dev', '.env.deployment', '.env.deploy', '.env'];
     } else if (envType === 'qa') {
-        envFiles = ['.env.qa', '.env.staging', '.env'];
+        envFiles = ['.env.qa', '.env.staging', '.env.deployment', '.env.deploy', '.env'];
     } else {
-        envFiles = ['.env.production', '.env.prod', '.env'];
+        envFiles = ['.env.production', '.env.prod', '.env.deployment', '.env.deploy', '.env'];
     }
+
+    const searchedFiles = [
+        ...envFiles,
+        'azure-pipelines.yml',
+        'azure-pipelines-prod.yml',
+        'azure-pipelines-qa.yml',
+        'azure-pipelines-dev.yml'
+    ];
     
     if (localMatchedPath) {
         console.log(`[Scraper] Found local directory: ${localMatchedPath}. Reading files...`);
@@ -231,7 +247,7 @@ async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
                     const host = parseDbHostFromEnvContent(content);
                     if (host) {
                         console.log(`[Scraper] Local env match resolved from ${f}: ${host}`);
-                        return host;
+                        return { value: host, file: f, content: content };
                     }
                 } catch (err) {
                     console.warn(`[Scraper] Error reading local file ${f}:`, err.message);
@@ -253,7 +269,7 @@ async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
                     const host = parseDbHostFromPipelineContent(content);
                     if (host) {
                         console.log(`[Scraper] Local pipeline match resolved from ${p}: ${host}`);
-                        return host;
+                        return { value: host, file: path.basename(p), content: content };
                     }
                 } catch (err) {
                     console.warn(`[Scraper] Error reading local pipeline ${p}:`, err.message);
@@ -264,7 +280,7 @@ async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
         console.log(`[Scraper] Local workspace not found. Falling back to GitHub REST API.`);
         if (!githubToken) {
             console.warn(`[Scraper] GitHub token is missing. Bypassing GitHub remote scan.`);
-            return null;
+            return { value: null, searchedFiles };
         }
         
         const gitMatch = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
@@ -291,7 +307,7 @@ async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
                         const host = parseDbHostFromEnvContent(res.data);
                         if (host) {
                             console.log(`[Scraper] GitHub remote match resolved from ${f}: ${host}`);
-                            return host;
+                            return { value: host, file: f, content: res.data };
                         }
                     }
                 } catch (err) {
@@ -322,7 +338,7 @@ async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
                         const host = parseDbHostFromPipelineContent(res.data);
                         if (host) {
                             console.log(`[Scraper] GitHub remote pipeline match resolved from ${p}: ${host}`);
-                            return host;
+                            return { value: host, file: p, content: res.data };
                         }
                     }
                 } catch (err) {
@@ -331,7 +347,7 @@ async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
             }
         }
     }
-    return null;
+    return { value: null, searchedFiles };
 }
 
 
@@ -1856,14 +1872,18 @@ const appController = {
             const currentType = app.type || category;
             app.azureResourceDetails = app.azureResourceDetails || {};
             if (currentType === 'frontend') {
-                const configuredBackendUrl = await scrapeBackendUrlFromRepo(app.repositoryUrl, envType, app.branch, githubToken);
-                if (configuredBackendUrl) {
-                    app.azureResourceDetails.configuredBackendUrl = configuredBackendUrl;
+                const result = await scrapeBackendUrlFromRepo(app.repositoryUrl, envType, app.branch, githubToken);
+                if (result && result.value) {
+                    app.azureResourceDetails.configuredBackendUrl = result.value;
+                    app.azureResourceDetails.scrapedSourceFile = result.file;
+                    app.azureResourceDetails.scrapedSourceContent = result.content;
                 }
             } else if (currentType === 'backend') {
-                const configuredDbHost = await scrapeDbHostFromRepo(app.repositoryUrl, envType, app.branch, githubToken);
-                if (configuredDbHost) {
-                    app.azureResourceDetails.configuredDbHost = configuredDbHost;
+                const result = await scrapeDbHostFromRepo(app.repositoryUrl, envType, app.branch, githubToken);
+                if (result && result.value) {
+                    app.azureResourceDetails.configuredDbHost = result.value;
+                    app.azureResourceDetails.scrapedSourceFile = result.file;
+                    app.azureResourceDetails.scrapedSourceContent = result.content;
                 }
             }
 
