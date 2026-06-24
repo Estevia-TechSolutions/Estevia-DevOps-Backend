@@ -1877,6 +1877,11 @@ const appController = {
                     app.azureResourceDetails.configuredBackendUrl = result.value;
                     app.azureResourceDetails.scrapedSourceFile = result.file;
                     app.azureResourceDetails.scrapedSourceContent = result.content;
+                    // Clear any stale searched-files list from a previous failed attempt
+                    delete app.azureResourceDetails.scrapedSearchedFiles;
+                } else if (result && result.searchedFiles && result.searchedFiles.length > 0) {
+                    // Persist the list of files that were tried but yielded no result
+                    app.azureResourceDetails.scrapedSearchedFiles = result.searchedFiles;
                 }
             } else if (currentType === 'backend') {
                 const result = await scrapeDbHostFromRepo(app.repositoryUrl, envType, app.branch, githubToken);
@@ -1884,6 +1889,11 @@ const appController = {
                     app.azureResourceDetails.configuredDbHost = result.value;
                     app.azureResourceDetails.scrapedSourceFile = result.file;
                     app.azureResourceDetails.scrapedSourceContent = result.content;
+                    // Clear any stale searched-files list from a previous failed attempt
+                    delete app.azureResourceDetails.scrapedSearchedFiles;
+                } else if (result && result.searchedFiles && result.searchedFiles.length > 0) {
+                    // Persist the list of files that were tried but yielded no result
+                    app.azureResourceDetails.scrapedSearchedFiles = result.searchedFiles;
                 }
             }
 
