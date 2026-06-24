@@ -306,48 +306,13 @@ async function main() {
             defaultDevopsUrl, defaultDevopsProject, defaultPipelineVarGroup, defaultGithubOwner,
             defaultTenantId, defaultAdminEmail
         ]);
-        
-        // 6.1 Seed Azure integration credentials for master organization if configured in .env
-        const mClientId = process.env.MICROSOFT_CLIENT_ID;
-        const mClientSecret = process.env.MICROSOFT_CLIENT_SECRET;
-        const mTenantId = process.env.MICROSOFT_TENANT_ID || 'a39c526c-2005-4529-ab5a-f008fc5cbc57';
-
-        if (mClientId && mClientSecret) {
-            console.log(`Seeding Azure Service Principal credentials for master organization '${masterOrgId}'...`);
-            const { encrypt } = require('./utils/crypto');
-            const secretsJson = JSON.stringify({
-                tenantId: mTenantId,
-                clientId: mClientId,
-                clientSecret: mClientSecret
-            });
-            const { encrypted, iv, authTag } = encrypt(secretsJson);
-
-            // Check if provider credentials already exist for 'estevia'
-            const [existingAzure] = await connection.query(
-                'SELECT id FROM integration_credentials WHERE organization_id = ? AND provider = ?',
-                [masterOrgId, 'azure']
-            );
-
-            if (existingAzure.length > 0) {
-                await connection.query(
-                    `UPDATE integration_credentials 
-                     SET credential_name = ?, encrypted_secrets = ?, iv = ?, auth_tag = ?
-                     WHERE organization_id = ? AND provider = ?`,
-                    ['Azure Service Principal', encrypted, iv, authTag, masterOrgId, 'azure']
-                );
-                console.log(`Updated existing Azure credentials for organization '${masterOrgId}'.`);
-            } else {
-                await connection.query(
-                    `INSERT INTO integration_credentials 
-                     (organization_id, provider, credential_name, encrypted_secrets, iv, auth_tag) 
-                     VALUES (?, 'azure', 'Azure Service Principal', ?, ?, ?)`,
-                    [masterOrgId, encrypted, iv, authTag]
-                );
-                console.log(`Inserted Azure credentials for organization '${masterOrgId}'.`);
-            }
-        } else {
-            console.warn('[WARNING] MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET are not set. Skipping master organization Azure credentials seeding.');
-        }
+        // 6.1 Revert/Clean up master organization automatic Azure credentials seeding to enforce DefaultAzureCredential fallback.
+        // Seeding with SSO OAuth variables overrides the working DefaultAzureCredential (Managed Identity) with keys lacking Azure RBAC permissions.
+        console.log(`Cleaning up any automatically seeded Azure credentials for master organization '${masterOrgId}' to ensure DefaultAzureCredential fallback...`);
+        await connection.query(
+            "DELETE FROM integration_credentials WHERE organization_id = ? AND provider = 'azure'",
+            [masterOrgId]
+        );
 
         await connection.query(`
             INSERT INTO organizations (id, name) VALUES ('org-1', ?)
