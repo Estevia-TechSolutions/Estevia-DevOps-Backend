@@ -266,6 +266,46 @@ const credentialController = {
                 }
             }
 
+            else if (provider === 'azure') {
+                const clientId = secrets.clientId;
+                const clientSecret = secrets.clientSecret;
+                const tenantId = secrets.tenantId;
+                
+                if (!clientId || !clientSecret || !tenantId) {
+                    return res.status(400).json({ message: 'Invalid Azure credentials structure. Expected tenantId, clientId, and clientSecret.' });
+                }
+
+                // Retrieve subscription ID from organization
+                const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [organizationId]);
+                if (orgs.length === 0) {
+                    return res.status(404).json({ message: `Organization "${organizationId}" not found.` });
+                }
+                const subscriptionId = orgs[0].azure_subscription_id;
+                if (!subscriptionId) {
+                    return res.status(400).json({ message: 'Azure Subscription ID is not configured for organization.' });
+                }
+
+                const { ClientSecretCredential } = require('@azure/identity');
+                const { ResourceManagementClient } = require('@azure/arm-resources');
+
+                try {
+                    const credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+                    const client = new ResourceManagementClient(credential, subscriptionId);
+                    
+                    // Verify access by trying to list resource groups (limit to first 2 for speed)
+                    const groups = [];
+                    let count = 0;
+                    for await (const rg of client.resourceGroups.list()) {
+                        groups.push(rg.name);
+                        count++;
+                        if (count >= 2) break;
+                    }
+                    return res.json({ success: true, message: `Azure Service Principal authenticated. Discovered resource groups: ${groups.join(', ')}` });
+                } catch (err) {
+                    return res.status(400).json({ message: `Azure connection test failed: ${err.message}` });
+                }
+            }
+
             return res.status(400).json({ message: `Provider "${provider}" validation not supported.` });
         } catch (error) {
             console.error('[CredentialController] Validation failed:', error);
