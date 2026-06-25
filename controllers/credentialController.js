@@ -31,11 +31,28 @@ const credentialController = {
             
             let encrypted, iv, authTag;
 
+            // Always encrypt the secrets locally first as a fallback/backup
+            const encResult = encrypt(secretsString);
+            encrypted = encResult.encrypted;
+            iv = encResult.iv;
+            authTag = encResult.authTag;
+
             if (keyVaultUrl) {
                 try {
                     const { SecretClient } = require('@azure/keyvault-secrets');
-                    const { DefaultAzureCredential } = require('@azure/identity');
-                    const credential = new DefaultAzureCredential();
+                    let credential;
+
+                    // If manually saving Azure Service Principal credentials, use them directly to authenticate against Key Vault
+                    if (provider === 'azure' && secretsObj && secretsObj.clientId && secretsObj.clientSecret && secretsObj.tenantId && secretsObj.clientId !== 'SYSTEM_MANAGED_IDENTITY') {
+                        const { ClientSecretCredential } = require('@azure/identity');
+                        console.log(`[CredentialController] Initializing ClientSecretCredential for Key Vault write using manually supplied SP credentials.`);
+                        credential = new ClientSecretCredential(secretsObj.tenantId, secretsObj.clientId, secretsObj.clientSecret);
+                    } else {
+                        const { DefaultAzureCredential } = require('@azure/identity');
+                        console.log(`[CredentialController] Initializing DefaultAzureCredential for Key Vault write.`);
+                        credential = new DefaultAzureCredential();
+                    }
+
                     const client = new SecretClient(keyVaultUrl, credential);
                     const secretName = `${organizationId}-${provider}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
                     
@@ -46,15 +63,9 @@ const credentialController = {
                     iv = 'kv';
                     authTag = 'kv';
                 } catch (kvErr) {
-                    console.error('[CredentialController] Failed to write secret to Azure Key Vault:', kvErr.message);
-                    return res.status(500).json({ message: `Azure Key Vault storage failed: ${kvErr.message}` });
+                    console.warn(`[CredentialController] Failed to write secret to Azure Key Vault, falling back to local DB encryption:`, kvErr.message);
+                    // Do not block saving to local database, proceed with local encrypted variables
                 }
-            } else {
-                // Encrypt the secrets locally
-                const encResult = encrypt(secretsString);
-                encrypted = encResult.encrypted;
-                iv = encResult.iv;
-                authTag = encResult.authTag;
             }
 
             // Check if credentials for this organization and provider already exist
@@ -426,6 +437,12 @@ const credentialController = {
             const secretsString = JSON.stringify(secretsObj);
             let encrypted, iv, authTag;
 
+            // Always encrypt the secrets locally first as a fallback/backup
+            const encResult = encrypt(secretsString);
+            encrypted = encResult.encrypted;
+            iv = encResult.iv;
+            authTag = encResult.authTag;
+
             if (keyVaultUrl) {
                 try {
                     const { SecretClient } = require('@azure/keyvault-secrets');
@@ -441,14 +458,9 @@ const credentialController = {
                     iv = 'kv';
                     authTag = 'kv';
                 } catch (kvErr) {
-                    console.error('[CredentialController] Auto-discover Key Vault storage failed:', kvErr.message);
-                    return res.status(500).json({ message: `Azure Key Vault storage failed: ${kvErr.message}` });
+                    console.warn(`[CredentialController] Auto-discover Key Vault storage failed, falling back to local DB encryption:`, kvErr.message);
+                    // Do not block saving to local database, proceed with local encrypted variables
                 }
-            } else {
-                const encResult = encrypt(secretsString);
-                encrypted = encResult.encrypted;
-                iv = encResult.iv;
-                authTag = encResult.authTag;
             }
 
             const [existing] = await db.query(

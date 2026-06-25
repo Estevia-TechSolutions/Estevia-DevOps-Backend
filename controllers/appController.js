@@ -7023,6 +7023,13 @@ const appController = {
                 return res.status(400).json({ message: 'Missing organizationId query parameter.' });
             }
             const settings = await appController._getOrgSettings(organizationId);
+            
+            const [[{ writeCount }]] = await db.query(
+                `SELECT COUNT(*) AS writeCount FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+                [organizationId]
+            );
+            settings.currentWriteUsers = writeCount;
+
             res.json({ success: true, settings });
         } catch (error) {
             console.error('[AppController] getOrgSettings failed:', error);
