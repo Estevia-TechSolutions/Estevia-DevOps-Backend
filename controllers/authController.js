@@ -49,6 +49,27 @@ function decodeJwtPayload(token) {
     }
 }
 
+// ── Seat Capacity Helper ────────────────────────────────────────────────────────────
+// Single source of truth for seat gating across all auth handlers.
+async function checkSeatCapacity(organizationId) {
+    try {
+        const [[org]] = await db.query(
+            'SELECT operator_seats_limit FROM organizations WHERE id = ?',
+            [organizationId]
+        );
+        const limit = org?.operator_seats_limit ?? 10;
+        const [[{ count }]] = await db.query(
+            `SELECT COUNT(*) AS count FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+            [organizationId]
+        );
+        return { limit, current: count, isFull: count >= limit };
+    } catch (err) {
+        console.warn('[authController] checkSeatCapacity failed (non-fatal):', err.message);
+        return { limit: 10, current: 0, isFull: false };
+    }
+}
+// ── End Seat Helper ────────────────────────────────────────────────────────────
+
 // Exchanges code for Microsoft OAuth access token and user claims
 const microsoftLogin = async (req, res) => {
     const { code } = req.body;
@@ -168,13 +189,24 @@ const microsoftLogin = async (req, res) => {
                 );
                 user = { id: msalId, email, name, organization_id: orgId || preSeededUser.organization_id, tenant_id: tenantIdFromToken, role: finalRole };
             } else {
-                // User does not exist at all, insert them
-                console.log(`[authController] Creating new user: ${email} for tenant: ${tenantIdFromToken} with role: ${userRole}`);
+                // Truly new user — apply seat capacity gate for write-roles
+                const writeRoles = ['owner', 'admin', 'contributor'];
+                let assignedRole = userRole;
+                if (writeRoles.includes(userRole) && orgId) {
+                    const seatCheck = await checkSeatCapacity(orgId);
+                    if (seatCheck.isFull) {
+                        console.warn(`[authController] Seat cap reached for org '${orgId}' (${seatCheck.current}/${seatCheck.limit}). New user ${email} cannot be assigned role '${userRole}'.`);
+                        return res.status(403).json({
+                            error: `Seat license limit reached (${seatCheck.current}/${seatCheck.limit}). Contact your administrator to increase the seat limit or assign you a Viewer role.`
+                        });
+                    }
+                }
+                console.log(`[authController] Creating new user: ${email} for tenant: ${tenantIdFromToken} with role: ${assignedRole}`);
                 await db.query(
                     'INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES (?, ?, ?, ?, ?, ?)',
-                    [msalId, email, name, orgId, tenantIdFromToken, userRole]
+                    [msalId, email, name, orgId, tenantIdFromToken, assignedRole]
                 );
-                user = { id: msalId, email, name, organization_id: orgId, tenant_id: tenantIdFromToken, role: userRole };
+                user = { id: msalId, email, name, organization_id: orgId, tenant_id: tenantIdFromToken, role: assignedRole };
             }
         } else {
             user = users[0];
@@ -612,6 +644,21 @@ const updateUserRole = async (req, res) => {
             return res.status(403).json({ error: 'Only Owners can modify other Owner settings.' });
         }
 
+        // Seat capacity check: block write-role promotions when seats are full
+        const writeRoles = ['owner', 'admin', 'contributor'];
+        const isPromotion = writeRoles.includes(role.toLowerCase()) && !writeRoles.includes(targetUser.role);
+        if (isPromotion) {
+            const orgId = req.user?.organization_id || targetUser.organization_id;
+            if (orgId) {
+                const seatCheck = await checkSeatCapacity(orgId);
+                if (seatCheck.isFull) {
+                    return res.status(403).json({
+                        error: `Seat limit reached (${seatCheck.current}/${seatCheck.limit}). Cannot promote this user to a write role. Increase the seat limit or remove a write-role user first.`
+                    });
+                }
+            }
+        }
+
         await db.query('UPDATE users SET role = ? WHERE id = ?', [role.toLowerCase(), userId]);
 
         // Fire Teams security alert asynchronously
@@ -717,9 +764,13 @@ const syncUsers = async (req, res) => {
                 await db.query('UPDATE users SET id = ?, name = ? WHERE email = ?', [msalId, name, email]);
                 updatedUsersCount++;
             } else {
+                // New user from AD sync — check seat capacity for write roles
+                // Sync always inserts as 'viewer' by default, but apply cap anyway for future-proofing
+                const seatCapCheck = await checkSeatCapacity(orgId);
+                const insertRole = seatCapCheck.isFull ? 'viewer' : 'viewer'; // sync always inserts as viewer
                 await db.query(
                     'INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES (?, ?, ?, ?, ?, ?)',
-                    [msalId, email, name, orgId, tenantId, 'viewer']
+                    [msalId, email, name, orgId, tenantId, insertRole]
                 );
                 newUsersCount++;
             }

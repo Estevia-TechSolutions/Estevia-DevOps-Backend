@@ -1923,7 +1923,7 @@ const appController = {
 
             let dbBranch = null;
             const [existing] = await db.query(
-                'SELECT id, repo_url, azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
+                'SELECT id, repo_url, azure_resource_details, license_frozen FROM applications WHERE organization_id = ? AND name = ?',
                 [organizationId, app.name]
             );
             if (existing.length > 0) {
@@ -1940,6 +1940,7 @@ const appController = {
                 }
             }
             app.branch = app.branch || dbBranch;
+            app.license_frozen = existing[0]?.license_frozen || 0;
 
             if (app.branches && app.branches.length > 0) {
                 if (app.branches.length === 1) {
@@ -2403,7 +2404,7 @@ const appController = {
             // Cached request check
             if (req.query.cached === 'true') {
                 const [dbApps] = await db.query(
-                    'SELECT name, app_type, status, repo_url, azure_resource_details, godaddy_dns_details, pipeline_id FROM applications WHERE organization_id = ?',
+                    'SELECT name, app_type, status, repo_url, azure_resource_details, godaddy_dns_details, pipeline_id, license_frozen FROM applications WHERE organization_id = ?',
                     [organizationId]
                 );
 
@@ -2430,7 +2431,8 @@ const appController = {
                         pipelineId: app.pipeline_id,
                         pipelineName: details.pipelineName || null,
                         pipelineRun: details.pipelineRun || null,
-                        azureResourceDetails: details
+                        azureResourceDetails: details,
+                        license_frozen: app.license_frozen || 0
                     };
                 });
 
@@ -2449,7 +2451,7 @@ const appController = {
             // Builds-only light request check (refreshes pipeline status only, bypasses heavy Azure/DNS queries)
             if (req.query.buildsOnly === 'true') {
                 const [dbApps] = await db.query(
-                    'SELECT id, name, app_type, status, repo_url, azure_resource_details, godaddy_dns_details, pipeline_id FROM applications WHERE organization_id = ?',
+                    'SELECT id, name, app_type, status, repo_url, azure_resource_details, godaddy_dns_details, pipeline_id, license_frozen FROM applications WHERE organization_id = ?',
                     [organizationId]
                 );
 
@@ -2491,7 +2493,8 @@ const appController = {
                         pipelineId: dbApp.pipeline_id,
                         pipelineName: details.pipelineName || null,
                         pipelineRun: details.pipelineRun || null,
-                        azureResourceDetails: details
+                        azureResourceDetails: details,
+                        license_frozen: dbApp.license_frozen || 0
                     };
 
                     // Only query live API if the app has a valid pipeline ID
@@ -3158,7 +3161,7 @@ const appController = {
 
                 let dbBranch = null;
                 const [existing] = await db.query(
-                    'SELECT id, repo_url, azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
+                    'SELECT id, repo_url, azure_resource_details, license_frozen FROM applications WHERE organization_id = ? AND name = ?',
                     [organizationId, app.name]
                 );
                 if (existing.length > 0) {
@@ -3175,6 +3178,7 @@ const appController = {
                     }
                 }
                 app.branch = app.branch || dbBranch;
+                app.license_frozen = existing[0]?.license_frozen || 0;
 
                 if (app.branches && app.branches.length > 0) {
                     if (app.branches.length === 1) {
@@ -3762,6 +3766,36 @@ const appController = {
             if (type !== 'frontend' && type !== 'backend' && type !== 'cluster' && type !== 'database') {
                 return res.status(400).json({ message: 'Invalid type parameter. Must be "frontend", "backend", "cluster", or "database".' });
             }
+
+            // ── License Tier: Environment Cap Enforcement ────────────────────
+            const [[orgLicense]] = await db.query(
+                'SELECT license_tier FROM organizations WHERE id = ?',
+                [organizationId]
+            );
+            const tierLimits = { growth: 5, enterprise: 25, sovereign: Infinity };
+            const currentTier = orgLicense?.license_tier || 'growth';
+            const tierCap = tierLimits[currentTier] ?? 5;
+
+            if (tierCap !== Infinity) {
+                const [[{ totalCount }]] = await db.query(
+                    'SELECT COUNT(*) AS totalCount FROM applications WHERE organization_id = ?',
+                    [organizationId]
+                );
+                const [[{ frozenCount }]] = await db.query(
+                    'SELECT COUNT(*) AS frozenCount FROM applications WHERE organization_id = ? AND license_frozen = 1',
+                    [organizationId]
+                );
+                if (totalCount >= tierCap) {
+                    return res.status(403).json({
+                        success: false,
+                        message: `Environment cap reached for your ${currentTier.toUpperCase()} tier (max ${tierCap}). Decommission existing environments or upgrade your subscription.`,
+                        frozenNote: frozenCount > 0
+                            ? `${frozenCount} frozen environment(s) from a prior tier are counting toward your cap.`
+                            : undefined
+                    });
+                }
+            }
+            // ── End License Tier Check ────────────────────────────────────────
 
             const orgSettings = await appController._getOrgSettings(organizationId);
             const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
@@ -6997,6 +7031,80 @@ const appController = {
     },
 
     /**
+     * GET /api/apps/downgrade-impact
+     * Returns a live preview of what will be frozen/locked if the org downgrades to targetTier.
+     */
+    getDowngradeImpact: async (req, res) => {
+        try {
+            const organizationId = req.user?.organization_id || req.query.organizationId;
+            const { targetTier } = req.query;
+
+            if (!organizationId || !targetTier) {
+                return res.status(400).json({ message: 'Missing organizationId or targetTier parameter.' });
+            }
+
+            const [[org]] = await db.query(
+                'SELECT license_tier FROM organizations WHERE id = ?',
+                [organizationId]
+            );
+            if (!org) return res.status(404).json({ message: 'Organization not found.' });
+
+            const currentTier = org.license_tier || 'growth';
+            const tierRank   = { growth: 1, enterprise: 2, sovereign: 3 };
+            const tierLimits = { growth: 5, enterprise: 25, sovereign: Infinity };
+
+            if ((tierRank[targetTier] ?? 0) >= (tierRank[currentTier] ?? 0)) {
+                return res.json({
+                    currentTier,
+                    targetTier,
+                    isDowngrade: false,
+                    impact: { environments: { excess: 0, willBeFrozen: 0, frozenAppNames: [] }, rules: { willBeLocked: [] } }
+                });
+            }
+
+            const targetCap = tierLimits[targetTier] ?? 5;
+            const [allApps] = await db.query(
+                'SELECT name FROM applications WHERE organization_id = ? AND license_frozen = 0 ORDER BY created_at ASC',
+                [organizationId]
+            );
+            const activeCount   = allApps.length;
+            const excess        = Math.max(0, activeCount - targetCap);
+            const frozenApps    = excess > 0 ? allApps.slice(targetCap).map(a => a.name) : [];
+
+            const allRules    = ['tagging', 'tls', 'network-security', 'https-only', 'containment', 'registry-auth', 'secrets-expiry', 'residency', 'shadow-it'];
+            const tierRules   = { growth: new Set(['tagging', 'tls', 'network-security']), enterprise: null, sovereign: null };
+            const targetAllowed = tierRules[targetTier];
+            const willBeLocked  = targetAllowed ? allRules.filter(r => !targetAllowed.has(r)) : [];
+
+            return res.json({
+                currentTier,
+                targetTier,
+                isDowngrade: true,
+                impact: {
+                    environments: {
+                        current:        activeCount,
+                        cap:            targetCap === Infinity ? null : targetCap,
+                        excess,
+                        willBeFrozen:   excess,
+                        frozenAppNames: frozenApps
+                    },
+                    rules: {
+                        currentlyActive:     allRules.length,
+                        allowedUnderNewTier: targetAllowed ? targetAllowed.size : allRules.length,
+                        willBeLocked
+                    },
+                    autoRemediation: {
+                        note: 'Autonomous self-healing (roadmap feature) — not currently active.'
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('[AppController] getDowngradeImpact failed:', error);
+            res.status(500).json({ message: 'Failed to compute downgrade impact.', error: error.message });
+        }
+    },
+
+    /**
      * POST /api/apps/organization-settings
      */
     updateOrgSettings: async (req, res) => {
@@ -7021,7 +7129,11 @@ const appController = {
                 qaDbHost,
                 prodDbHost,
                 devManagedEnvId,
-                prodManagedEnvId
+                prodManagedEnvId,
+                // License fields
+                licenseTier,
+                operatorSeatsLimit,
+                downgradeConfirmToken
             } = req.body;
 
             if (!organizationId) {
@@ -7032,6 +7144,113 @@ const appController = {
             await db.query(`
                 INSERT IGNORE INTO organizations (id, name) VALUES (?, ?)
             `, [organizationId, organizationId.toUpperCase()]);
+
+            // ── License Tier Change Enforcement ─────────────────────────────
+            const [[currentOrg]] = await db.query(
+                'SELECT license_tier, operator_seats_limit FROM organizations WHERE id = ?',
+                [organizationId]
+            );
+            const currentTier       = currentOrg?.license_tier || 'growth';
+            const tierRank          = { growth: 1, enterprise: 2, sovereign: 3 };
+            const isChangingTier    = licenseTier && licenseTier !== currentTier;
+            const isDowngrade       = isChangingTier && (tierRank[licenseTier] ?? 0) < (tierRank[currentTier] ?? 0);
+
+            // Gate 1: Only owner can change tier
+            if (isChangingTier && req.user?.role !== 'owner') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Only the Organization Owner can change the subscription tier.'
+                });
+            }
+
+            // Gate 2: Downgrade must include type-to-confirm token
+            if (isDowngrade) {
+                if (!downgradeConfirmToken || downgradeConfirmToken.trim() !== organizationId) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Downgrade confirmation token is missing or incorrect. Type your organization ID exactly to confirm.'
+                    });
+                }
+            }
+
+            // Gate 3: Seat limit reduction — Grandfather + Soft Cap check
+            let overSeatLimit = false;
+            let currentWriteUsers = 0;
+            const newSeatLimit = operatorSeatsLimit !== undefined ? parseInt(operatorSeatsLimit, 10) : null;
+            if (newSeatLimit !== null && newSeatLimit < (currentOrg?.operator_seats_limit ?? 10)) {
+                const [[{ writeCount }]] = await db.query(
+                    `SELECT COUNT(*) AS writeCount FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+                    [organizationId]
+                );
+                currentWriteUsers = writeCount;
+                if (writeCount > newSeatLimit) overSeatLimit = true;
+            }
+
+            // Apply tier update immediately
+            if (isChangingTier) {
+                await db.query(
+                    'UPDATE organizations SET license_tier = ?, downgrade_pending = ? WHERE id = ?',
+                    [licenseTier, isDowngrade ? 1 : 0, organizationId]
+                );
+            }
+
+            // Apply seat limit update
+            if (newSeatLimit !== null) {
+                await db.query(
+                    'UPDATE organizations SET operator_seats_limit = ? WHERE id = ?',
+                    [newSeatLimit, organizationId]
+                );
+            }
+
+            // Compliance Debt: freeze excess environments in background
+            let frozenCount = 0;
+            if (isDowngrade) {
+                setImmediate(async () => {
+                    try {
+                        const tierLimits = { growth: 5, enterprise: 25, sovereign: Infinity };
+                        const cap = tierLimits[licenseTier] ?? 5;
+                        if (cap !== Infinity) {
+                            const [activeApps] = await db.query(
+                                'SELECT id, name FROM applications WHERE organization_id = ? AND license_frozen = 0 ORDER BY created_at ASC',
+                                [organizationId]
+                            );
+                            const toFreeze = activeApps.slice(cap);
+                            frozenCount = toFreeze.length;
+                            for (const app of toFreeze) {
+                                await db.query(
+                                    'UPDATE applications SET license_frozen = 1 WHERE id = ?',
+                                    [app.id]
+                                );
+                            }
+                            console.log(`[License] Froze ${frozenCount} environments for org '${organizationId}' after downgrade to ${licenseTier}.`);
+
+                            // Teams audit alert
+                            try {
+                                const { sendTeamsNotification } = require('../utils/teamsNotification');
+                                if (typeof sendTeamsNotification === 'function') {
+                                    await sendTeamsNotification(organizationId, {
+                                        title: '⚠️ Subscription Tier Downgrade — EvaOps Security Alert',
+                                        themeColor: 'FF4444',
+                                        text: `EvaOps subscription tier for **${organizationId}** has been downgraded.`,
+                                        facts: [
+                                            { name: 'Downgraded By',      value: req.user?.email || 'System' },
+                                            { name: 'Previous Tier',      value: currentTier.toUpperCase() },
+                                            { name: 'New Tier',           value: licenseTier.toUpperCase() },
+                                            { name: 'Environments Frozen',value: String(frozenCount) },
+                                            { name: 'Timestamp',          value: new Date().toISOString() }
+                                        ]
+                                    });
+                                }
+                            } catch (notifyErr) {
+                                console.warn('[License] Teams downgrade notification failed (non-fatal):', notifyErr.message);
+                            }
+                        }
+                    } catch (freezeErr) {
+                        console.error('[License] Environment freeze task failed:', freezeErr.message);
+                    }
+                });
+            }
+            // ── End License Enforcement ──────────────────────────────────────
 
             // Load existing org settings to check for changes
             const [existingOrg] = await db.query(
@@ -7125,6 +7344,27 @@ const appController = {
                 const token = crypto.randomBytes(16).toString('hex');
                 await db.query('UPDATE organizations SET teams_webhook_token = ? WHERE id = ?', [token, organizationId]);
                 console.log(`[AppController] Generated teams_webhook_token for org '${organizationId}'.`);
+            }
+
+            // Return appropriate response based on seat limit situation
+            if (overSeatLimit) {
+                return res.status(207).json({
+                    success: true,
+                    overSeatLimit: true,
+                    currentWriteUsers,
+                    newLimit: newSeatLimit,
+                    message: `Settings saved. Your org currently has ${currentWriteUsers} write-role users exceeding the new seat limit of ${newSeatLimit}. No new operator users can be added until the count drops below ${newSeatLimit}.`
+                });
+            }
+
+            if (isDowngrade) {
+                return res.json({
+                    success: true,
+                    downgraded: true,
+                    complianceDebt: {
+                        message: `Tier updated to ${licenseTier.toUpperCase()}. Excess environments are being frozen in the background. Check the Compliance Checklist to resolve.`
+                    }
+                });
             }
 
             res.json({ success: true, message: 'Organization settings updated successfully.' });
@@ -9338,6 +9578,23 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
   getComplianceStatus: async (req, res) => {
       try {
           const { organizationId } = req.query;
+          // Resolve org and fetch tier for rule scope enforcement
+          const resolvedOrgId = organizationId || req.user?.organization_id || 'estevia';
+          const [[orgRecord]] = await db.query(
+              'SELECT license_tier FROM organizations WHERE id = ?',
+              [resolvedOrgId]
+          );
+          const orgLicenseTier = orgRecord?.license_tier || 'growth';
+
+          // Tier-based rule scope: growth gets 3 core rules only
+          const tierAllowedRules = {
+              growth:     new Set(['tagging', 'tls', 'network-security']),
+              enterprise: null,   // null = all 9 rules allowed
+              sovereign:  null
+          };
+          const restrictedRules = tierAllowedRules[orgLicenseTier] ?? tierAllowedRules.growth;
+          // ── End tier scope setup ─────────────────────────────────────────
+
           if (!organizationId) {
               return res.status(400).json({ message: 'Missing organizationId query parameter.' });
           }
@@ -9347,6 +9604,16 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
           // Parse disabled rules and severities from database organization settings
           const disabledRulesQuery = orgSettings.disabled_rules || '';
           const disabledRules = new Set(disabledRulesQuery.split(',').filter(Boolean));
+
+          // Auto-disable restricted rules based on license tier
+          if (restrictedRules) {
+              const allRules = ['tagging', 'residency', 'tls', 'network-security', 'https-only', 'containment', 'registry-auth', 'secrets-expiry', 'shadow-it'];
+              for (const ruleId of allRules) {
+                  if (!restrictedRules.has(ruleId)) {
+                      disabledRules.add(ruleId);
+                  }
+              }
+          }
 
           const severitiesQuery = orgSettings.rule_severities || '{}';
           let severities = {};
@@ -9827,6 +10094,16 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
 
           // Build dynamic rules compliance state
           const rules = rulesDef.map(def => {
+              const isRestricted = restrictedRules && !restrictedRules.has(def.id);
+              if (isRestricted) {
+                  return {
+                      ...def,
+                      status: 'disabled',
+                      licenseRestricted: true,
+                      message: 'This compliance rule requires an Enterprise Governance or Sovereign subscription.',
+                      severity: severities[def.id] || (def.id === 'tls' || def.id === 'network-security' ? 'critical' : def.id === 'tagging' ? 'low' : def.id === 'https-only' || def.id === 'registry-auth' ? 'medium' : 'high')
+                  };
+              }
               const isDisabled = disabledRules.has(def.id);
               const failed = violations.some(v => v.ruleId === def.id);
               return {
@@ -9917,6 +10194,23 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
   remediateCompliance: async (req, res) => {
       try {
           const organizationId = req.body.organizationId || req.user?.organization_id || 'estevia';
+
+          // ── Future-proof: Autonomous trigger gate ────────────────────────
+          const isAutomatedTrigger = req.body.isAutomatedTrigger || false;
+          if (isAutomatedTrigger) {
+              const [[orgTier]] = await db.query(
+                  'SELECT license_tier FROM organizations WHERE id = ?',
+                  [organizationId]
+              );
+              if ((orgTier?.license_tier || 'growth') === 'growth') {
+                  return res.status(403).json({
+                      success: false,
+                      message: 'Autonomous self-healing remediation requires an Enterprise or Sovereign subscription.'
+                  });
+              }
+          }
+          // ── End autonomous gate ──────────────────────────────────────────
+
           let items = [];
 
           if (Array.isArray(req.body.violations)) {
@@ -9936,7 +10230,21 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
               const { resourceName, ruleId, suggestionId } = item;
               if (!suggestionId || !ruleId) continue;
 
-              // Persist applied remediation log mapping
+              // ── Frozen environment guard ─────────────────────────────────
+              if (resourceName) {
+                  const [[frozenCheck]] = await db.query(
+                      'SELECT license_frozen FROM applications WHERE organization_id = ? AND name = ?',
+                      [organizationId, resourceName]
+                  );
+                  if (frozenCheck?.license_frozen) {
+                      return res.status(403).json({
+                          success: false,
+                          message: `Environment '${resourceName}' is frozen under your current tier. Decommission it or upgrade your subscription to apply remediations.`
+                      });
+                  }
+              }
+              // ── End frozen guard ─────────────────────────────────────────
+
               await db.query(
                   `INSERT INTO applied_remediations (organization_id, suggestion_id, type, app_name, savings)
                    VALUES (?, ?, ?, ?, 0.00)

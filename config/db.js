@@ -116,13 +116,47 @@ async function runAutoMigration() {
             console.log('[DevOps DB] Adding column rule_severities to organizations...');
             await pool.query(`ALTER TABLE organizations ADD COLUMN rule_severities TEXT DEFAULT NULL`);
         }
+
+        // --- License Enforcement Columns (organizations) ---
+        if (!columnNames.includes('license_tier')) {
+            console.log('[DevOps DB] Adding column license_tier to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN license_tier VARCHAR(50) NOT NULL DEFAULT 'growth'`);
+        }
+        if (!columnNames.includes('operator_seats_limit')) {
+            console.log('[DevOps DB] Adding column operator_seats_limit to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN operator_seats_limit INT NOT NULL DEFAULT 10`);
+        }
+        if (!columnNames.includes('downgrade_pending')) {
+            console.log('[DevOps DB] Adding column downgrade_pending to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN downgrade_pending TINYINT(1) NOT NULL DEFAULT 0`);
+        }
+        if (!columnNames.includes('allowed_providers')) {
+            console.log('[DevOps DB] Adding column allowed_providers to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN allowed_providers VARCHAR(255) NOT NULL DEFAULT 'azure'`);
+        }
+
+        // --- License Enforcement Columns (applications) ---
+        const [appColumns] = await pool.query(`
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+              AND TABLE_NAME = 'applications'
+        `);
+        const appColumnNames = appColumns.map(c => c.COLUMN_NAME.toLowerCase());
+        if (!appColumnNames.includes('license_frozen')) {
+            console.log('[DevOps DB] Adding column license_frozen to applications...');
+            await pool.query(`ALTER TABLE applications ADD COLUMN license_frozen TINYINT(1) NOT NULL DEFAULT 0`);
+        }
         
         const masterOrgId = process.env.MASTER_ORGANIZATION_ID || 'estevia';
         const masterAdminEmail = process.env.MASTER_ADMIN_EMAIL || 'govind.m@esteviatech.com';
-        console.log(`[DevOps DB] Seeding admin_email for ${masterOrgId} organization...`);
+        console.log(`[DevOps DB] Seeding admin_email and license tier for ${masterOrgId} organization...`);
         await pool.query(`
             UPDATE organizations 
-            SET admin_email = ? 
+            SET admin_email = ?,
+                license_tier = 'sovereign',
+                operator_seats_limit = 100,
+                allowed_providers = 'azure'
             WHERE id = ?
         `, [masterAdminEmail, masterOrgId]);
 

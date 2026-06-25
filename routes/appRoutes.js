@@ -66,6 +66,9 @@ router.get('/billing', appController.getBillingHistory);
 router.get('/billing/forecast', appController.getBillingForecast);
 
 
+// Preview impact of a tier downgrade before confirming
+router.get('/downgrade-impact', restrictTo('owner', 'admin'), appController.getDowngradeImpact);
+
 // Update organization settings
 router.post('/organization-settings', restrictTo('owner', 'admin'), appController.updateOrgSettings);
 

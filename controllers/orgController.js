@@ -273,29 +273,46 @@ const orgController = {
         try {
             const organizationId = req.user.organization_id;
             if (!organizationId) {
-                return res.json({ onboardingComplete: false, step: 1, organization: null });
+                return res.json({ onboardingComplete: false, step: 1, organization: null, credentialGate: { isComplete: false, missing: { azure: true, github: true, azureDevops: true, godaddy: true } } });
             }
 
             const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [organizationId]);
             if (orgs.length === 0) {
-                return res.json({ onboardingComplete: false, step: 1, organization: null });
+                return res.json({ onboardingComplete: false, step: 1, organization: null, credentialGate: { isComplete: false, missing: { azure: true, github: true, azureDevops: true, godaddy: true } } });
             }
 
             const org = orgs[0];
+
+            // Always check credential completeness regardless of onboarding_complete
+            const [creds] = await db.query(
+                'SELECT provider FROM integration_credentials WHERE organization_id = ?',
+                [organizationId]
+            );
+            const providers = new Set(creds.map(c => c.provider));
+
+            const credentialGate = {
+                isComplete: providers.has('azure') &&
+                            providers.has('github') &&
+                            providers.has('azure_devops') &&
+                            providers.has('godaddy'),
+                missing: {
+                    azure:       !providers.has('azure'),
+                    github:      !providers.has('github'),
+                    azureDevops: !providers.has('azure_devops'),
+                    godaddy:     !providers.has('godaddy')
+                }
+            };
+
             let step = 1;
-            
             if (org.onboarding_complete) {
                 step = 5;
             } else {
                 // Determine current step based on completed configuration
-                const [creds] = await db.query('SELECT provider FROM integration_credentials WHERE organization_id = ?', [organizationId]);
-                const providers = creds.map(c => c.provider);
-
-                if (!providers.includes('azure')) {
+                if (!providers.has('azure')) {
                     step = 2;
-                } else if (!providers.includes('github') || !providers.includes('azure_devops')) {
+                } else if (!providers.has('github') || !providers.has('azure_devops')) {
                     step = 3;
-                } else if (!providers.includes('godaddy')) {
+                } else if (!providers.has('godaddy')) {
                     step = 4;
                 } else {
                     step = 5;
@@ -305,7 +322,8 @@ const orgController = {
             res.json({
                 onboardingComplete: !!org.onboarding_complete,
                 step,
-                organization: org
+                organization: org,
+                credentialGate
             });
         } catch (error) {
             console.error('[OrgController] getStatus failed:', error);
