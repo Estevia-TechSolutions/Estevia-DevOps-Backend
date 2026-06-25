@@ -9342,19 +9342,19 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
               return res.status(400).json({ message: 'Missing organizationId query parameter.' });
           }
 
-          // Parse disabled rules and severities query parameters
-          const disabledRulesQuery = req.query.disabledRules || '';
+          const orgSettings = await appController._getOrgSettings(organizationId);
+
+          // Parse disabled rules and severities from database organization settings
+          const disabledRulesQuery = orgSettings.disabled_rules || '';
           const disabledRules = new Set(disabledRulesQuery.split(',').filter(Boolean));
 
-          const severitiesQuery = req.query.severities || '{}';
+          const severitiesQuery = orgSettings.rule_severities || '{}';
           let severities = {};
           try {
               severities = JSON.parse(severitiesQuery);
           } catch (e) {
               severities = {};
           }
-
-          const orgSettings = await appController._getOrgSettings(organizationId);
           const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
           const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
@@ -9832,6 +9832,58 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
       } catch (error) {
           console.error('[AppController] getComplianceStatus failed:', error);
           res.status(500).json({ message: 'Failed to retrieve compliance status.', error: error.message });
+      }
+  },
+
+  getComplianceSettings: async (req, res) => {
+      try {
+          const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
+          if (!organizationId) {
+              return res.status(400).json({ message: 'Missing organizationId query parameter.' });
+          }
+
+          const orgSettings = await appController._getOrgSettings(organizationId);
+          const disabledRules = orgSettings.disabled_rules ? orgSettings.disabled_rules.split(',').filter(Boolean) : [];
+          let ruleSeverities = {};
+          try {
+              ruleSeverities = orgSettings.rule_severities ? JSON.parse(orgSettings.rule_severities) : {};
+          } catch (e) {
+              ruleSeverities = {};
+          }
+
+          res.json({
+              success: true,
+              disabledRules,
+              ruleSeverities
+          });
+      } catch (error) {
+          console.error('[AppController] getComplianceSettings failed:', error);
+          res.status(500).json({ message: 'Failed to retrieve compliance settings.', error: error.message });
+      }
+  },
+
+  updateComplianceSettings: async (req, res) => {
+      try {
+          const { organizationId, disabledRules, ruleSeverities } = req.body;
+          if (!organizationId) {
+              return res.status(400).json({ message: 'Missing organizationId parameter.' });
+          }
+
+          const disabledRulesStr = Array.isArray(disabledRules) ? disabledRules.join(',') : '';
+          const ruleSeveritiesStr = ruleSeverities ? JSON.stringify(ruleSeverities) : '{}';
+
+          await db.query(
+              'UPDATE organizations SET disabled_rules = ?, rule_severities = ? WHERE id = ?',
+              [disabledRulesStr, ruleSeveritiesStr, organizationId]
+          );
+
+          res.json({
+              success: true,
+              message: 'Compliance settings updated successfully.'
+          });
+      } catch (error) {
+          console.error('[AppController] updateComplianceSettings failed:', error);
+          res.status(500).json({ message: 'Failed to update compliance settings.', error: error.message });
       }
   },
 

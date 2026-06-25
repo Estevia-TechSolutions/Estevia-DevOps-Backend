@@ -7,7 +7,7 @@ if (process.env.NODE_ENV === 'test') {
             console.log(`[Mock DB] Executing query: ${sql}`);
             const sqlLower = sql.toLowerCase();
             if (sqlLower.includes('select column_name')) {
-                return [['azure_container_registry', 'azure_devops_service_connection', 'docker_registry_service_connection', 'azure_key_vault_url', 'dev_db_host', 'qa_db_host', 'prod_db_host', 'dev_managed_env_id', 'prod_managed_env_id'].map(name => ({ COLUMN_NAME: name }))];
+                return [['azure_container_registry', 'azure_devops_service_connection', 'docker_registry_service_connection', 'azure_key_vault_url', 'dev_db_host', 'qa_db_host', 'prod_db_host', 'dev_managed_env_id', 'prod_managed_env_id', 'disabled_rules', 'rule_severities'].map(name => ({ COLUMN_NAME: name }))];
             }
             if (sqlLower.includes('from applications')) {
                 return [[
@@ -15,9 +15,9 @@ if (process.env.NODE_ENV === 'test') {
                     { id: 2, name: 'estevia-db-flex', app_type: 'database', status: 'active', azure_resource_details: '{}' }
                 ]];
             }
-            if (sqlLower.includes('select * from organizations')) {
+            if (sqlLower.includes('select * from organizations') || sqlLower.includes('from organizations where id =')) {
                 return [[
-                    { id: 'estevia', azure_subscription_id: 'sub-id', azure_resource_group: 'rg', default_dns_domain: 'esteviatech.com' }
+                    { id: 'estevia', azure_subscription_id: 'sub-id', azure_resource_group: 'rg', default_dns_domain: 'esteviatech.com', disabled_rules: 'tagging', rule_severities: '{"network-security":"Critical"}' }
                 ]];
             }
             if (sqlLower.includes('insert into audit_logs')) {
@@ -107,6 +107,14 @@ async function runAutoMigration() {
         if (!columnNames.includes('prod_log_analytics_workspace_id')) {
             console.log('[DevOps DB] Adding column prod_log_analytics_workspace_id to organizations...');
             await pool.query(`ALTER TABLE organizations ADD COLUMN prod_log_analytics_workspace_id VARCHAR(255) DEFAULT NULL`);
+        }
+        if (!columnNames.includes('disabled_rules')) {
+            console.log('[DevOps DB] Adding column disabled_rules to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN disabled_rules TEXT DEFAULT NULL`);
+        }
+        if (!columnNames.includes('rule_severities')) {
+            console.log('[DevOps DB] Adding column rule_severities to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN rule_severities TEXT DEFAULT NULL`);
         }
         
         const masterOrgId = process.env.MASTER_ORGANIZATION_ID || 'estevia';

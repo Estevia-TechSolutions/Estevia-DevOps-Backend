@@ -53,6 +53,8 @@ router.post('/cost/apply-remediation', restrictTo('owner', 'admin', 'contributor
 
 // Azure Policy Compliance Auditing
 router.get('/compliance', appController.getComplianceStatus);
+router.get('/compliance/settings', appController.getComplianceSettings);
+router.post('/compliance/settings', restrictTo('owner', 'admin', 'contributor'), appController.updateComplianceSettings);
 router.post('/compliance/remediate', restrictTo('owner', 'admin', 'contributor'), appController.remediateCompliance);
 
 
