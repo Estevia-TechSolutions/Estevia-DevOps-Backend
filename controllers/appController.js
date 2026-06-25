@@ -1114,11 +1114,12 @@ const appController = {
             }
 
             let branch = null;
+            let azureResourceDetails = null;
             if (matchedApp) {
-                const detailsJson = typeof matchedApp.azure_resource_details === 'string'
+                azureResourceDetails = typeof matchedApp.azure_resource_details === 'string'
                     ? JSON.parse(matchedApp.azure_resource_details || '{}')
                     : (matchedApp.azure_resource_details || {});
-                branch = detailsJson.branch || null;
+                branch = azureResourceDetails.branch || null;
             }
 
             const envType = getEnvType(rName, branch);
@@ -1240,7 +1241,8 @@ const appController = {
                 fqdn: fqdn,
                 repositoryUrl: matchedApp?.repo_url || null,
                 isTestResource: !!isTestResource,
-                branch: branch || null
+                branch: branch || null,
+                azureResourceDetails: azureResourceDetails || (r.id ? { resourceId: r.id, location: r.location } : null)
             });
         }
 
@@ -1458,7 +1460,8 @@ const appController = {
                     fqdn: fqdn,
                     repositoryUrl: app.repo_url || null,
                     isTestResource: !!isTestResource,
-                    branch: branch || null
+                    branch: branch || null,
+                    azureResourceDetails: azureDetails
                 });
             }
         }
