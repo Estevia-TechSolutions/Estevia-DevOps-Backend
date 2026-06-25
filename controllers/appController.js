@@ -9455,54 +9455,81 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                   id: 'tagging',
                   name: 'Required Resource Tagging',
                   description: 'Enforces presence of enterprise tagging standards: Environment, Owner, and CostCenter.',
+                  rootCause: 'Lack of strict resource group template constraints or manual provisioning bypassing setup scripts.',
+                  whyImportant: 'Crucial for cost allocation, resource categorization, and compliance auditing. Yields up to 25% cost tracking efficiency.',
+                  impactOfFix: 'Applies missing tags to resource groups via ARM APIs, ensuring 100% accurate attribution without downtime.',
                   standards: ['ISO 27001 (A.12.1.1)', 'SOC 2 (CC7.1)']
               },
               {
                   id: 'residency',
                   name: 'Data Region Residency Lock',
                   description: 'Verifies all hosted assets reside within approved sovereign geo boundaries (US-only).',
+                  rootCause: 'Developers selecting incorrect deployment regions in cloud config templates.',
+                  whyImportant: 'Avoids regulatory legal penalties (e.g. GDPR, CCPA) by guaranteeing sensitive customer data does not cross international borders.',
+                  impactOfFix: 'Restricts non-compliant traffic routes and flags the deployment to prevent data residency leaks.',
                   standards: ['GDPR (Article 45)', 'SOC 2 (CC6.6)']
               },
               {
                   id: 'tls',
                   name: 'MySQL SSL/TLS Enforcement',
                   description: 'Checks if databases enforce secure transport (SSL/TLS v1.2+) settings.',
+                  rootCause: 'Default database server configurations allowing unencrypted connections for legacy compatibility.',
+                  whyImportant: 'Prevents man-in-the-middle attacks and packet sniffing of database credentials, satisfying PCI-DSS requirements.',
+                  impactOfFix: 'Executes server configuration patches to require TLS 1.2+, rejecting non-SSL database traffic instantly.',
                   standards: ['PCI-DSS (v4.0 4.1.1)', 'ISO 27001 (A.10.1.1)']
               },
               {
                   id: 'network-security',
                   name: 'VM Inbound Port Security',
                   description: 'Verifies that virtual machines do not expose administration ports (SSH 22, RDP 3389) to the public internet.',
+                  rootCause: 'Temporary firewall rule changes left open after remote manual administrative troubleshooting.',
+                  whyImportant: 'Eliminates brute-force port scanners and unauthorized intrusion vectors, which cause 80%+ of VM compromises.',
+                  impactOfFix: 'Rewrites NSG inbound rules, restricting administrative SSH/RDP ports strictly to the corporate VPN gateway.',
                   standards: ['CIS Benchmark (v3.0 5.1)', 'SOC 2 (CC6.7)']
               },
               {
                   id: 'https-only',
                   name: 'HTTPS-Only Ingress Enforcement',
                   description: 'Ensures all Container Apps disable insecure HTTP access and require secure HTTPS connections.',
+                  rootCause: 'Ingress routing configuration defaults that permit cleartext HTTP traffic on port 80.',
+                  whyImportant: 'Encrypts session identifiers and private request payloads. Crucial for web traffic privacy and search ranking (SEO) benefits.',
+                  impactOfFix: 'Forces HTTP-to-HTTPS redirect at the routing gateway layer, securing web traffic with zero app code modifications.',
                   standards: ['PCI-DSS (v4.0 4.1)', 'SOC 2 (CC6.7)']
               },
               {
                   id: 'containment',
                   name: 'Branch-to-Network Isolation',
                   description: 'Enforces environmental boundaries: prevents staging/development branches from deploying to production networks, and vice-versa.',
+                  rootCause: 'Typographical errors in deployment pipeline scripts routing development branches to production subnets.',
+                  whyImportant: 'Protects production resources from untested changes and prevents staging code from exposing prod database endpoints.',
+                  impactOfFix: 'Instantly aborts pipeline runs attempting invalid cross-network deployments, blocking unauthorized access.',
                   standards: ['ISO 27001 (A.12.4.1)', 'SOC 2 (CC8.1)']
               },
               {
                   id: 'registry-auth',
                   name: 'Container Registry Security',
                   description: 'Validates that containerized resources pull images only from trusted, authenticated container registries.',
+                  rootCause: 'Deployment scripts pulling public images directly from unverified registries, exposing supply chain vectors.',
+                  whyImportant: 'Blocks supply chain attacks and container image spoofing. Ensures only vetted, scanned images run in production.',
+                  impactOfFix: 'Rejects unauthorized registry domains, enforcing deployment failure and protecting container orchestrators.',
                   standards: ['CIS Benchmark (v3.0 4.3)', 'ISO 27001 (A.14.2.1)']
               },
               {
                   id: 'secrets-expiry',
                   name: 'Key Vault Secrets Expiry Check',
                   description: 'Monitors Azure Key Vault secrets for expiration dates, ensuring credentials do not expire and interrupt continuous deployments.',
+                  rootCause: 'Manual creation of keys, certificates, or tokens without configuring automated rotation or alerts.',
+                  whyImportant: 'Prevents sudden service downtime due to expired connection strings and minimizes window of threat for leaked keys.',
+                  impactOfFix: 'Alerts administration channels and triggers an automated secrets rotation worker to renew keys.',
                   standards: ['ISO 27001 (A.10.1.1)', 'SOC 2 (CC6.1)']
               },
               {
                   id: 'shadow-it',
                   name: 'Orphaned Resource Scan (Shadow IT)',
                   description: 'Identifies untracked resources running in the subscription that are not registered in the DevOps catalog to prevent shadow IT costs.',
+                  rootCause: 'Ad-hoc sandbox testing by developers who forget to clean up resources after evaluation.',
+                  whyImportant: 'Saves 15-30% of unnecessary cloud spend by identifying idle/orphaned infrastructure resources.',
+                  impactOfFix: 'Registers found resources to their owner scope or schedules automated power sleep states to cut costs.',
                   standards: ['SOC 2 (CC6.1)', 'CIS Benchmark (v3.0 1.1)']
               }
           ];
