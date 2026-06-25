@@ -7155,11 +7155,11 @@ const appController = {
             const isChangingTier    = licenseTier && licenseTier !== currentTier;
             const isDowngrade       = isChangingTier && (tierRank[licenseTier] ?? 0) < (tierRank[currentTier] ?? 0);
 
-            // Gate 1: Only owner can change tier
-            if (isChangingTier && req.user?.role !== 'owner') {
+            // Gate 1: Only owner or admin can change tier
+            if (isChangingTier && req.user?.role !== 'owner' && req.user?.role !== 'admin') {
                 return res.status(403).json({
                     success: false,
-                    message: 'Only the Organization Owner can change the subscription tier.'
+                    message: 'Only the Organization Owner or Administrator can change the subscription tier.'
                 });
             }
 
