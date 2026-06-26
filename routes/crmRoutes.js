@@ -4,6 +4,9 @@ const crmController = require('../controllers/crmController');
 const { protectCrm } = require('../middlewares/authMiddleware');
 
 // Public route for CRM login
+router.get('/ping', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), routes: ['auth/login', 'auth/me', 'users', 'clients'] });
+});
 router.post('/auth/login', crmController.login);
 
 // Protected routes (require CRM token)
