@@ -225,24 +225,58 @@ const listClientInvoices = async (req, res) => {
     }
 };
 
+const TIER_PRICING = {
+    'growth':     { base: 1000, perSeat: 25 },
+    'enterprise': { base: 2000, perSeat: 35 },
+    'sovereign':  { base: 4000, perSeat: 50 }
+};
+
 const generateInvoice = async (req, res) => {
     const { id } = req.params;
-    const { amount, due_days } = req.body;
-    if (amount === undefined || amount <= 0) {
-        return res.status(400).json({ error: 'Valid invoice amount is required' });
-    }
+    const { due_days } = req.body;
     try {
+        const [orgs] = await db.query(
+            'SELECT license_tier, operator_seats_limit FROM organizations WHERE id = ?',
+            [id]
+        );
+        if (orgs.length === 0) {
+            return res.status(404).json({ error: 'Organization not found' });
+        }
+        const tier = (orgs[0].license_tier || 'growth').toLowerCase();
+        const pricing = TIER_PRICING[tier] || TIER_PRICING.growth;
+
+        const [[{ activeSeats }]] = await db.query(
+            `SELECT COUNT(*) AS activeSeats FROM users 
+             WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+            [id]
+        );
+
+        const baseAmount = pricing.base;
+        const perSeatAmount = activeSeats * pricing.perSeat;
+        const totalAmount = baseAmount + perSeatAmount;
+
         const invoiceNum = 'INV-' + Date.now() + '-' + Math.floor(100 + Math.random() * 900);
         const issueDate = new Date();
         const dueDate = new Date();
         dueDate.setDate(dueDate.getDate() + (due_days || 15));
-        
+
         await db.query(
             `INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date)
              VALUES (?, ?, ?, 'Pending', ?, ?)`,
-            [id, invoiceNum, amount, issueDate, dueDate]
+            [id, invoiceNum, totalAmount, issueDate, dueDate]
         );
-        res.json({ message: 'Invoice generated successfully', invoice_number: invoiceNum });
+        res.json({
+            message: 'Invoice generated successfully',
+            invoice_number: invoiceNum,
+            breakdown: {
+                license_tier: tier,
+                base_amount: baseAmount,
+                active_seats: activeSeats,
+                per_seat_price: pricing.perSeat,
+                per_seat_total: perSeatAmount,
+                total_amount: totalAmount
+            }
+        });
     } catch (err) {
         res.status(500).json({ error: 'Server error generating invoice', details: err.message });
     }
