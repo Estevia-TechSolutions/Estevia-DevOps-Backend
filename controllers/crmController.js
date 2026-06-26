@@ -226,9 +226,9 @@ const listClientInvoices = async (req, res) => {
 };
 
 const TIER_PRICING = {
-    'growth':     { base: 1000, perSeat: 25 },
-    'enterprise': { base: 2000, perSeat: 35 },
-    'sovereign':  { base: 4000, perSeat: 50 }
+    'growth':     { base: 1000, perSeat: 40 },
+    'enterprise': { base: 2000, perSeat: 90 },
+    'sovereign':  { base: 4000, perSeat: 30 }
 };
 
 const generateInvoice = async (req, res) => {
