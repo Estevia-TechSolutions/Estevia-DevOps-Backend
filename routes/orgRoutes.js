@@ -16,4 +16,7 @@ router.post('/test/github', protect, orgController.testGithub);
 router.post('/test/devops', protect, orgController.testDevops);
 router.post('/test/godaddy', protect, orgController.testDns);
 
+router.get('/invoices', protect, orgController.getClientInvoices);
+router.post('/invoices/:invoiceId/pay', protect, orgController.payClientInvoice);
+
 module.exports = router;

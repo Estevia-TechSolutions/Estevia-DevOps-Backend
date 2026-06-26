@@ -257,6 +257,59 @@ async function main() {
             )
         `);
 
+        // 5.95 Create crm_users table
+        console.log('Creating crm_users table...');
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS crm_users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                email VARCHAR(255) UNIQUE NOT NULL,
+                password_hash VARCHAR(255) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                role VARCHAR(50) DEFAULT 'agent',
+                is_disabled BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Alter crm_users table to add is_disabled column if missing
+        console.log('Altering crm_users table to add is_disabled column if missing...');
+        const [crmColsList] = await connection.query(`
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+              AND TABLE_NAME = 'crm_users'
+        `);
+        const crmColNamesList = crmColsList.map(c => c.COLUMN_NAME.toLowerCase());
+        if (!crmColNamesList.includes('is_disabled')) {
+            console.log('Adding column is_disabled to crm_users...');
+            await connection.query('ALTER TABLE crm_users ADD COLUMN is_disabled BOOLEAN DEFAULT FALSE');
+        }
+
+        // Seed default CRM user
+        const crmAdminEmail = 'admin@evaops.crm';
+        const crypto = require('crypto');
+        const crmAdminHash = crypto.createHash('sha256').update('CrmAdminPass123!').digest('hex');
+        console.log('Seeding default CRM administrator...');
+        await connection.query(`
+            INSERT INTO crm_users (email, password_hash, name, role)
+            VALUES (?, ?, 'CRM Administrator', 'admin')
+            ON DUPLICATE KEY UPDATE name=name
+        `, [crmAdminEmail, crmAdminHash]);
+
+        // Alter organizations table to add is_disabled column
+        console.log('Altering organizations table to add is_disabled column if missing...');
+        const [orgColsList] = await connection.query(`
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+              AND TABLE_NAME = 'organizations'
+        `);
+        const orgColNamesList = orgColsList.map(c => c.COLUMN_NAME.toLowerCase());
+        if (!orgColNamesList.includes('is_disabled')) {
+            console.log('Adding column is_disabled to organizations...');
+            await connection.query('ALTER TABLE organizations ADD COLUMN is_disabled BOOLEAN DEFAULT FALSE');
+        }
+
         // Check if suggestion_id in applied_remediations needs modification
         const [remediationCols] = await connection.query(`
             SELECT CHARACTER_MAXIMUM_LENGTH 

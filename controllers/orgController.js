@@ -441,6 +441,65 @@ const orgController = {
             console.error('[OrgController] testDns failed:', error.message);
             res.status(400).json({ success: false, message: `GoDaddy verification failed: ${error.message}` });
         }
+    },
+ 
+    // Fetch client invoices
+    getClientInvoices: async (req, res) => {
+        const organizationId = req.user.organization_id;
+        if (!organizationId) {
+            return res.status(400).json({ message: 'User is not associated with any organization.' });
+        }
+        try {
+            const [invoices] = await db.query(
+                'SELECT * FROM billing_invoices WHERE organization_id = ? ORDER BY issue_date DESC',
+                [organizationId]
+            );
+            res.json(invoices);
+        } catch (error) {
+            console.error('[OrgController] getClientInvoices failed:', error);
+            res.status(500).json({ message: 'Failed to retrieve invoices', error: error.message });
+        }
+    },
+ 
+    // Pay client invoice
+    payClientInvoice: async (req, res) => {
+        const { invoiceId } = req.params;
+        const organizationId = req.user.organization_id;
+        if (!organizationId) {
+            return res.status(400).json({ message: 'User is not associated with any organization.' });
+        }
+        try {
+            const [invoices] = await db.query(
+                'SELECT * FROM billing_invoices WHERE id = ? AND organization_id = ?',
+                [invoiceId, organizationId]
+            );
+            if (invoices.length === 0) {
+                return res.status(404).json({ message: 'Invoice not found.' });
+            }
+            if (invoices[0].status === 'Paid') {
+                return res.status(400).json({ message: 'Invoice is already paid.' });
+            }
+ 
+            await db.query(
+                'UPDATE billing_invoices SET status = "Paid", payment_date = ? WHERE id = ?',
+                [new Date(), invoiceId]
+            );
+ 
+            const [pending] = await db.query(
+                'SELECT id FROM billing_invoices WHERE organization_id = ? AND status = "Pending"',
+                [organizationId]
+            );
+ 
+            if (pending.length === 0) {
+                await db.query('UPDATE organizations SET is_disabled = FALSE WHERE id = ?', [organizationId]);
+                console.log(`[OrgController] Auto-enabled organization ${organizationId} after payment.`);
+            }
+ 
+            res.json({ success: true, message: 'Invoice paid successfully. Access status has been synchronized.' });
+        } catch (error) {
+            console.error('[OrgController] payClientInvoice failed:', error);
+            res.status(500).json({ message: 'Failed to process payment.', error: error.message });
+        }
     }
 };
 
