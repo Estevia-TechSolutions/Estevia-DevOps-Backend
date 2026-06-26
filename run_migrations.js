@@ -287,8 +287,7 @@ async function main() {
 
         // Seed default CRM user
         const crmAdminEmail = 'admin@evaops.crm';
-        const crypto = require('crypto');
-        const crmAdminHash = crypto.createHash('sha256').update('CrmAdminPass123!').digest('hex');
+        const crmAdminHash = require('crypto').createHash('sha256').update('CrmAdminPass123!').digest('hex');
         console.log('Seeding default CRM administrator...');
         await connection.query(`
             INSERT INTO crm_users (email, password_hash, name, role)
