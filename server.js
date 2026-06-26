@@ -30,6 +30,12 @@ if (fs.existsSync(envPath)) {
 const app = express();
 const PORT = process.env.PORT || 5005;
 
+// Diagnostic: log every incoming request before any middleware
+app.use((req, res, next) => {
+  console.log(`[DIAG] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
 app.use(cors());
 app.use(express.json());
 
@@ -43,7 +49,11 @@ const { protect } = require('./middlewares/authMiddleware');
 app.use('/api/auth', authRoutes);
 
 const crmRoutes = require('./routes/crmRoutes');
-app.use('/api/crm', crmRoutes);
+// Diagnostic: log CRM router entry
+app.use('/api/crm', (req, res, next) => {
+  console.log(`[CRM-DIAG] Entering CRM router: ${req.method} ${req.originalUrl} -> stripped to ${req.url}`);
+  next();
+}, crmRoutes);
 
 const credentialRoutes = require('./routes/credentialRoutes');
 app.use('/api/credentials', protect, credentialRoutes);
