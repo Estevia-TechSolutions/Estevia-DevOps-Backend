@@ -50,7 +50,22 @@ const orgController = {
             // Fetch created org
             const [newOrg] = await db.query('SELECT * FROM organizations WHERE id = ?', [orgId]);
 
-            res.json({ success: true, organization: newOrg[0] });
+            // Generate updated local JWT token since organization_id is now set
+            const jwt = require('jsonwebtoken');
+            const JWT_SECRET = process.env.JWT_SECRET || 'estevia-devops-jwt-super-secret-key-12345';
+            const updatedToken = jwt.sign(
+                { 
+                    id: req.user.id, 
+                    email: req.user.email, 
+                    name: req.user.name, 
+                    organization_id: orgId, 
+                    role: 'admin' 
+                },
+                JWT_SECRET,
+                { expiresIn: '24h' }
+            );
+
+            res.json({ success: true, organization: newOrg[0], token: updatedToken });
         } catch (error) {
             console.error('[OrgController] Register failed:', error);
             res.status(500).json({ message: 'Internal server error.', error: error.message });
