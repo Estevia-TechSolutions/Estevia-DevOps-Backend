@@ -409,7 +409,16 @@ const orgController = {
                 }
             });
 
-            res.json({ success: true, message: `GitHub authenticated successfully for owner: ${response.data.login}` });
+            const expHeader = response.headers['github-authentication-token-expiration'];
+            let expiryMsg = '';
+            if (expHeader) {
+                const expiresAt = new Date(expHeader);
+                if (!isNaN(expiresAt.getTime())) {
+                    expiryMsg = ` Expiration: ${expiresAt.toLocaleDateString()}`;
+                }
+            }
+
+            res.json({ success: true, message: `GitHub authenticated successfully for owner: ${response.data.login}.${expiryMsg}` });
         } catch (error) {
             console.error('[OrgController] testGithub failed:', error.message);
             res.status(400).json({ success: false, message: `GitHub verification failed: ${error.message}` });
