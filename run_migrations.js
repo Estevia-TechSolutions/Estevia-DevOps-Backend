@@ -158,11 +158,26 @@ async function main() {
                 encrypted_secrets TEXT NOT NULL,
                 iv VARCHAR(100) NOT NULL,
                 auth_tag VARCHAR(100) NOT NULL,
+                expires_at TIMESTAMP NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
             )
         `);
+
+        // Alter integration_credentials table to add expires_at column if missing
+        console.log('Altering integration_credentials table to add expires_at column if missing...');
+        const [icColsList] = await connection.query(`
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+              AND TABLE_NAME = 'integration_credentials'
+        `);
+        const icColNamesList = icColsList.map(c => c.COLUMN_NAME.toLowerCase());
+        if (!icColNamesList.includes('expires_at')) {
+            console.log('Adding column expires_at to integration_credentials...');
+            await connection.query('ALTER TABLE integration_credentials ADD COLUMN expires_at TIMESTAMP NULL');
+        }
 
         // 4. Create applications table
         console.log('Creating applications table...');
@@ -364,9 +379,10 @@ async function main() {
         ]);
         // 6.1 Revert/Clean up master organization automatic Azure credentials seeding to enforce DefaultAzureCredential fallback.
         // Seeding with SSO OAuth variables overrides the working DefaultAzureCredential (Managed Identity) with keys lacking Azure RBAC permissions.
+        // We preserve user-configured/discovered credentials.
         console.log(`Cleaning up any automatically seeded Azure credentials for master organization '${masterOrgId}' to ensure DefaultAzureCredential fallback...`);
         await connection.query(
-            "DELETE FROM integration_credentials WHERE organization_id = ? AND provider = 'azure'",
+            "DELETE FROM integration_credentials WHERE organization_id = ? AND provider = 'azure' AND credential_name NOT LIKE '%Auto-Discovered%' AND credential_name NOT LIKE '%Azure Service Principal%'",
             [masterOrgId]
         );
 

@@ -7,7 +7,7 @@ const credentialController = {
      */
     saveCredentials: async (req, res) => {
         try {
-            const { organizationId, provider, credentialName, secrets } = req.body;
+            const { organizationId, provider, credentialName, secrets, expiresAt } = req.body;
 
             if (!organizationId || !provider || !credentialName || !secrets) {
                 return res.status(400).json({ message: 'Missing required parameters.' });
@@ -68,6 +68,8 @@ const credentialController = {
                 }
             }
 
+            const expiresAtVal = expiresAt ? new Date(expiresAt) : null;
+
             // Check if credentials for this organization and provider already exist
             const [existing] = await db.query(
                 'SELECT id FROM integration_credentials WHERE organization_id = ? AND provider = ?',
@@ -78,18 +80,19 @@ const credentialController = {
                 // Update
                 await db.query(
                     `UPDATE integration_credentials 
-                     SET credential_name = ?, encrypted_secrets = ?, iv = ?, auth_tag = ?
+                     SET credential_name = ?, encrypted_secrets = ?, iv = ?, auth_tag = ?, expires_at = ?
                      WHERE organization_id = ? AND provider = ?`,
-                    [credentialName, encrypted, iv, authTag, organizationId, provider]
+                    [credentialName, encrypted, iv, authTag, expiresAtVal, organizationId, provider]
                 );
                 return res.json({ success: true, message: 'Credentials updated successfully.' });
             } else {
                 // Insert
                 await db.query(
                     `INSERT INTO integration_credentials 
-                     (organization_id, provider, credential_name, encrypted_secrets, iv, auth_tag) 
-                     VALUES (?, ?, ?, ?, ?, ?)`,
-                    [organizationId, provider, credentialName, encrypted, iv, authTag]
+                     (organization_id, provider, credential_name, encrypted_secrets, iv, auth_tag, expires_at) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+                        .replace('(?, ?, ?, ?, ?, ?, ?, ?)', '(?, ?, ?, ?, ?, ?, ?)'),
+                    [organizationId, provider, credentialName, encrypted, iv, authTag, expiresAtVal]
                 );
                 return res.json({ success: true, message: 'Credentials registered successfully.' });
             }
@@ -111,7 +114,7 @@ const credentialController = {
             }
 
             const [rows] = await db.query(
-                `SELECT id, provider, credential_name, created_at, updated_at 
+                `SELECT id, provider, credential_name, expires_at, created_at, updated_at 
                  FROM integration_credentials 
                  WHERE organization_id = ?`,
                 [organizationId]
@@ -228,7 +231,20 @@ const credentialController = {
                             'User-Agent': 'EvaOps-DevOps-Platform'
                         }
                     });
-                    return res.json({ success: true, message: `GitHub connection healthy. Connected as user: ${response.data.login}` });
+                    
+                    const expiryHeader = response.headers['github-authentication-token-expiration'];
+                    let expiryMsg = '';
+                    if (expiryHeader) {
+                        const expiresAt = new Date(expiryHeader);
+                        if (!isNaN(expiresAt.getTime())) {
+                            await db.query(
+                                'UPDATE integration_credentials SET expires_at = ? WHERE organization_id = ? AND provider = ?',
+                                [expiresAt, organizationId, 'github']
+                            );
+                            expiryMsg = ` Expiration: ${expiresAt.toLocaleDateString()}`;
+                        }
+                    }
+                    return res.json({ success: true, message: `GitHub connection healthy. Connected as user: ${response.data.login}.${expiryMsg}` });
                 } catch (err) {
                     const msg = err.response?.data?.message || err.message;
                     return res.status(400).json({ message: `GitHub authentication failed: ${msg}` });
@@ -494,6 +510,124 @@ const credentialController = {
         } catch (error) {
             console.error('[CredentialController] Error discovering environment credentials:', error);
             res.status(500).json({ message: 'Internal server error.', error: error.message });
+        }
+    },
+
+    /**
+     * Programmatically rotate Azure Service Principal secrets via Microsoft Graph API
+     */
+    rotateAzureSecret: async (req, res) => {
+        try {
+            const { organizationId } = req.body;
+            if (!organizationId) {
+                return res.status(400).json({ message: 'Missing organizationId parameter.' });
+            }
+
+            // Get existing decrypted credentials
+            const secrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure');
+            if (!secrets || secrets.type === 'managed_identity') {
+                return res.status(400).json({ message: 'Only Service Principal (client secret) credentials can be rotated. Managed Identity does not use client secrets.' });
+            }
+
+            const { clientId, clientSecret, tenantId } = secrets;
+            if (!clientId || !clientSecret || !tenantId) {
+                return res.status(400).json({ message: 'Existing credentials are not fully configured Service Principal.' });
+            }
+
+            const axios = require('axios');
+
+            // 1. Get access token for Microsoft Graph
+            console.log(`[RotateAzureSecret] Requesting Graph token for app ${clientId}...`);
+            const tokenParams = new URLSearchParams();
+            tokenParams.append('client_id', clientId);
+            tokenParams.append('client_secret', clientSecret);
+            tokenParams.append('grant_type', 'client_credentials');
+            tokenParams.append('scope', 'https://graph.microsoft.com/.default');
+
+            const tokenRes = await axios.post(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, tokenParams.toString(), {
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            });
+            const graphToken = tokenRes.data.access_token;
+
+            // 2. Query application Object ID by Client/App ID
+            console.log(`[RotateAzureSecret] Querying application Object ID...`);
+            const appRes = await axios.get(`https://graph.microsoft.com/v1.0/applications?$filter=appId eq '${clientId}'`, {
+                headers: { 'Authorization': `Bearer ${graphToken}` }
+            });
+            const apps = appRes.data?.value || [];
+            if (apps.length === 0) {
+                return res.status(404).json({ message: `Could not find application in directory for appId ${clientId}` });
+            }
+            const objectId = apps[0].id;
+
+            // 3. Add new password credential (client secret)
+            console.log(`[RotateAzureSecret] Generating new password in Entra ID...`);
+            const pwdRes = await axios.post(`https://graph.microsoft.com/v1.0/applications/${objectId}/addPassword`, {
+                passwordCredential: {
+                    displayName: `EvaOps Auto-Rotated Key (${new Date().toLocaleDateString()})`
+                }
+            }, {
+                headers: { 'Authorization': `Bearer ${graphToken}`, 'Content-Type': 'application/json' }
+            });
+
+            const newSecretText = pwdRes.data.secretText;
+            const expiresAt = new Date(pwdRes.data.endDateTime);
+
+            // 4. Encrypt and save the new credentials structure
+            const newSecrets = {
+                clientId,
+                clientSecret: newSecretText,
+                tenantId
+            };
+            const secretsString = JSON.stringify(newSecrets);
+
+            let encrypted, iv, authTag;
+            const encResult = encrypt(secretsString);
+            encrypted = encResult.encrypted;
+            iv = encResult.iv;
+            authTag = encResult.authTag;
+
+            // Check if organization has Key Vault URL
+            const [orgs] = await db.query('SELECT azure_key_vault_url FROM organizations WHERE id = ?', [organizationId]);
+            const keyVaultUrl = orgs[0]?.azure_key_vault_url;
+
+            if (keyVaultUrl) {
+                try {
+                    const { SecretClient } = require('@azure/keyvault-secrets');
+                    const { ClientSecretCredential } = require('@azure/identity');
+                    // Use new credentials to write to Key Vault
+                    const credential = new ClientSecretCredential(tenantId, clientId, newSecretText);
+                    const client = new SecretClient(keyVaultUrl, credential);
+                    const secretName = `${organizationId}-azure`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+                    
+                    console.log(`[RotateAzureSecret] Writing rotated secret to Azure Key Vault: ${keyVaultUrl}`);
+                    await client.setSecret(secretName, secretsString);
+                    
+                    encrypted = 'stored-in-azure-key-vault';
+                    iv = 'kv';
+                    authTag = 'kv';
+                } catch (kvErr) {
+                    console.warn(`[RotateAzureSecret] Key Vault write failed, falling back to database:`, kvErr.message);
+                }
+            }
+
+            // 5. Update DB
+            await db.query(
+                `UPDATE integration_credentials 
+                 SET encrypted_secrets = ?, iv = ?, auth_tag = ?, expires_at = ?
+                 WHERE organization_id = ? AND provider = 'azure'`,
+                [encrypted, iv, authTag, expiresAt, organizationId]
+            );
+
+            res.json({
+                success: true,
+                message: `Azure Service Principal secret rotated successfully. New expiration date: ${expiresAt.toLocaleDateString()}`,
+                expiresAt: expiresAt
+            });
+        } catch (error) {
+            console.error('[RotateAzureSecret] Error rotating credentials:', error);
+            const detailMsg = error.response?.data?.error?.message || error.message;
+            res.status(500).json({ message: `Secret rotation failed. Ensure the Service Principal has Directory/Application.ReadWrite.OwnedBy Graph API permissions. Details: ${detailMsg}` });
         }
     }
 };

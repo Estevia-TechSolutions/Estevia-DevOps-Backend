@@ -300,23 +300,42 @@ const orgController = {
 
             // Always check credential completeness regardless of onboarding_complete
             const [creds] = await db.query(
-                'SELECT provider FROM integration_credentials WHERE organization_id = ?',
+                'SELECT provider, credential_name, expires_at FROM integration_credentials WHERE organization_id = ?',
                 [organizationId]
             );
             const providers = new Set(creds.map(c => c.provider));
 
+            const masterOrgId = process.env.MASTER_ORGANIZATION_ID || 'estevia';
+            const isMasterOrg = organizationId === masterOrgId;
+
             const credentialGate = {
-                isComplete: providers.has('azure') &&
+                isComplete: (providers.has('azure') || isMasterOrg) &&
                             providers.has('github') &&
                             providers.has('azure_devops') &&
                             providers.has('godaddy'),
                 missing: {
-                    azure:       !providers.has('azure'),
+                    azure:       !providers.has('azure') && !isMasterOrg,
                     github:      !providers.has('github'),
                     azureDevops: !providers.has('azure_devops'),
                     godaddy:     !providers.has('godaddy')
                 }
             };
+
+            const credentialAlerts = creds.map(c => {
+                if (!c.expires_at) return null;
+                const expiresAt = new Date(c.expires_at);
+                const now = new Date();
+                const diffTime = expiresAt.getTime() - now.getTime();
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                return {
+                    provider: c.provider,
+                    credentialName: c.credential_name,
+                    expiresAt: c.expires_at,
+                    daysRemaining: diffDays,
+                    isExpired: diffDays <= 0,
+                    isWarning: diffDays > 0 && diffDays <= 30
+                };
+            }).filter(alert => alert !== null && (alert.isExpired || alert.isWarning));
 
             let step = 1;
             if (org.onboarding_complete) {
@@ -338,7 +357,8 @@ const orgController = {
                 onboardingComplete: !!org.onboarding_complete,
                 step,
                 organization: org,
-                credentialGate
+                credentialGate,
+                credentialAlerts
             });
         } catch (error) {
             console.error('[OrgController] getStatus failed:', error);
