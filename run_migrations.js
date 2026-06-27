@@ -183,7 +183,7 @@ async function main() {
         console.log('Populating default expiration dates for existing credentials...');
         await connection.query(`
             UPDATE integration_credentials 
-            SET expires_at = DATE_ADD(created_at, INTERVAL 90 DAY)
+            SET expires_at = DATE_ADD(created_at, INTERVAL 30 DAY)
             WHERE expires_at IS NULL AND provider IN ('github', 'azure_devops')
         `);
         await connection.query(`
