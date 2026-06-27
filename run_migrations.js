@@ -179,6 +179,19 @@ async function main() {
             await connection.query('ALTER TABLE integration_credentials ADD COLUMN expires_at TIMESTAMP NULL');
         }
 
+        // 3.1 Populate default expiration dates for existing credentials if currently NULL
+        console.log('Populating default expiration dates for existing credentials...');
+        await connection.query(`
+            UPDATE integration_credentials 
+            SET expires_at = DATE_ADD(created_at, INTERVAL 90 DAY)
+            WHERE expires_at IS NULL AND provider IN ('github', 'azure_devops')
+        `);
+        await connection.query(`
+            UPDATE integration_credentials 
+            SET expires_at = DATE_ADD(created_at, INTERVAL 365 DAY)
+            WHERE expires_at IS NULL AND provider = 'azure' AND credential_name NOT LIKE '%Managed Identity%'
+        `);
+
         // 4. Create applications table
         console.log('Creating applications table...');
         await connection.query(`
