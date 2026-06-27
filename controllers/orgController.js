@@ -415,6 +415,15 @@ const orgController = {
                 const expiresAt = new Date(expHeader);
                 if (!isNaN(expiresAt.getTime())) {
                     expiryMsg = ` Expiration: ${expiresAt.toLocaleDateString()}`;
+                    
+                    const organizationId = req.user?.organization_id;
+                    if (organizationId) {
+                        await db.query(
+                            'UPDATE integration_credentials SET expires_at = ? WHERE organization_id = ? AND provider = ?',
+                            [expiresAt, organizationId, 'github']
+                        );
+                        console.log(`[OrgController] Automatically updated GitHub credential expires_at to ${expiresAt.toISOString()} for organization ${organizationId} during connection test.`);
+                    }
                 }
             }
 
