@@ -21,6 +21,40 @@ const credentialController = {
 
             const keyVaultUrl = orgs[0]?.azure_key_vault_url;
             let secretsObj = typeof secrets === 'string' ? JSON.parse(secrets) : secrets;
+            
+            // If any of the secrets values are the placeholder mask '••••••••••••••••••••',
+            // we retrieve the existing credential from the database, decrypt it, and merge the original values.
+            let hasMask = false;
+            if (secretsObj) {
+                for (const key in secretsObj) {
+                    if (secretsObj[key] === '••••••••••••••••••••') {
+                        hasMask = true;
+                        break;
+                    }
+                }
+            }
+
+            if (hasMask) {
+                const [existing] = await db.query(
+                    'SELECT encrypted_secrets, iv, auth_tag FROM integration_credentials WHERE organization_id = ? AND provider = ?',
+                    [organizationId, provider]
+                );
+                if (existing.length > 0) {
+                    const { decrypt } = require('../utils/crypto');
+                    try {
+                        const decryptedExistingString = decrypt(existing[0].encrypted_secrets, existing[0].iv, existing[0].auth_tag);
+                        const decryptedExistingObj = JSON.parse(decryptedExistingString);
+                        for (const key in secretsObj) {
+                            if (secretsObj[key] === '••••••••••••••••••••') {
+                                secretsObj[key] = decryptedExistingObj[key];
+                            }
+                        }
+                    } catch (decErr) {
+                        console.error('[CredentialController] Failed to decrypt existing secret for mask merge:', decErr.message);
+                    }
+                }
+            }
+            
             if (provider === 'azure' && secretsObj && (secretsObj.clientId === 'SYSTEM_MANAGED_IDENTITY' || secretsObj.type === 'managed_identity')) {
                 secretsObj = {
                     type: 'managed_identity',
