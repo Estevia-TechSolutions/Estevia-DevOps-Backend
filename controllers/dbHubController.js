@@ -1,5 +1,52 @@
-const db = require('../config/db');
-const { sendTeamsNotification } = require('../utils/teamsNotifier');
+const queryDbHelper = async (host, database, sql, params = [], organizationId = 'estevia') => {
+    const mysql = require('mysql2/promise');
+    
+    // First, try connecting directly
+    try {
+        const conn = await mysql.createConnection({
+            host: host,
+            user: process.env.DB_USER,
+            password: process.env.DB_PASSWORD,
+            port: process.env.DB_PORT || 3306,
+            ssl: { require: true, rejectUnauthorized: false },
+            connectTimeout: 4000
+        });
+        try {
+            const [rows] = await conn.query(sql, params);
+            return rows;
+        } finally {
+            await conn.end();
+        }
+    } catch (err) {
+        console.warn(`[DBHub Direct Connect Failed] Host: ${host}. Attempting remote VPN proxy tunnel... Error:`, err.message);
+        
+        // If direct connection fails (due to VPN), proxy the request to the production DevOps Backend API!
+        const axios = require('axios');
+        const prodDevopsBase = process.env.PROD_DEVOPS_API_URL || 'https://prod-devops.esteviatech.com/api';
+        
+        try {
+            const proxyRes = await axios.post(`${prodDevopsBase}/database/proxy-query`, {
+                host,
+                database,
+                sql,
+                params
+            }, {
+                timeout: 10000,
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            if (proxyRes.data && proxyRes.data.success) {
+                return proxyRes.data.rows;
+            } else {
+                throw new Error(proxyRes.data?.message || 'Remote query proxy failed.');
+            }
+        } catch (proxyErr) {
+            console.error('[DBHub Proxy Tunnel Failed]:', proxyErr.message);
+            throw new Error(`Failed to query database directly or via VPN bridge. Please ensure VPN is active or prod DevOps gateway is online. (Direct Error: ${err.message})`);
+        }
+    }
+};
 
 const dbHubController = {
     /**
@@ -22,119 +69,88 @@ const dbHubController = {
             const sourceHost = appController._resolveDbHost(sourceServerName, orgSettings);
             const targetHost = appController._resolveDbHost(targetServerName, orgSettings);
             
-            const mysql = require('mysql2/promise');
-            
-            // 1. Establish connection to source server
-            const sourceConn = await mysql.createConnection({
-                host: sourceHost,
-                user: process.env.DB_USER,
-                password: process.env.DB_PASSWORD,
-                port: process.env.DB_PORT || 3306,
-                ssl: { require: true, rejectUnauthorized: false },
-                connectTimeout: 8000
-            });
+            // Fetch columns and tables from sourceDb
+            const sourceRows = await queryDbHelper(sourceHost, sourceDb, `
+                SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, EXTRA
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = ?
+            `, [sourceDb], organizationId);
 
-            let targetConn;
-            try {
-                // 2. Establish connection to target server
-                targetConn = await mysql.createConnection({
-                    host: targetHost,
-                    user: process.env.DB_USER,
-                    password: process.env.DB_PASSWORD,
-                    port: process.env.DB_PORT || 3306,
-                    ssl: { require: true, rejectUnauthorized: false },
-                    connectTimeout: 8000
-                });
+            // Fetch columns and tables from targetDb
+            const targetRows = await queryDbHelper(targetHost, targetDb, `
+                SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, EXTRA
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = ?
+            `, [targetDb], organizationId);
 
-                try {
-                    // Fetch columns and tables from sourceDb
-                    const [sourceRows] = await sourceConn.query(`
-                        SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, EXTRA
-                        FROM INFORMATION_SCHEMA.COLUMNS
-                        WHERE TABLE_SCHEMA = ?
-                    `, [sourceDb]);
+            // Group columns by table
+            const sourceTables = {};
+            for (const row of sourceRows) {
+                if (!sourceTables[row.TABLE_NAME]) sourceTables[row.TABLE_NAME] = [];
+                sourceTables[row.TABLE_NAME].push(row);
+            }
 
-                    // Fetch columns and tables from targetDb
-                    const [targetRows] = await targetConn.query(`
-                        SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, EXTRA
-                        FROM INFORMATION_SCHEMA.COLUMNS
-                        WHERE TABLE_SCHEMA = ?
-                    `, [targetDb]);
+            const targetTables = {};
+            for (const row of targetRows) {
+                if (!targetTables[row.TABLE_NAME]) targetTables[row.TABLE_NAME] = [];
+                targetTables[row.TABLE_NAME].push(row);
+            }
 
-                    // Group columns by table
-                    const sourceTables = {};
-                    for (const row of sourceRows) {
-                        if (!sourceTables[row.TABLE_NAME]) sourceTables[row.TABLE_NAME] = [];
-                        sourceTables[row.TABLE_NAME].push(row);
+            const differences = [];
+
+            // Compare tables and columns
+            for (const tableName of Object.keys(sourceTables)) {
+                if (!targetTables[tableName]) {
+                    // Table is missing in targetDb. Let's get the exact CREATE TABLE DDL from sourceDb
+                    try {
+                        const createResult = await queryDbHelper(sourceHost, sourceDb, `SHOW CREATE TABLE \`${sourceDb}\`.\`${tableName}\``, [], organizationId);
+                        let ddl = createResult[0]['Create Table'];
+                        // Make it IF NOT EXISTS
+                        ddl = ddl.replace(/CREATE TABLE/i, 'CREATE TABLE IF NOT EXISTS');
+                        differences.push({
+                            type: 'table_missing',
+                            tableName,
+                            ddl: ddl + ';'
+                        });
+                    } catch (err) {
+                        // Fallback basic DDL
+                        const colsDdl = sourceTables[tableName].map(col => {
+                            return `\`${col.COLUMN_NAME}\` ${col.COLUMN_TYPE} ${col.IS_NULLABLE === 'YES' ? 'NULL' : 'NOT NULL'}`;
+                        }).join(',\n    ');
+                        differences.push({
+                            type: 'table_missing',
+                            tableName,
+                            ddl: `CREATE TABLE IF NOT EXISTS \`${tableName}\` (\n    ${colsDdl}\n);`
+                        });
                     }
-
-                    const targetTables = {};
-                    for (const row of targetRows) {
-                        if (!targetTables[row.TABLE_NAME]) targetTables[row.TABLE_NAME] = [];
-                        targetTables[row.TABLE_NAME].push(row);
-                    }
-
-                    const differences = [];
-
-                    // Compare tables and columns
-                    for (const tableName of Object.keys(sourceTables)) {
-                        if (!targetTables[tableName]) {
-                            // Table is missing in targetDb. Let's get the exact CREATE TABLE DDL from sourceDb
-                            try {
-                                const [createResult] = await sourceConn.query(`SHOW CREATE TABLE \`${sourceDb}\`.\`${tableName}\``);
-                                let ddl = createResult[0]['Create Table'];
-                                // Make it IF NOT EXISTS
-                                ddl = ddl.replace(/CREATE TABLE/i, 'CREATE TABLE IF NOT EXISTS');
-                                differences.push({
-                                    type: 'table_missing',
-                                    tableName,
-                                    ddl: ddl + ';'
-                                });
-                            } catch (err) {
-                                // Fallback basic DDL
-                                const colsDdl = sourceTables[tableName].map(col => {
-                                    return `\`${col.COLUMN_NAME}\` ${col.COLUMN_TYPE} ${col.IS_NULLABLE === 'YES' ? 'NULL' : 'NOT NULL'}`;
-                                }).join(',\n    ');
-                                differences.push({
-                                    type: 'table_missing',
-                                    tableName,
-                                    ddl: `CREATE TABLE IF NOT EXISTS \`${tableName}\` (\n    ${colsDdl}\n);`
-                                });
-                            }
-                        } else {
-                            // Table exists, check for missing columns
-                            const targetCols = new Set(targetTables[tableName].map(c => c.COLUMN_NAME));
-                            for (const col of sourceTables[tableName]) {
-                                if (!targetCols.has(col.COLUMN_NAME)) {
-                                    const ddl = `ALTER TABLE \`${tableName}\` ADD COLUMN \`${col.COLUMN_NAME}\` ${col.COLUMN_TYPE} ${col.IS_NULLABLE === 'YES' ? 'NULL' : 'NOT NULL'}${col.EXTRA ? ' ' + col.EXTRA : ''};`;
-                                    differences.push({
-                                        type: 'column_missing',
-                                        tableName,
-                                        columnName: col.COLUMN_NAME,
-                                        ddl
-                                    });
-                                }
-                            }
+                } else {
+                    // Table exists, check for missing columns
+                    const targetCols = new Set(targetTables[tableName].map(c => c.COLUMN_NAME));
+                    for (const col of sourceTables[tableName]) {
+                        if (!targetCols.has(col.COLUMN_NAME)) {
+                            const ddl = `ALTER TABLE \`${tableName}\` ADD COLUMN \`${col.COLUMN_NAME}\` ${col.COLUMN_TYPE} ${col.IS_NULLABLE === 'YES' ? 'NULL' : 'NOT NULL'}${col.EXTRA ? ' ' + col.EXTRA : ''};`;
+                            differences.push({
+                                type: 'column_missing',
+                                tableName,
+                                columnName: col.COLUMN_NAME,
+                                ddl
+                            });
                         }
                     }
-
-                    const generatedSql = differences.map(d => d.ddl).join('\n\n');
-
-                    res.json({
-                        success: true,
-                        sourceDb,
-                        targetDb,
-                        differences,
-                        sqlScript: generatedSql,
-                        isTargetEmpty: targetRows.length === 0,
-                        sourceTables: Object.keys(sourceTables)
-                    });
-                } finally {
-                    await targetConn.end();
                 }
-            } finally {
-                await sourceConn.end();
             }
+
+            const generatedSql = differences.map(d => d.ddl).join('\n\n');
+
+            res.json({
+                success: true,
+                sourceDb,
+                targetDb,
+                differences,
+                sqlScript: generatedSql,
+                isTargetEmpty: targetRows.length === 0,
+                sourceTables: Object.keys(sourceTables)
+            });
         } catch (error) {
             console.error('[DBHub] Schema compare failed:', error);
             res.status(500).json({ success: false, message: error.message });
@@ -170,30 +186,16 @@ const dbHubController = {
             const appController = require('./appController');
             const orgSettings = await appController._getOrgSettings(organizationId);
             const resolvedHost = appController._resolveDbHost(targetServerName, orgSettings);
-            const mysql = require('mysql2/promise');
-            const conn = await mysql.createConnection({
-                host: resolvedHost,
-                user: process.env.DB_USER,
-                password: process.env.DB_PASSWORD,
-                database: targetDb,
-                port: process.env.DB_PORT || 3306,
-                ssl: { require: true, rejectUnauthorized: false },
-                connectTimeout: 8000
-            });
 
             const executionLogs = [];
-            try {
-                for (const statement of statements) {
-                    try {
-                        await conn.query(statement);
-                        executionLogs.push({ statement: statement.substring(0, 100) + '...', status: 'SUCCESS' });
-                    } catch (dbErr) {
-                        // Log warning if table/column already exists (expected on re-run)
-                        executionLogs.push({ statement: statement.substring(0, 100) + '...', status: 'WARNING', error: dbErr.message });
-                    }
+            for (const statement of statements) {
+                try {
+                    await queryDbHelper(resolvedHost, targetDb, statement, [], organizationId);
+                    executionLogs.push({ statement: statement.substring(0, 100) + '...', status: 'SUCCESS' });
+                } catch (dbErr) {
+                    // Log warning if table/column already exists (expected on re-run)
+                    executionLogs.push({ statement: statement.substring(0, 100) + '...', status: 'WARNING', error: dbErr.message });
                 }
-            } finally {
-                await conn.end();
             }
 
             const responseBody = {
@@ -538,6 +540,41 @@ const dbHubController = {
             }
         } catch (error) {
             console.error('[DBHub] Backup generation failed:', error);
+            res.status(500).json({ success: false, message: error.message });
+        }
+    },
+
+    /**
+     * POST /api/database/proxy-query
+     * Proxy database queries securely over HTTPS from dev environments to production networks.
+     */
+    proxyDatabaseQuery: async (req, res) => {
+        try {
+            const { host, database, sql, params } = req.body;
+            if (!host || !database || !sql) {
+                return res.status(400).json({ success: false, message: 'Missing parameters (host, database, sql).' });
+            }
+
+            console.log(`[DBHub Proxy Gateway] Executing proxy query against host: ${host}, db: ${database}...`);
+
+            const mysql = require('mysql2/promise');
+            const conn = await mysql.createConnection({
+                host: host,
+                user: process.env.DB_USER,
+                password: process.env.DB_PASSWORD,
+                port: process.env.DB_PORT || 3306,
+                ssl: { require: true, rejectUnauthorized: false },
+                connectTimeout: 8000
+            });
+
+            try {
+                const [rows] = await conn.query(sql, params || []);
+                res.json({ success: true, rows });
+            } finally {
+                await conn.end();
+            }
+        } catch (error) {
+            console.error('[DBHub Proxy Gateway] Query execution failed:', error.message);
             res.status(500).json({ success: false, message: error.message });
         }
     }

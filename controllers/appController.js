@@ -6218,7 +6218,7 @@ const appController = {
             }
 
             const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
-            const historyUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=Completed&$top=${top}&api-version=7.1`;
+            const historyUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&$top=${top}&api-version=7.1`;
             
             console.log(`[AppController] Fetching build history from: ${historyUrl}`);
             const historyRes = await axios.get(historyUrl, {
@@ -10562,6 +10562,138 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         } catch (error) {
             console.error('[AppController] checkYmlHealth failed:', error);
             res.status(500).json({ message: 'Failed to check YAML health.', error: error.message });
+        }
+    },
+
+    /**
+     * Cancel all running/queued builds for a pipeline except the latest one
+     */
+    cancelOlderPipelineBuilds: async (req, res) => {
+        try {
+            const { organizationId = 'estevia', pipelineId } = req.body;
+
+            if (!pipelineId) {
+                return res.status(400).json({ success: false, message: 'Missing parameter (pipelineId).' });
+            }
+
+            if (String(pipelineId).startsWith('github-actions:')) {
+                const repoPath = pipelineId.split(':').slice(1).join(':');
+                const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+                const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+                if (!githubToken) {
+                    return res.status(400).json({ success: false, message: 'GitHub integration credentials not found.' });
+                }
+
+                // Fetch active runs
+                const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?status=in_progress`;
+                console.log(`[AppController] cancelOlderPipelineBuilds (GitHub): Fetching active runs from: ${runsUrl}`);
+                const runsRes = await axios.get(runsUrl, {
+                    headers: {
+                        'Authorization': `token ${githubToken}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'User-Agent': getUserAgent(organizationId)
+                    }
+                });
+
+                const runs = runsRes.data?.workflow_runs || [];
+                if (runs.length <= 1) {
+                    return res.json({ success: true, message: 'No older running workflows found to cancel.' });
+                }
+
+                // Sort by run_number descending (newest first)
+                runs.sort((a, b) => b.run_number - a.run_number);
+                const latestRun = runs[0];
+                const olderRuns = runs.slice(1);
+
+                const canceledRunIds = [];
+                for (const old of olderRuns) {
+                    const cancelUrl = `https://api.github.com/repos/${repoPath}/actions/runs/${old.id}/cancel`;
+                    console.log(`[AppController] cancelOlderPipelineBuilds (GitHub): Canceling older run ID ${old.id}`);
+                    try {
+                        await axios.post(cancelUrl, {}, {
+                            headers: {
+                                'Authorization': `token ${githubToken}`,
+                                'Accept': 'application/vnd.github.v3+json',
+                                'User-Agent': getUserAgent(organizationId)
+                            }
+                        });
+                        canceledRunIds.push(old.id);
+                    } catch (err) {
+                        console.error(`[AppController] Failed to cancel GitHub run ${old.id}:`, err.message);
+                    }
+                }
+
+                return res.json({
+                    success: true,
+                    message: `Canceled ${canceledRunIds.length} older running workflow(s).`,
+                    latestBuild: latestRun.run_number,
+                    canceledIds: canceledRunIds
+                });
+            }
+
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
+            const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
+
+            const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
+            if (!devopsSecrets || !devopsSecrets.pat) {
+                return res.status(400).json({ success: false, message: 'Azure DevOps credentials not found.' });
+            }
+
+            const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
+
+            // Fetch running and queued builds
+            const runningUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=inProgress&api-version=7.1`;
+            const queuedUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=notStarted&api-version=7.1`;
+
+            console.log(`[AppController] Fetching active builds from: ${runningUrl} & ${queuedUrl}`);
+            const [runningRes, queuedRes] = await Promise.all([
+                axios.get(runningUrl, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 10000 }),
+                axios.get(queuedUrl, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 10000 })
+            ]);
+
+            const activeBuilds = [...(runningRes.data?.value || []), ...(queuedRes.data?.value || [])];
+            if (activeBuilds.length <= 1) {
+                return res.json({ success: true, message: 'No older running builds found to cancel.' });
+            }
+
+            // Sort by id descending (newest first)
+            activeBuilds.sort((a, b) => b.id - a.id);
+            const latestBuild = activeBuilds[0];
+            const olderBuilds = activeBuilds.slice(1);
+
+            const canceledBuildIds = [];
+            for (const old of olderBuilds) {
+                const cancelUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds/${old.id}?api-version=7.1`;
+                console.log(`[AppController] Canceling older Azure DevOps build ID ${old.id}`);
+                try {
+                    await axios.patch(cancelUrl, { status: 'Cancelling' }, {
+                        headers: {
+                            'Authorization': authHeader,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        timeout: 10000
+                    });
+                    canceledBuildIds.push(old.id);
+                } catch (err) {
+                    console.error(`[AppController] Failed to cancel Azure DevOps build ${old.id}:`, err.message);
+                }
+            }
+
+            res.json({
+                success: true,
+                message: `Canceled ${canceledBuildIds.length} older running build(s).`,
+                latestBuild: latestBuild.buildNumber || String(latestBuild.id),
+                canceledIds: canceledBuildIds
+            });
+        } catch (error) {
+            console.error('[AppController] cancelOlderPipelineBuilds failed:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to cancel older pipeline builds.',
+                error: error.message
+            });
         }
     }
 };

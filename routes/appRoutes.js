@@ -39,6 +39,9 @@ router.get('/pipeline/history', appController.getBuildHistory);
 // Re-deploy a previous build (roles gated inside controller)
 router.post('/pipeline/redeploy', restrictTo('owner', 'admin', 'contributor'), appController.reDeployBuild);
 
+// Cancel older duplicate builds for a pipeline
+router.post('/pipeline/cancel-older', restrictTo('owner', 'admin', 'contributor'), appController.cancelOlderPipelineBuilds);
+
 // Commit a default azure-pipelines.yml to GitHub repo, then register pipeline
 router.post('/create-pipeline-yml', restrictTo('owner', 'admin', 'contributor'), appController.createPipelineYml);
 
