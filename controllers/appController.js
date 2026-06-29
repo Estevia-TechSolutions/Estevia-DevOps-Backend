@@ -2090,7 +2090,7 @@ const appController = {
                     const baseApp = cleanAppName.replace(new RegExp(`^${ownerPrefix}-`), '').replace('-swa', '').replace('-dev', '').replace('-qa', '').replace('-prod', '').replace('-api', '').replace('-frontend', '');
                     const basePipeline = pName.replace('-pipeline', '').replace('-ci-cd', '').replace('-frontend', '').replace('-backend', '').replace('-api', '');
                     
-                    if (baseApp && basePipeline && baseApp === basePipeline) {
+                    if (baseApp && basePipeline && (baseApp === basePipeline || baseApp.includes(basePipeline) || basePipeline.includes(baseApp))) {
                         return true;
                     }
                     if (cleanAppName.includes(`${ownerPrefix}-api`) && pName.includes('backend-api')) {
@@ -3276,7 +3276,7 @@ const appController = {
                         const baseApp = cleanAppName.replace(new RegExp(`^${ownerPrefix}-`), '').replace('-swa', '').replace('-dev', '').replace('-qa', '').replace('-prod', '').replace('-api', '').replace('-frontend', '');
                         const basePipeline = pName.replace('-pipeline', '').replace('-ci-cd', '').replace('-frontend', '').replace('-backend', '').replace('-api', '');
                         
-                        if (baseApp && basePipeline && baseApp === basePipeline) {
+                        if (baseApp && basePipeline && (baseApp === basePipeline || baseApp.includes(basePipeline) || basePipeline.includes(baseApp))) {
                             return true;
                         }
                         if (cleanAppName.includes(`${ownerPrefix}-api`) && pName.includes('backend-api')) {
