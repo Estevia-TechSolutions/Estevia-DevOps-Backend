@@ -2354,9 +2354,9 @@ const appController = {
             if (existing.length > 0) {
                 await db.query(
                     `UPDATE applications 
-                     SET app_type = ?, status = ?, azure_resource_details = ?, godaddy_dns_details = ?, pipeline_id = ?
+                     SET app_type = ?, status = ?, azure_resource_details = ?, godaddy_dns_details = ?, pipeline_id = ?, repo_url = COALESCE(NULLIF(?, ''), repo_url)
                      WHERE id = ?`,
-                    [app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId, existing[0].id]
+                    [app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId, app.repositoryUrl || '', existing[0].id]
                 );
             } else {
                 await db.query(
@@ -3550,9 +3550,9 @@ const appController = {
                     // Update
                     await db.query(
                         `UPDATE applications 
-                         SET app_type = ?, status = ?, azure_resource_details = ?, godaddy_dns_details = ?, pipeline_id = ?
+                         SET app_type = ?, status = ?, azure_resource_details = ?, godaddy_dns_details = ?, pipeline_id = ?, repo_url = COALESCE(NULLIF(?, ''), repo_url)
                          WHERE id = ?`,
-                        [app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId, existing[0].id]
+                        [app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId, app.repositoryUrl || '', existing[0].id]
                     );
                 } else {
                     // Insert new discovered app
