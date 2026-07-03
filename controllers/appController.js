@@ -5950,6 +5950,7 @@ const appController = {
                     webUrl: latestRun.html_url,
                     startTime: latestRun.run_started_at || latestRun.created_at,
                     finishTime: latestRun.conclusion ? latestRun.updated_at : null,
+                    activeRunCount: (runsRes.data?.workflow_runs || []).filter(r => r.status !== 'completed').length,
                     stages: []
                 };
 
@@ -6037,8 +6038,8 @@ const appController = {
             const branchFilter = branchName ? `&branchName=${encodeURIComponent(branchName)}` : '';
             
             // Fetch InProgress, NotStarted, and Completed in parallel due to Azure DevOps API limitation
-            const urlInProgress = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=InProgress&$top=1${branchFilter}&api-version=7.1`;
-            const urlNotStarted = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=NotStarted&$top=1${branchFilter}&api-version=7.1`;
+            const urlInProgress = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=InProgress&$top=10${branchFilter}&api-version=7.1`;
+            const urlNotStarted = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=NotStarted&$top=10${branchFilter}&api-version=7.1`;
             const urlCompleted  = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=Completed&$top=1${branchFilter}&api-version=7.1`;
 
             console.log(`[AppController] getLatestPipelineBuild: Fetching runs in parallel for pipeline ${pipelineId} branch ${branchName || 'all'}`);
@@ -6048,9 +6049,13 @@ const appController = {
                 axios.get(urlCompleted,  { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 6000 }).catch(e => { console.warn(`[AppController] getLatestPipelineBuild: Failed to fetch Completed: ${e.message}`); return { data: { value: [] } }; })
             ]);
 
+            const allInProgress = resInProgress.data?.value || [];
+            const allNotStarted = resNotStarted.data?.value || [];
+            const activeRunCount = allInProgress.length + allNotStarted.length;
+
             const builds = [
-                resInProgress.data?.value?.[0],
-                resNotStarted.data?.value?.[0],
+                allInProgress[0],
+                allNotStarted[0],
                 resCompleted.data?.value?.[0]
             ].filter(Boolean);
 
@@ -6070,6 +6075,7 @@ const appController = {
                 startTime: latestRun.startTime || null,
                 finishTime: latestRun.finishTime || null,
                 queuePosition: latestRun.queuePosition || null,
+                activeRunCount,
                 stages: []
             };
 
