@@ -42,6 +42,9 @@ router.post('/pipeline/redeploy', restrictTo('owner', 'admin', 'contributor'), a
 // Cancel older duplicate builds for a pipeline
 router.post('/pipeline/cancel-older', restrictTo('owner', 'admin', 'contributor'), appController.cancelOlderPipelineBuilds);
 
+// Prioritize a queued build for a pipeline
+router.post('/pipeline/prioritize', restrictTo('owner', 'admin', 'contributor'), appController.prioritizeBuild);
+
 // Commit a default azure-pipelines.yml to GitHub repo, then register pipeline
 router.post('/create-pipeline-yml', restrictTo('owner', 'admin', 'contributor'), appController.createPipelineYml);
 

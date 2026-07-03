@@ -10697,6 +10697,60 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 error: error.message
             });
         }
+    },
+
+    /**
+     * Prioritize a queued build (Azure DevOps or GitHub Actions)
+     */
+    prioritizeBuild: async (req, res) => {
+        try {
+            const { organizationId = 'estevia', pipelineId, buildId } = req.body;
+
+            if (!pipelineId || !buildId) {
+                return res.status(400).json({ success: false, message: 'Missing parameter (pipelineId or buildId).' });
+            }
+
+            if (String(pipelineId).startsWith('github-actions:')) {
+                return res.json({
+                    success: true,
+                    message: 'GitHub Actions does not support queue priority changes. Simulating run prioritization...'
+                });
+            }
+
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
+            const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
+
+            const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure_devops');
+            if (!devopsSecrets || !devopsSecrets.pat) {
+                return res.status(400).json({ success: false, message: 'Azure DevOps credentials not found.' });
+            }
+
+            const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
+            const prioritizeUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds/${buildId}?api-version=7.1`;
+
+            console.log(`[AppController] Prioritizing build ID ${buildId} in Azure DevOps to High`);
+            await axios.patch(prioritizeUrl, { priority: 'high' }, {
+                headers: {
+                    'Authorization': authHeader,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                timeout: 10000
+            });
+
+            return res.json({
+                success: true,
+                message: `Build run #${buildId} queue priority set to High successfully.`
+            });
+        } catch (error) {
+            console.error('[AppController] prioritizeBuild failed:', error.message);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to prioritize build.',
+                error: error.message
+            });
+        }
     }
 };
 
