@@ -2505,7 +2505,7 @@ const appController = {
                                 try {
                                     const repoPath = app.pipelineId.split(':').slice(1).join(':');
                                     const resolvedBranchClean = app.branch ? app.branch.replace(/^refs\/heads\//, '') : null;
-                                    const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=1${resolvedBranchClean ? '&branch=' + encodeURIComponent(resolvedBranchClean) : ''}`;
+                                    const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=20${resolvedBranchClean ? '&branch=' + encodeURIComponent(resolvedBranchClean) : ''}`;
                                     const runsRes = await axios.get(runsUrl, {
                                         headers: {
                                             'Authorization': `token ${githubToken}`,
@@ -2514,8 +2514,15 @@ const appController = {
                                         },
                                         timeout: 5000
                                     });
-                                    const ghRun = runsRes.data?.workflow_runs?.[0];
+                                    const allGhRuns = runsRes.data?.workflow_runs || [];
+                                    const ghRun = allGhRuns[0];
                                     if (ghRun) {
+                                        const activeGhRuns = allGhRuns.filter(r => r.status !== 'completed');
+                                        let ghQueuePosition = null;
+                                        if (ghRun.status === 'queued' || ghRun.status === 'waiting') {
+                                            const aheadCount = activeGhRuns.filter(r => r.run_number < ghRun.run_number).length;
+                                            ghQueuePosition = aheadCount + 1;
+                                        }
                                         latestRun = {
                                             id: `${repoPath}/${ghRun.id}`,
                                             name: `#${ghRun.run_number}`,
@@ -2524,6 +2531,7 @@ const appController = {
                                             webUrl: ghRun.html_url,
                                             startTime: ghRun.run_started_at || ghRun.created_at,
                                             finishTime: ghRun.conclusion ? ghRun.updated_at : null,
+                                            queuePosition: ghQueuePosition,
                                             stages: []
                                         };
                                     }
@@ -2566,6 +2574,7 @@ const appController = {
                                         webUrl: azureBuild._links?.web?.href || '',
                                         startTime: azureBuild.startTime || null,
                                         finishTime: azureBuild.finishTime || null,
+                                        queuePosition: azureBuild.queuePosition || null,
                                         stages: []
                                     };
                                 }
@@ -3342,7 +3351,7 @@ const appController = {
                             const resolvedBranch = appController._resolveBranchFromAppName(app.name, app.branches || [], app.branch);
                             // GitHub API branch filter expects bare branch name (not refs/heads/ prefix)
                             const resolvedBranchClean = resolvedBranch ? resolvedBranch.replace(/^refs\/heads\//, '') : null;
-                            const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=1${resolvedBranchClean ? '&branch=' + encodeURIComponent(resolvedBranchClean) : ''}`;
+                            const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=20${resolvedBranchClean ? '&branch=' + encodeURIComponent(resolvedBranchClean) : ''}`;
                             const runsRes = await axios.get(runsUrl, {
                                 headers: {
                                     'Authorization': `token ${githubToken}`,
@@ -3351,8 +3360,15 @@ const appController = {
                                 },
                                 timeout: 5000
                             });
-                            const latestRun = runsRes.data?.workflow_runs?.[0];
+                            const allGhRunsFull = runsRes.data?.workflow_runs || [];
+                            const latestRun = allGhRunsFull[0];
                             if (latestRun) {
+                                const activeGhRunsFull = allGhRunsFull.filter(r => r.status !== 'completed');
+                                let ghQueuePositionFull = null;
+                                if (latestRun.status === 'queued' || latestRun.status === 'waiting') {
+                                    const aheadCount = activeGhRunsFull.filter(r => r.run_number < latestRun.run_number).length;
+                                    ghQueuePositionFull = aheadCount + 1;
+                                }
                                 app.pipelineRun = {
                                     id: `${repoPath}/${latestRun.id}`,
                                     name: `#${latestRun.run_number}`,
@@ -3361,6 +3377,7 @@ const appController = {
                                     webUrl: latestRun.html_url,
                                     startTime: latestRun.run_started_at || latestRun.created_at,
                                     finishTime: latestRun.conclusion ? latestRun.updated_at : null,
+                                    queuePosition: ghQueuePositionFull,
                                     stages: []
                                 };
 
@@ -3451,6 +3468,7 @@ const appController = {
                                 webUrl: latestRun._links?.web?.href || '',
                                 startTime: latestRun.startTime || null,
                                 finishTime: latestRun.finishTime || null,
+                                queuePosition: latestRun.queuePosition || null,
                                 stages: []
                             };
 
@@ -5927,7 +5945,8 @@ const appController = {
 
                 // GitHub API branch filter expects bare branch name, not refs/heads/ prefix
                 const cleanBranchName = branchName ? branchName.replace(/^refs\/heads\//, '') : null;
-                const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=1${cleanBranchName ? '&branch=' + encodeURIComponent(cleanBranchName) : ''}`;
+                // Fetch more runs so we can compute queue position among active runs
+                const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=20${cleanBranchName ? '&branch=' + encodeURIComponent(cleanBranchName) : ''}`;
                 console.log(`[AppController] getLatestPipelineBuild (GitHub): Fetching runs for ${repoPath} from: ${runsUrl}`);
                 const runsRes = await axios.get(runsUrl, {
                     headers: {
@@ -5937,9 +5956,21 @@ const appController = {
                     }
                 });
 
-                const latestRun = runsRes.data?.workflow_runs?.[0];
+                const allRuns = runsRes.data?.workflow_runs || [];
+                const latestRun = allRuns[0];
                 if (!latestRun) {
                     return res.json({ success: true, pipelineRun: null });
+                }
+
+                // Compute queue position: among active (non-completed) runs, find position of this run
+                // GitHub runs are returned newest-first; queued runs ahead of this one have lower run_number
+                const activeRuns = allRuns.filter(r => r.status !== 'completed');
+                const activeRunCount = activeRuns.length;
+                let queuePosition = null;
+                if (latestRun.status === 'queued' || latestRun.status === 'waiting') {
+                    // Count how many active runs have a higher run_number (were queued before this one)
+                    const aheadCount = activeRuns.filter(r => r.run_number < latestRun.run_number).length;
+                    queuePosition = aheadCount + 1;
                 }
 
                 const pipelineRun = {
@@ -5950,7 +5981,8 @@ const appController = {
                     webUrl: latestRun.html_url,
                     startTime: latestRun.run_started_at || latestRun.created_at,
                     finishTime: latestRun.conclusion ? latestRun.updated_at : null,
-                    activeRunCount: (runsRes.data?.workflow_runs || []).filter(r => r.status !== 'completed').length,
+                    activeRunCount,
+                    queuePosition,
                     stages: []
                 };
 
