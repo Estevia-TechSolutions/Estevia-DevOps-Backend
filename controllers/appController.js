@@ -6197,6 +6197,7 @@ const appController = {
                     buildNumber: run.run_number,
                     branch: run.head_branch,
                     result: run.conclusion === 'success' ? 'succeeded' : (run.conclusion === 'failure' ? 'failed' : (run.conclusion === 'cancelled' ? 'canceled' : null)),
+                    status: run.status,
                     startTime: run.run_started_at || run.created_at,
                     finishTime: run.conclusion ? run.updated_at : null,
                     sourceVersion: run.head_sha,
@@ -6237,6 +6238,7 @@ const appController = {
                     buildNumber: b.buildNumber,
                     branch: branchShort,
                     result: b.result, // succeeded, failed, canceled, partiallySucceeded
+                    status: b.status,
                     startTime: b.startTime || null,
                     finishTime: b.finishTime || null,
                     sourceVersion: b.sourceVersion,
