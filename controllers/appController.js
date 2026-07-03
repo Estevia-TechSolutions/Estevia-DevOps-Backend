@@ -7746,7 +7746,7 @@ const appController = {
         } catch (error) {
             console.error('[AppController] getGithubRepos failed:', error);
             if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-                return res.status(401).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
+                return res.status(400).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
             }
             res.status(500).json({ message: 'Failed to retrieve GitHub repositories.', error: error.message });
         }
@@ -7784,7 +7784,7 @@ const appController = {
         } catch (error) {
             console.error('[AppController] getGithubBranches failed:', error);
             if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-                return res.status(401).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
+                return res.status(400).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
             }
             res.status(500).json({ message: 'Failed to retrieve GitHub branches.', error: error.message });
         }
@@ -7837,7 +7837,7 @@ const appController = {
         } catch (error) {
             console.error('[AppController] getYml failed:', error);
             if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-                return res.status(401).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
+                return res.status(400).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
             }
             res.status(500).json({ message: 'Failed to fetch pipeline configuration.', error: error.message });
         }
@@ -8909,7 +8909,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
     } catch (error) {
       console.error('[AppController] getDockerfile failed:', error);
       if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-        return res.status(401).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
+        return res.status(400).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
       }
       res.status(500).json({ message: 'Failed to fetch Dockerfile.', error: error.message });
     }
@@ -8983,7 +8983,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
     } catch (error) {
       console.error('[AppController] updateDockerfile failed:', error);
       if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-        return res.status(401).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
+        return res.status(400).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
       }
       res.status(500).json({
         message: 'Failed to push Dockerfile to GitHub.',
@@ -10619,7 +10619,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         } catch (error) {
             console.error('[AppController] checkYmlHealth failed:', error);
             if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-                return res.status(401).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
+                return res.status(400).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
             }
             res.status(500).json({ message: 'Failed to check YAML health.', error: error.message });
         }
