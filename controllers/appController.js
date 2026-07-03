@@ -6069,6 +6069,7 @@ const appController = {
                 webUrl: latestRun._links?.web?.href || '',
                 startTime: latestRun.startTime || null,
                 finishTime: latestRun.finishTime || null,
+                queuePosition: latestRun.queuePosition || null,
                 stages: []
             };
 
@@ -6244,7 +6245,8 @@ const appController = {
                     sourceVersion: b.sourceVersion,
                     requestedFor: b.requestedFor?.displayName || 'Unknown',
                     webUrl: b._links?.web?.href || '',
-                    commitMessage: b.triggerInfo?.['ci.message'] || b.triggerInfo?.['ci.sourceShaMessage'] || ''
+                    commitMessage: b.triggerInfo?.['ci.message'] || b.triggerInfo?.['ci.sourceShaMessage'] || '',
+                    queuePosition: b.queuePosition || null
                 };
             });
 
