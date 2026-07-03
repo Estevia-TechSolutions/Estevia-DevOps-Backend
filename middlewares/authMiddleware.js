@@ -18,6 +18,14 @@ const protect = async (req, res, next) => {
         const decoded = jwt.verify(token, JWT_SECRET);
         req.user = decoded;
 
+        // Central self-healing: if tenant_id is missing from token, fetch it from database
+        if (!decoded.tenant_id && decoded.id) {
+            const [users] = await db.query('SELECT tenant_id FROM users WHERE id = ?', [decoded.id]);
+            if (users.length > 0 && users[0].tenant_id) {
+                req.user.tenant_id = users[0].tenant_id;
+            }
+        }
+
         // If organization_id is set, verify organization status (active vs disabled)
         if (decoded.organization_id) {
             // Bypass restriction ONLY for org status, invoices list, and invoice pay endpoints

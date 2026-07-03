@@ -59,7 +59,8 @@ const orgController = {
                     email: req.user.email, 
                     name: req.user.name, 
                     organization_id: orgId, 
-                    role: 'admin' 
+                    role: 'admin',
+                    tenant_id: tenantId 
                 },
                 JWT_SECRET,
                 { expiresIn: '24h' }

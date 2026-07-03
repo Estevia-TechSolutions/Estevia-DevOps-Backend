@@ -246,7 +246,8 @@ const microsoftLogin = async (req, res) => {
                 email: user.email, 
                 name: user.name, 
                 organization_id: user.organization_id, 
-                role: user.role 
+                role: user.role,
+                tenant_id: user.tenant_id 
             },
             JWT_SECRET,
             { expiresIn: '24h' }
@@ -349,7 +350,8 @@ const bypassLogin = async (req, res) => {
                 email: user.email,
                 name: user.name,
                 organization_id: user.organization_id,
-                role: user.role
+                role: user.role,
+                tenant_id: user.tenant_id
             },
             JWT_SECRET,
             { expiresIn: '30d' }
@@ -426,7 +428,8 @@ const adminOverrideLogin = async (req, res) => {
                 email: user.email,
                 name: user.name,
                 organization_id: user.organization_id,
-                role: user.role
+                role: user.role,
+                tenant_id: user.tenant_id
             },
             JWT_SECRET,
             { expiresIn: '8h' } // Shorter expiry for admin override sessions
@@ -694,7 +697,15 @@ const syncUsers = async (req, res) => {
     
     try {
         const orgId = req.user?.organization_id;
-        const tenantId = req.user?.tenant_id;
+        let tenantId = req.user?.tenant_id;
+        
+        if (!tenantId && orgId) {
+            const [orgs] = await db.query('SELECT tenant_id FROM organizations WHERE id = ?', [orgId]);
+            if (orgs.length > 0) {
+                tenantId = orgs[0].tenant_id;
+            }
+        }
+        
         if (!orgId || !tenantId) {
             return res.status(400).json({ error: 'User session is missing organization or tenant context for directory sync.' });
         }
