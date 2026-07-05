@@ -141,6 +141,7 @@ async function main() {
                 name VARCHAR(255),
                 organization_id VARCHAR(50) DEFAULT NULL,
                 role VARCHAR(50) DEFAULT 'member',
+                status VARCHAR(50) NOT NULL DEFAULT 'active',
                 tenant_id VARCHAR(255) NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE SET NULL

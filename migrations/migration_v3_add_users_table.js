@@ -23,6 +23,7 @@ async function migrate() {
                 name VARCHAR(255),
                 organization_id VARCHAR(50) DEFAULT 'org-1',
                 role VARCHAR(50) DEFAULT 'member',
+                status VARCHAR(50) NOT NULL DEFAULT 'active',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE SET NULL
             )

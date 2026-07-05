@@ -241,6 +241,19 @@ async function runAutoMigration() {
             await pool.query(`ALTER TABLE applied_remediations MODIFY COLUMN suggestion_id VARCHAR(255) NOT NULL`);
         }
 
+        // Check if users table lacks columns
+        const [userCols] = await pool.query(`
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+              AND TABLE_NAME = 'users'
+        `);
+        const userColNames = userCols.map(c => c.COLUMN_NAME.toLowerCase());
+        if (!userColNames.includes('status')) {
+            console.log('[DevOps DB] Adding column status to users...');
+            await pool.query(`ALTER TABLE users ADD COLUMN status VARCHAR(50) NOT NULL DEFAULT 'active'`);
+        }
+
         // Seed initial directory users and roles
         console.log('[DevOps DB] Seeding initial directory users...');
         const initialUsers = [
