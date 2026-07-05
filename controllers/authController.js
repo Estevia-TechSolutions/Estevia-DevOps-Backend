@@ -189,24 +189,22 @@ const microsoftLogin = async (req, res) => {
                 );
                 user = { id: msalId, email, name, organization_id: orgId || preSeededUser.organization_id, tenant_id: tenantIdFromToken, role: finalRole };
             } else {
-                // Truly new user — apply seat capacity gate for write-roles
-                const writeRoles = ['owner', 'admin', 'contributor'];
-                let assignedRole = userRole;
-                if (writeRoles.includes(userRole) && orgId) {
+                // Truly new user — apply seat capacity gate. If seat limit has hit, block login and database insertion.
+                if (orgId) {
                     const seatCheck = await checkSeatCapacity(orgId);
                     if (seatCheck.isFull) {
-                        console.warn(`[authController] Seat cap reached for org '${orgId}' (${seatCheck.current}/${seatCheck.limit}). New user ${email} cannot be assigned role '${userRole}'.`);
+                        console.warn(`[authController] Seat cap reached for org '${orgId}' (${seatCheck.current}/${seatCheck.limit}). New user ${email} login rejected.`);
                         return res.status(403).json({
-                            error: `Seat license limit reached (${seatCheck.current}/${seatCheck.limit}). Contact your administrator to increase the seat limit or assign you a Viewer role.`
+                            error: `Seat license limit reached (${seatCheck.current}/${seatCheck.limit}). Access denied. Contact your administrator to increase the operator seat limit.`
                         });
                     }
                 }
-                console.log(`[authController] Creating new user: ${email} for tenant: ${tenantIdFromToken} with role: ${assignedRole}`);
+                console.log(`[authController] Creating new user: ${email} for tenant: ${tenantIdFromToken} with role: ${userRole}`);
                 await db.query(
                     'INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES (?, ?, ?, ?, ?, ?)',
-                    [msalId, email, name, orgId, tenantIdFromToken, assignedRole]
+                    [msalId, email, name, orgId, tenantIdFromToken, userRole]
                 );
-                user = { id: msalId, email, name, organization_id: orgId, tenant_id: tenantIdFromToken, role: assignedRole };
+                user = { id: msalId, email, name, organization_id: orgId, tenant_id: tenantIdFromToken, role: userRole };
             }
         } else {
             user = users[0];
