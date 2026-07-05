@@ -77,8 +77,12 @@ const protect = async (req, res, next) => {
                         
                         const pricingGroup = platformPricing[currency] || platformPricing.USD;
                         const tierPricing = pricingGroup[tier] || pricingGroup.growth;
-                        
-                        const platformPrice = tierPricing.base + (org.operator_seats_limit * tierPricing.perSeat);
+
+                        const [[{ activeSeats }]] = await db.query(
+                            `SELECT COUNT(*) AS activeSeats FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+                            [orgId]
+                        );
+                        const platformPrice = tierPricing.base + (activeSeats * tierPricing.perSeat);
                         const invoiceNumber = `INV-EV-${orgId}-PLATFORM-${Date.now()}`;
                         const issueDate = new Date();
                         const dueDate = new Date();

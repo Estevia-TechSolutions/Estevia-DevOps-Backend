@@ -154,6 +154,8 @@ async function runAutoMigration() {
             console.log('[DevOps DB] Adding column billing_corrected to organizations...');
             await pool.query(`ALTER TABLE organizations ADD COLUMN billing_corrected TINYINT(1) NOT NULL DEFAULT 0`);
         }
+        // Force re-run of invoice correction on this deployment to pick up latest pricing logic
+        await pool.query(`UPDATE organizations SET billing_corrected = 0`);
 
         // --- License Enforcement Columns (applications) ---
         const [appColumns] = await pool.query(`
@@ -387,8 +389,12 @@ async function runInvoiceRegeneration(db) {
             const pricingGroup = platformPricing[currency] || platformPricing.USD;
             const tierPricing = pricingGroup[tier] || pricingGroup.growth;
 
-            // Compute expected price based on allocated seat limit (operator_seats_limit)
-            const expectedPlatformPrice = tierPricing.base + (org.operator_seats_limit * tierPricing.perSeat);
+            // Compute expected price based on ACTIVE seats (write-role users: owner, admin, contributor)
+            const [[{ activeSeats }]] = await db.query(
+                `SELECT COUNT(*) AS activeSeats FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+                [orgId]
+            );
+            const expectedPlatformPrice = tierPricing.base + (activeSeats * tierPricing.perSeat);
             
             const [existingPlatformInvoices] = await db.query(
                 'SELECT * FROM billing_invoices WHERE organization_id = ? AND invoice_type IS NULL ORDER BY id ASC',

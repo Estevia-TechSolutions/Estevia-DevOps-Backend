@@ -254,8 +254,13 @@ const generateInvoice = async (req, res) => {
         const pricingGroup = TIER_PRICING[currency] || TIER_PRICING.USD;
         const pricing = pricingGroup[tier] || pricingGroup.growth;
 
+        const [[{ activeSeats }]] = await db.query(
+            `SELECT COUNT(*) AS activeSeats FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+            [id]
+        );
+
         const baseAmount = pricing.base;
-        const perSeatAmount = orgs[0].operator_seats_limit * pricing.perSeat;
+        const perSeatAmount = activeSeats * pricing.perSeat;
         const totalAmount = baseAmount + perSeatAmount;
 
         const invoiceNum = 'INV-' + Date.now() + '-' + Math.floor(100 + Math.random() * 900);
