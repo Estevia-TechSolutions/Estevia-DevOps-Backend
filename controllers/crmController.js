@@ -148,7 +148,7 @@ const listClients = async (req, res) => {
         for (const client of clients) {
             const [[{ activeSeats }]] = await db.query(
                 `SELECT COUNT(*) AS activeSeats FROM users 
-                 WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+                 WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor')`,
                 [client.id]
             );
             const [[{ unpaidInvoicesCount }]] = await db.query(
@@ -256,7 +256,7 @@ const generateInvoice = async (req, res) => {
 
         const [[{ activeSeats }]] = await db.query(
             `SELECT COUNT(*) AS activeSeats FROM users 
-             WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+             WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor')`,
             [id]
         );
 

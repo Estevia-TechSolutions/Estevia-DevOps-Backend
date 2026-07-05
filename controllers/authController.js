@@ -59,7 +59,7 @@ async function checkSeatCapacity(organizationId) {
         );
         const limit = org?.operator_seats_limit ?? 10;
         const [[{ count }]] = await db.query(
-            `SELECT COUNT(*) AS count FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+            `SELECT COUNT(*) AS count FROM users WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor')`,
             [organizationId]
         );
         return { limit, current: count, isFull: count >= limit };

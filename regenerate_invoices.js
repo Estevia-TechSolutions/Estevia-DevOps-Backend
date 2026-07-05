@@ -133,7 +133,7 @@ async function run() {
             // Query active seats: role IN ('owner','admin','contributor')
             const [[{ activeSeats }]] = await db.query(
                 `SELECT COUNT(*) AS activeSeats FROM users 
-                 WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+                 WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor')`,
                 [orgId]
             );
 

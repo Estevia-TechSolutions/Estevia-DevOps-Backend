@@ -42,6 +42,65 @@ const protect = async (req, res, next) => {
                     });
                 }
             }
+
+            // Self-healing / Auto-billing check for Platform Seat & License Fee invoice
+            try {
+                const orgId = decoded.organization_id;
+                const [existingPlatform] = await db.query(
+                    'SELECT id FROM billing_invoices WHERE organization_id = ? AND invoice_type IS NULL LIMIT 1',
+                    [orgId]
+                );
+                
+                if (existingPlatform.length === 0) {
+                    const [orgDetails] = await db.query(
+                        'SELECT billing_currency, license_tier FROM organizations WHERE id = ?',
+                        [orgId]
+                    );
+                    
+                    if (orgDetails.length > 0) {
+                        const org = orgDetails[0];
+                        const currency = org.billing_currency || 'USD';
+                        const tier = (org.license_tier || 'growth').toLowerCase();
+                        
+                        const platformPricing = {
+                            USD: {
+                                growth:     { base: 1000, perSeat: 40 },
+                                enterprise: { base: 2000, perSeat: 90 },
+                                sovereign:  { base: 4000, perSeat: 30 }
+                            },
+                            INR: {
+                                growth:     { base: 83333, perSeat: 3333 },
+                                enterprise: { base: 166666, perSeat: 7500 },
+                                sovereign:  { base: 333333, perSeat: 2500 }
+                            }
+                        };
+                        
+                        const pricingGroup = platformPricing[currency] || platformPricing.USD;
+                        const tierPricing = pricingGroup[tier] || pricingGroup.growth;
+                        
+                        const [[{ activeSeats }]] = await db.query(
+                            `SELECT COUNT(*) AS activeSeats FROM users 
+                             WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor')`,
+                            [orgId]
+                        );
+                        
+                        const platformPrice = tierPricing.base + (activeSeats * tierPricing.perSeat);
+                        const invoiceNumber = `INV-EV-${orgId}-PLATFORM-${Date.now()}`;
+                        const issueDate = new Date();
+                        const dueDate = new Date();
+                        dueDate.setDate(issueDate.getDate() + 7);
+                        
+                        console.log(`[AutoBilling] Automatically generating Platform invoice for organization ${orgId}: ${invoiceNumber}`);
+                        await db.query(
+                            `INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date, currency, invoice_type)
+                             VALUES (?, ?, ?, 'Pending', ?, ?, ?, NULL)`,
+                            [orgId, invoiceNumber, platformPrice, issueDate, dueDate, currency]
+                        );
+                    }
+                }
+            } catch (billingErr) {
+                console.error('[AutoBilling] Failed checking/generating Platform invoice:', billingErr.message);
+            }
         }
 
         next();
@@ -110,7 +169,8 @@ const lazyBillPackage = (packageName) => {
             }
             
             const org = orgs[0];
-            const isSubscribed = org[colName] === 1 || org[colName] === true;
+            const val = org[colName];
+            const isSubscribed = val ? (Buffer.isBuffer(val) ? val[0] === 1 : Number(val) === 1) : false;
             
             if (!isSubscribed) {
                 // Attempt atomic subscription activation to prevent duplicate invoicing from parallel race conditions

@@ -7067,7 +7067,7 @@ const appController = {
             const settings = await appController._getOrgSettings(organizationId);
             
             const [[{ writeCount }]] = await db.query(
-                `SELECT COUNT(*) AS writeCount FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+                `SELECT COUNT(*) AS writeCount FROM users WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor')`,
                 [organizationId]
             );
             settings.currentWriteUsers = writeCount;
@@ -7278,7 +7278,7 @@ const appController = {
             const newSeatLimit = operatorSeatsLimit !== undefined ? parseInt(operatorSeatsLimit, 10) : null;
             if (newSeatLimit !== null && newSeatLimit < (currentOrg?.operator_seats_limit ?? 10)) {
                 const [[{ writeCount }]] = await db.query(
-                    `SELECT COUNT(*) AS writeCount FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+                    `SELECT COUNT(*) AS writeCount FROM users WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor')`,
                     [organizationId]
                 );
                 currentWriteUsers = writeCount;
