@@ -336,6 +336,22 @@ async function main() {
             console.log('Adding column is_disabled to organizations...');
             await connection.query('ALTER TABLE organizations ADD COLUMN is_disabled BOOLEAN DEFAULT FALSE');
         }
+        if (!orgColNamesList.includes('billing_currency')) {
+            console.log('Adding column billing_currency to organizations...');
+            await connection.query("ALTER TABLE organizations ADD COLUMN billing_currency VARCHAR(10) NOT NULL DEFAULT 'USD'");
+        }
+        if (!orgColNamesList.includes('sub_package_devops')) {
+            console.log('Adding column sub_package_devops to organizations...');
+            await connection.query("ALTER TABLE organizations ADD COLUMN sub_package_devops TINYINT(1) NOT NULL DEFAULT 0");
+        }
+        if (!orgColNamesList.includes('sub_package_developer')) {
+            console.log('Adding column sub_package_developer to organizations...');
+            await connection.query("ALTER TABLE organizations ADD COLUMN sub_package_developer TINYINT(1) NOT NULL DEFAULT 0");
+        }
+        if (!orgColNamesList.includes('sub_package_security')) {
+            console.log('Adding column sub_package_security to organizations...');
+            await connection.query("ALTER TABLE organizations ADD COLUMN sub_package_security TINYINT(1) NOT NULL DEFAULT 0");
+        }
 
         // Check if suggestion_id in applied_remediations needs modification
         const [remediationCols] = await connection.query(`
@@ -348,6 +364,23 @@ async function main() {
         if (remediationCols.length > 0 && remediationCols[0].CHARACTER_MAXIMUM_LENGTH < 255) {
             console.log('Modifying suggestion_id length to VARCHAR(255) in applied_remediations...');
             await connection.query(`ALTER TABLE applied_remediations MODIFY COLUMN suggestion_id VARCHAR(255) NOT NULL`);
+        }
+
+        // Check if billing_invoices has currency and invoice_type columns
+        const [invoiceColsList] = await connection.query(`
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+              AND TABLE_NAME = 'billing_invoices'
+        `);
+        const invoiceColNamesList = invoiceColsList.map(c => c.COLUMN_NAME.toLowerCase());
+        if (!invoiceColNamesList.includes('currency')) {
+            console.log('Adding column currency to billing_invoices...');
+            await connection.query("ALTER TABLE billing_invoices ADD COLUMN currency VARCHAR(10) NOT NULL DEFAULT 'USD'");
+        }
+        if (!invoiceColNamesList.includes('invoice_type')) {
+            console.log('Adding column invoice_type to billing_invoices...');
+            await connection.query("ALTER TABLE billing_invoices ADD COLUMN invoice_type VARCHAR(50) DEFAULT NULL");
         }
 
         const masterOrgId = process.env.MASTER_ORGANIZATION_ID || 'estevia';

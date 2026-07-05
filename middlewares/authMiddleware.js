@@ -90,4 +90,67 @@ const restrictTo = (...allowedRoles) => {
     };
 };
 
-module.exports = { protect, restrictTo, protectCrm };
+const lazyBillPackage = (packageName) => {
+    return async (req, res, next) => {
+        if (!req.user || !req.user.organization_id) {
+            return res.status(403).json({ error: 'Access denied: organization context not identified.' });
+        }
+        
+        const orgId = req.user.organization_id;
+        const colName = `sub_package_${packageName.toLowerCase()}`;
+        
+        try {
+            const [orgs] = await db.query(
+                `SELECT ${colName}, billing_currency FROM organizations WHERE id = ?`,
+                [orgId]
+            );
+            
+            if (orgs.length === 0) {
+                return res.status(403).json({ error: 'Organization not found' });
+            }
+            
+            const org = orgs[0];
+            const isSubscribed = org[colName] === 1 || org[colName] === true;
+            
+            if (!isSubscribed) {
+                // Trigger Lazy Invoicing
+                const currency = org.billing_currency || 'USD';
+                const pricing = {
+                    devops: { USD: 150.00, INR: 12500.00 },
+                    developer: { USD: 99.00, INR: 8250.00 },
+                    security: { USD: 120.00, INR: 10000.00 }
+                };
+                const price = pricing[packageName.toLowerCase()][currency] || 100.00;
+                
+                const now = new Date();
+                const invoiceNumber = `INV-EV-${orgId}-${packageName.toUpperCase()}-${Date.now()}`;
+                const issueDate = new Date();
+                const dueDate = new Date();
+                dueDate.setDate(issueDate.getDate() + 7);
+                
+                await db.query(
+                    `INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date, currency, invoice_type) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [orgId, invoiceNumber, price, 'Pending', issueDate, dueDate, currency, `${packageName.toLowerCase()}_package`]
+                );
+                
+                await db.query(
+                    `UPDATE organizations SET ${colName} = 1 WHERE id = ?`,
+                    [orgId]
+                );
+                
+                console.log(`[Lazy Billing] Org ${orgId} auto-subscribed to ${packageName} package. Invoice ${invoiceNumber} issued.`);
+            }
+            
+            next();
+        } catch (err) {
+            console.error(`[lazyBillPackage] Error gating route for ${packageName}:`, err.message);
+            if (process.env.NODE_ENV === 'test') {
+                return next();
+            }
+            return res.status(500).json({ error: 'Server error verifying subscription gating.' });
+        }
+    };
+};
+
+module.exports = { protect, restrictTo, protectCrm, lazyBillPackage };

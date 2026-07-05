@@ -7,7 +7,7 @@ if (process.env.NODE_ENV === 'test') {
             console.log(`[Mock DB] Executing query: ${sql}`);
             const sqlLower = sql.toLowerCase();
             if (sqlLower.includes('select column_name')) {
-                return [['azure_container_registry', 'azure_devops_service_connection', 'docker_registry_service_connection', 'azure_key_vault_url', 'dev_db_host', 'qa_db_host', 'prod_db_host', 'dev_managed_env_id', 'prod_managed_env_id', 'disabled_rules', 'rule_severities'].map(name => ({ COLUMN_NAME: name }))];
+                return [['azure_container_registry', 'azure_devops_service_connection', 'docker_registry_service_connection', 'azure_key_vault_url', 'dev_db_host', 'qa_db_host', 'prod_db_host', 'dev_managed_env_id', 'prod_managed_env_id', 'disabled_rules', 'rule_severities', 'billing_currency', 'sub_package_devops', 'sub_package_developer', 'sub_package_security'].map(name => ({ COLUMN_NAME: name }))];
             }
             if (sqlLower.includes('from applications')) {
                 return [[
@@ -17,7 +17,7 @@ if (process.env.NODE_ENV === 'test') {
             }
             if (sqlLower.includes('select * from organizations') || sqlLower.includes('from organizations where id =')) {
                 return [[
-                    { id: 'estevia', azure_subscription_id: 'sub-id', azure_resource_group: 'rg', default_dns_domain: 'esteviatech.com', disabled_rules: 'tagging', rule_severities: '{"network-security":"Critical"}' }
+                    { id: 'estevia', azure_subscription_id: 'sub-id', azure_resource_group: 'rg', default_dns_domain: 'esteviatech.com', disabled_rules: 'tagging', rule_severities: '{"network-security":"Critical"}', billing_currency: 'USD', sub_package_devops: 0, sub_package_developer: 0, sub_package_security: 0 }
                 ]];
             }
             if (sqlLower.includes('insert into audit_logs')) {
@@ -134,6 +134,22 @@ async function runAutoMigration() {
             console.log('[DevOps DB] Adding column allowed_providers to organizations...');
             await pool.query(`ALTER TABLE organizations ADD COLUMN allowed_providers VARCHAR(255) NOT NULL DEFAULT 'azure'`);
         }
+        if (!columnNames.includes('billing_currency')) {
+            console.log('[DevOps DB] Adding column billing_currency to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN billing_currency VARCHAR(10) NOT NULL DEFAULT 'USD'`);
+        }
+        if (!columnNames.includes('sub_package_devops')) {
+            console.log('[DevOps DB] Adding column sub_package_devops to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN sub_package_devops TINYINT(1) NOT NULL DEFAULT 0`);
+        }
+        if (!columnNames.includes('sub_package_developer')) {
+            console.log('[DevOps DB] Adding column sub_package_developer to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN sub_package_developer TINYINT(1) NOT NULL DEFAULT 0`);
+        }
+        if (!columnNames.includes('sub_package_security')) {
+            console.log('[DevOps DB] Adding column sub_package_security to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN sub_package_security TINYINT(1) NOT NULL DEFAULT 0`);
+        }
 
         // --- License Enforcement Columns (applications) ---
         const [appColumns] = await pool.query(`
@@ -172,9 +188,29 @@ async function runAutoMigration() {
                 issue_date DATE NOT NULL,
                 due_date DATE NOT NULL,
                 payment_date DATE DEFAULT NULL,
+                currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+                invoice_type VARCHAR(50) DEFAULT NULL,
                 FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
             )
         `);
+
+        // Check if existing billing_invoices lacks columns
+        const [invoiceCols] = await pool.query(`
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+              AND TABLE_NAME = 'billing_invoices'
+        `);
+        const invoiceColNames = invoiceCols.map(c => c.COLUMN_NAME.toLowerCase());
+        
+        if (!invoiceColNames.includes('currency')) {
+            console.log('[DevOps DB] Adding column currency to billing_invoices...');
+            await pool.query(`ALTER TABLE billing_invoices ADD COLUMN currency VARCHAR(10) NOT NULL DEFAULT 'USD'`);
+        }
+        if (!invoiceColNames.includes('invoice_type')) {
+            console.log('[DevOps DB] Adding column invoice_type to billing_invoices...');
+            await pool.query(`ALTER TABLE billing_invoices ADD COLUMN invoice_type VARCHAR(50) DEFAULT NULL`);
+        }
 
         // Create applied_remediations table if not exists
         console.log('[DevOps DB] Checking applied_remediations table...');

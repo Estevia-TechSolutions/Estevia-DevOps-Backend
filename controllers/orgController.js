@@ -34,12 +34,44 @@ const orgController = {
                 orgId = `${orgId}-${Math.floor(1000 + Math.random() * 9000)}`;
             }
 
+            const { billingCurrency, subPackageDevops, subPackageDeveloper, subPackageSecurity } = req.body;
+            const currency = billingCurrency || 'USD';
+            const devopsSub = subPackageDevops ? 1 : 0;
+            const devSub = subPackageDeveloper ? 1 : 0;
+            const secSub = subPackageSecurity ? 1 : 0;
+
             // Create organization
             await db.query(
-                `INSERT INTO organizations (id, name, tenant_id, admin_email, onboarding_complete, created_by)
-                 VALUES (?, ?, ?, ?, 0, ?)`,
-                [orgId, name, tenantId, adminEmail, req.user.id]
+                `INSERT INTO organizations (id, name, tenant_id, admin_email, onboarding_complete, created_by, billing_currency, sub_package_devops, sub_package_developer, sub_package_security)
+                 VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+                [orgId, name, tenantId, adminEmail, req.user.id, currency, devopsSub, devSub, secSub]
             );
+
+            // Generate initial invoices for pre-selected packages
+            const pricing = {
+                devops: { USD: 150.00, INR: 12500.00 },
+                developer: { USD: 99.00, INR: 8250.00 },
+                security: { USD: 120.00, INR: 10000.00 }
+            };
+
+            const selectedPackages = [];
+            if (devopsSub) selectedPackages.push({ name: 'DevOps', type: 'devops_package' });
+            if (devSub) selectedPackages.push({ name: 'Developer', type: 'developer_package' });
+            if (secSub) selectedPackages.push({ name: 'Security', type: 'security_package' });
+
+            for (const pkg of selectedPackages) {
+                const price = pricing[pkg.name.toLowerCase()][currency];
+                const invoiceNumber = `INV-EV-${orgId}-${pkg.name.toUpperCase()}-${Date.now()}`;
+                const issueDate = new Date();
+                const dueDate = new Date();
+                dueDate.setDate(issueDate.getDate() + 7);
+
+                await db.query(
+                    `INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date, currency, invoice_type) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [orgId, invoiceNumber, price, 'Pending', issueDate, dueDate, currency, pkg.type]
+                );
+            }
 
             // Update user to match this organization and set as admin
             await db.query(

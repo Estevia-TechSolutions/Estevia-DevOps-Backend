@@ -7182,7 +7182,12 @@ const appController = {
                 // License fields
                 licenseTier,
                 operatorSeatsLimit,
-                downgradeConfirmToken
+                downgradeConfirmToken,
+                // Sub-package fields
+                billingCurrency,
+                subPackageDevops,
+                subPackageDeveloper,
+                subPackageSecurity
             } = req.body;
 
             if (!organizationId) {
@@ -7193,6 +7198,51 @@ const appController = {
             await db.query(`
                 INSERT IGNORE INTO organizations (id, name) VALUES (?, ?)
             `, [organizationId, organizationId.toUpperCase()]);
+
+            const [[currentOrgStatus]] = await db.query(
+                'SELECT billing_currency, sub_package_devops, sub_package_developer, sub_package_security FROM organizations WHERE id = ?',
+                [organizationId]
+            );
+
+            const currency = billingCurrency || currentOrgStatus?.billing_currency || 'USD';
+            const devopsSub = subPackageDevops !== undefined ? (subPackageDevops ? 1 : 0) : (currentOrgStatus?.sub_package_devops ?? 0);
+            const devSub = subPackageDeveloper !== undefined ? (subPackageDeveloper ? 1 : 0) : (currentOrgStatus?.sub_package_developer ?? 0);
+            const secSub = subPackageSecurity !== undefined ? (subPackageSecurity ? 1 : 0) : (currentOrgStatus?.sub_package_security ?? 0);
+
+            // Check if any package is transitioning from 0 to 1 (newly subscribed)
+            const pricing = {
+                devops: { USD: 150.00, INR: 12500.00 },
+                developer: { USD: 99.00, INR: 8250.00 },
+                security: { USD: 120.00, INR: 10000.00 }
+            };
+
+            const activations = [];
+            if (devopsSub && !currentOrgStatus?.sub_package_devops) activations.push({ name: 'DevOps', type: 'devops_package' });
+            if (devSub && !currentOrgStatus?.sub_package_developer) activations.push({ name: 'Developer', type: 'developer_package' });
+            if (secSub && !currentOrgStatus?.sub_package_security) activations.push({ name: 'Security', type: 'security_package' });
+
+            for (const pkg of activations) {
+                const price = pricing[pkg.name.toLowerCase()][currency];
+                const invoiceNumber = `INV-EV-${organizationId}-${pkg.name.toUpperCase()}-${Date.now()}`;
+                const issueDate = new Date();
+                const dueDate = new Date();
+                dueDate.setDate(issueDate.getDate() + 7);
+
+                await db.query(
+                    `INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date, currency, invoice_type) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [organizationId, invoiceNumber, price, 'Pending', issueDate, dueDate, currency, pkg.type]
+                );
+            }
+
+            await db.query(`
+                UPDATE organizations SET
+                    billing_currency = ?,
+                    sub_package_devops = ?,
+                    sub_package_developer = ?,
+                    sub_package_security = ?
+                WHERE id = ?
+            `, [currency, devopsSub, devSub, secSub, organizationId]);
 
             // ── License Tier Change Enforcement ─────────────────────────────
             const [[currentOrg]] = await db.query(
