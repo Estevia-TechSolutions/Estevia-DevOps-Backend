@@ -8182,7 +8182,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         try {
             const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
             const [rows] = await db.query(
-                'SELECT id, invoice_number, amount, status, DATE_FORMAT(issue_date, "%Y-%m-%d") as issue_date, DATE_FORMAT(due_date, "%Y-%m-%d") as due_date, DATE_FORMAT(payment_date, "%Y-%m-%d") as payment_date FROM billing_invoices WHERE organization_id = ? ORDER BY due_date DESC',
+                'SELECT id, invoice_number, amount, status, currency, invoice_type, DATE_FORMAT(issue_date, "%Y-%m-%d") as issue_date, DATE_FORMAT(due_date, "%Y-%m-%d") as due_date, DATE_FORMAT(payment_date, "%Y-%m-%d") as payment_date FROM billing_invoices WHERE organization_id = ? ORDER BY due_date DESC',
                 [organizationId]
             );
             res.json(rows);
