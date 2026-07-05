@@ -226,9 +226,16 @@ const listClientInvoices = async (req, res) => {
 };
 
 const TIER_PRICING = {
-    'growth':     { base: 1000, perSeat: 40 },
-    'enterprise': { base: 2000, perSeat: 90 },
-    'sovereign':  { base: 4000, perSeat: 30 }
+    USD: {
+        growth:     { base: 1000, perSeat: 40 },
+        enterprise: { base: 2000, perSeat: 90 },
+        sovereign:  { base: 4000, perSeat: 30 }
+    },
+    INR: {
+        growth:     { base: 83333, perSeat: 3333 },
+        enterprise: { base: 166666, perSeat: 7500 },
+        sovereign:  { base: 333333, perSeat: 2500 }
+    }
 };
 
 const generateInvoice = async (req, res) => {
@@ -236,14 +243,16 @@ const generateInvoice = async (req, res) => {
     const { due_days } = req.body;
     try {
         const [orgs] = await db.query(
-            'SELECT license_tier, operator_seats_limit FROM organizations WHERE id = ?',
+            'SELECT license_tier, operator_seats_limit, billing_currency FROM organizations WHERE id = ?',
             [id]
         );
         if (orgs.length === 0) {
             return res.status(404).json({ error: 'Organization not found' });
         }
+        const currency = orgs[0].billing_currency || 'USD';
         const tier = (orgs[0].license_tier || 'growth').toLowerCase();
-        const pricing = TIER_PRICING[tier] || TIER_PRICING.growth;
+        const pricingGroup = TIER_PRICING[currency] || TIER_PRICING.USD;
+        const pricing = pricingGroup[tier] || pricingGroup.growth;
 
         const [[{ activeSeats }]] = await db.query(
             `SELECT COUNT(*) AS activeSeats FROM users 
@@ -261,15 +270,16 @@ const generateInvoice = async (req, res) => {
         dueDate.setDate(dueDate.getDate() + (due_days || 15));
 
         await db.query(
-            `INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date)
-             VALUES (?, ?, ?, 'Pending', ?, ?)`,
-            [id, invoiceNum, totalAmount, issueDate, dueDate]
+            `INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date, currency)
+             VALUES (?, ?, ?, 'Pending', ?, ?, ?)`,
+            [id, invoiceNum, totalAmount, issueDate, dueDate, currency]
         );
         res.json({
             message: 'Invoice generated successfully',
             invoice_number: invoiceNum,
             breakdown: {
                 license_tier: tier,
+                currency: currency,
                 base_amount: baseAmount,
                 active_seats: activeSeats,
                 per_seat_price: pricing.perSeat,

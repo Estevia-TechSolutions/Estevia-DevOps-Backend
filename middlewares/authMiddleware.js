@@ -113,33 +113,36 @@ const lazyBillPackage = (packageName) => {
             const isSubscribed = org[colName] === 1 || org[colName] === true;
             
             if (!isSubscribed) {
-                // Trigger Lazy Invoicing
-                const currency = org.billing_currency || 'USD';
-                const pricing = {
-                    devops: { USD: 150.00, INR: 12500.00 },
-                    developer: { USD: 99.00, INR: 8250.00 },
-                    security: { USD: 120.00, INR: 10000.00 }
-                };
-                const price = pricing[packageName.toLowerCase()][currency] || 100.00;
-                
-                const now = new Date();
-                const invoiceNumber = `INV-EV-${orgId}-${packageName.toUpperCase()}-${Date.now()}`;
-                const issueDate = new Date();
-                const dueDate = new Date();
-                dueDate.setDate(issueDate.getDate() + 7);
-                
-                await db.query(
-                    `INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date, currency, invoice_type) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [orgId, invoiceNumber, price, 'Pending', issueDate, dueDate, currency, `${packageName.toLowerCase()}_package`]
-                );
-                
-                await db.query(
-                    `UPDATE organizations SET ${colName} = 1 WHERE id = ?`,
+                // Attempt atomic subscription activation to prevent duplicate invoicing from parallel race conditions
+                const [updateResult] = await db.query(
+                    `UPDATE organizations SET ${colName} = 1 WHERE id = ? AND (${colName} = 0 OR ${colName} IS NULL)`,
                     [orgId]
                 );
                 
-                console.log(`[Lazy Billing] Org ${orgId} auto-subscribed to ${packageName} package. Invoice ${invoiceNumber} issued.`);
+                if (updateResult.affectedRows === 1) {
+                    // Trigger Lazy Invoicing ONLY if we successfully transitioned the organization
+                    const currency = org.billing_currency || 'USD';
+                    const pricing = {
+                        devops: { USD: 150.00, INR: 12500.00 },
+                        developer: { USD: 99.00, INR: 8250.00 },
+                        security: { USD: 120.00, INR: 10000.00 }
+                    };
+                    const price = pricing[packageName.toLowerCase()][currency] || 100.00;
+                    
+                    const now = new Date();
+                    const invoiceNumber = `INV-EV-${orgId}-${packageName.toUpperCase()}-${Date.now()}`;
+                    const issueDate = new Date();
+                    const dueDate = new Date();
+                    dueDate.setDate(issueDate.getDate() + 7);
+                    
+                    await db.query(
+                        `INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date, currency, invoice_type) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [orgId, invoiceNumber, price, 'Pending', issueDate, dueDate, currency, `${packageName.toLowerCase()}_package`]
+                    );
+                    
+                    console.log(`[Lazy Billing] Org ${orgId} auto-subscribed to ${packageName} package. Invoice ${invoiceNumber} issued.`);
+                }
             }
             
             next();

@@ -73,6 +73,35 @@ const orgController = {
                 );
             }
 
+            // Generate initial Platform Seat & License Fee invoice
+            const platformPricing = {
+                USD: {
+                    growth:     { base: 1000, perSeat: 40 },
+                    enterprise: { base: 2000, perSeat: 90 },
+                    sovereign:  { base: 4000, perSeat: 30 }
+                },
+                INR: {
+                    growth:     { base: 83333, perSeat: 3333 },
+                    enterprise: { base: 166666, perSeat: 7500 },
+                    sovereign:  { base: 333333, perSeat: 2500 }
+                }
+            };
+            const pricingGroup = platformPricing[currency] || platformPricing.USD;
+            const chosenTier = (req.body.licenseTier || 'growth').toLowerCase();
+            const tierPricing = pricingGroup[chosenTier] || pricingGroup.growth;
+            const platformPrice = tierPricing.base + (1 * tierPricing.perSeat); // 1 active seat for the creator
+
+            const platformInvoiceNumber = `INV-EV-${orgId}-PLATFORM-${Date.now()}`;
+            const platformIssueDate = new Date();
+            const platformDueDate = new Date();
+            platformDueDate.setDate(platformIssueDate.getDate() + 7);
+
+            await db.query(
+                `INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date, currency, invoice_type) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
+                [orgId, platformInvoiceNumber, platformPrice, 'Pending', platformIssueDate, platformDueDate, currency]
+            );
+
             // Update user to match this organization and set as admin
             await db.query(
                 'UPDATE users SET organization_id = ?, role = "admin" WHERE id = ?',
