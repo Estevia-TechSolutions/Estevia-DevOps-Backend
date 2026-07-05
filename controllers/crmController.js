@@ -148,7 +148,7 @@ const listClients = async (req, res) => {
         for (const client of clients) {
             const [[{ activeSeats }]] = await db.query(
                 `SELECT COUNT(*) AS activeSeats FROM users 
-                 WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor')`,
+                 WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
                 [client.id]
             );
             const [[{ unpaidInvoicesCount }]] = await db.query(
@@ -254,14 +254,8 @@ const generateInvoice = async (req, res) => {
         const pricingGroup = TIER_PRICING[currency] || TIER_PRICING.USD;
         const pricing = pricingGroup[tier] || pricingGroup.growth;
 
-        const [[{ activeSeats }]] = await db.query(
-            `SELECT COUNT(*) AS activeSeats FROM users 
-             WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor')`,
-            [id]
-        );
-
         const baseAmount = pricing.base;
-        const perSeatAmount = activeSeats * pricing.perSeat;
+        const perSeatAmount = orgs[0].operator_seats_limit * pricing.perSeat;
         const totalAmount = baseAmount + perSeatAmount;
 
         const invoiceNum = 'INV-' + Date.now() + '-' + Math.floor(100 + Math.random() * 900);

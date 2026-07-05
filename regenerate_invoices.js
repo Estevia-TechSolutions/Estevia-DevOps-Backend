@@ -130,15 +130,8 @@ async function run() {
             const pricingGroup = platformPricing[currency] || platformPricing.USD;
             const tierPricing = pricingGroup[tier] || pricingGroup.growth;
 
-            // Query active seats: role IN ('owner','admin','contributor')
-            const [[{ activeSeats }]] = await db.query(
-                `SELECT COUNT(*) AS activeSeats FROM users 
-                 WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor')`,
-                [orgId]
-            );
-
-            // Compute expected price
-            const expectedPlatformPrice = tierPricing.base + (activeSeats * tierPricing.perSeat);
+            // Compute expected price based on allocated seat limit (operator_seats_limit)
+            const expectedPlatformPrice = tierPricing.base + (org.operator_seats_limit * tierPricing.perSeat);
             
             // Check if Platform invoice exists (invoice_type IS NULL)
             const [existingPlatformInvoices] = await db.query(

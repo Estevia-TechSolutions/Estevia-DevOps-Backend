@@ -59,7 +59,7 @@ async function checkSeatCapacity(organizationId) {
         );
         const limit = org?.operator_seats_limit ?? 10;
         const [[{ count }]] = await db.query(
-            `SELECT COUNT(*) AS count FROM users WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor')`,
+            `SELECT COUNT(*) AS count FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
             [organizationId]
         );
         return { limit, current: count, isFull: count >= limit };
@@ -742,6 +742,7 @@ const syncUsers = async (req, res) => {
         
         let newUsersCount = 0;
         let updatedUsersCount = 0;
+        let skippedUsersCount = 0;
         const activeAdUserIds = new Set();
         const disabledAdUserIds = new Set();
         
@@ -775,13 +776,17 @@ const syncUsers = async (req, res) => {
                 await db.query('UPDATE users SET id = ?, name = ? WHERE email = ?', [msalId, name, email]);
                 updatedUsersCount++;
             } else {
-                // New user from AD sync — check seat capacity for write roles
-                // Sync always inserts as 'viewer' by default, but apply cap anyway for future-proofing
+                // New user from AD sync — check seat capacity
                 const seatCapCheck = await checkSeatCapacity(orgId);
-                const insertRole = seatCapCheck.isFull ? 'viewer' : 'viewer'; // sync always inserts as viewer
+                if (seatCapCheck.isFull) {
+                    console.log(`[authController] Skipping new user ${email} from sync because operator seat limit (${seatCapCheck.limit}) is fully used up.`);
+                    skippedUsersCount++;
+                    continue;
+                }
+                
                 await db.query(
                     'INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES (?, ?, ?, ?, ?, ?)',
-                    [msalId, email, name, orgId, tenantId, insertRole]
+                    [msalId, email, name, orgId, tenantId, 'viewer']
                 );
                 newUsersCount++;
             }
@@ -806,6 +811,16 @@ const syncUsers = async (req, res) => {
                 await db.query('DELETE FROM users WHERE id = ?', [localUser.id]);
                 removedUsersCount++;
             }
+        }
+        
+        if (skippedUsersCount > 0) {
+            return res.json({ 
+                message: `Directory sync completed. However, ${skippedUsersCount} new user(s) could not be added because your operator seat count is used up.`, 
+                added: newUsersCount, 
+                updated: updatedUsersCount,
+                removed: removedUsersCount,
+                skipped: skippedUsersCount
+            });
         }
         
         return res.json({ 

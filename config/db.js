@@ -150,6 +150,10 @@ async function runAutoMigration() {
             console.log('[DevOps DB] Adding column sub_package_security to organizations...');
             await pool.query(`ALTER TABLE organizations ADD COLUMN sub_package_security TINYINT(1) NOT NULL DEFAULT 0`);
         }
+        if (!columnNames.includes('billing_corrected')) {
+            console.log('[DevOps DB] Adding column billing_corrected to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN billing_corrected TINYINT(1) NOT NULL DEFAULT 0`);
+        }
 
         // --- License Enforcement Columns (applications) ---
         const [appColumns] = await pool.query(`
@@ -291,7 +295,12 @@ async function runAutoMigration() {
 async function runInvoiceRegeneration(db) {
     console.log('[DevOps DB] Starting billing correction for existing organizations...');
     try {
-        const [orgs] = await db.query('SELECT id, name, billing_currency, license_tier, operator_seats_limit, sub_package_devops, sub_package_developer, sub_package_security FROM organizations');
+        const [orgs] = await db.query('SELECT id, name, billing_currency, license_tier, operator_seats_limit, sub_package_devops, sub_package_developer, sub_package_security FROM organizations WHERE billing_corrected = 0');
+        
+        if (orgs.length === 0) {
+            console.log('[DevOps DB] All organizations have already been corrected. Skipping invoice regeneration.');
+            return;
+        }
         
         // Standard pricing for sub-packages
         const pricing = {
@@ -378,13 +387,8 @@ async function runInvoiceRegeneration(db) {
             const pricingGroup = platformPricing[currency] || platformPricing.USD;
             const tierPricing = pricingGroup[tier] || pricingGroup.growth;
 
-            const [[{ activeSeats }]] = await db.query(
-                `SELECT COUNT(*) AS activeSeats FROM users 
-                 WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor')`,
-                [orgId]
-            );
-
-            const expectedPlatformPrice = tierPricing.base + (activeSeats * tierPricing.perSeat);
+            // Compute expected price based on allocated seat limit (operator_seats_limit)
+            const expectedPlatformPrice = tierPricing.base + (org.operator_seats_limit * tierPricing.perSeat);
             
             const [existingPlatformInvoices] = await db.query(
                 'SELECT * FROM billing_invoices WHERE organization_id = ? AND invoice_type IS NULL ORDER BY id ASC',
@@ -423,6 +427,9 @@ async function runInvoiceRegeneration(db) {
                     [orgId, platformInvoiceNumber, expectedPlatformPrice, 'Pending', platformIssueDate, platformDueDate, currency]
                 );
             }
+
+            // Mark organization as corrected so this runs only once
+            await db.query('UPDATE organizations SET billing_corrected = 1 WHERE id = ?', [orgId]);
         }
         console.log('[DevOps DB] Invoices correction/regeneration executed successfully.');
     } catch (err) {

@@ -53,7 +53,7 @@ const protect = async (req, res, next) => {
                 
                 if (existingPlatform.length === 0) {
                     const [orgDetails] = await db.query(
-                        'SELECT billing_currency, license_tier FROM organizations WHERE id = ?',
+                        'SELECT billing_currency, license_tier, operator_seats_limit FROM organizations WHERE id = ?',
                         [orgId]
                     );
                     
@@ -78,13 +78,7 @@ const protect = async (req, res, next) => {
                         const pricingGroup = platformPricing[currency] || platformPricing.USD;
                         const tierPricing = pricingGroup[tier] || pricingGroup.growth;
                         
-                        const [[{ activeSeats }]] = await db.query(
-                            `SELECT COUNT(*) AS activeSeats FROM users 
-                             WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor')`,
-                            [orgId]
-                        );
-                        
-                        const platformPrice = tierPricing.base + (activeSeats * tierPricing.perSeat);
+                        const platformPrice = tierPricing.base + (org.operator_seats_limit * tierPricing.perSeat);
                         const invoiceNumber = `INV-EV-${orgId}-PLATFORM-${Date.now()}`;
                         const issueDate = new Date();
                         const dueDate = new Date();
