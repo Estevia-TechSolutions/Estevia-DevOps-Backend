@@ -280,10 +280,156 @@ async function runAutoMigration() {
         }
         
         console.log('[DevOps DB] Database migrations check completed successfully.');
+        
+        // Automatically run invoice correction & regeneration
+        await runInvoiceRegeneration(pool);
     } catch (err) {
         console.error('[DevOps DB] Database migration check failed:', err.message);
     }
 }
+
+async function runInvoiceRegeneration(db) {
+    console.log('[DevOps DB] Starting billing correction for existing organizations...');
+    try {
+        const [orgs] = await db.query('SELECT id, name, billing_currency, license_tier, operator_seats_limit, sub_package_devops, sub_package_developer, sub_package_security FROM organizations');
+        
+        // Standard pricing for sub-packages
+        const pricing = {
+            devops: { USD: 150.00, INR: 12500.00, type: 'devops_package', label: 'DevOps' },
+            developer: { USD: 99.00, INR: 8250.00, type: 'developer_package', label: 'Developer' },
+            security: { USD: 120.00, INR: 10000.00, type: 'security_package', label: 'Security' }
+        };
+
+        for (const org of orgs) {
+            const orgId = org.id;
+            const currency = org.billing_currency || 'USD';
+            
+            // Part 1: Sub-Package Invoices
+            const packagesToCheck = [];
+            const isSubDevops = org.sub_package_devops === 1 || org.sub_package_devops === true || (Buffer.isBuffer(org.sub_package_devops) && org.sub_package_devops[0] === 1);
+            const isSubDeveloper = org.sub_package_developer === 1 || org.sub_package_developer === true || (Buffer.isBuffer(org.sub_package_developer) && org.sub_package_developer[0] === 1);
+            const isSubSecurity = org.sub_package_security === 1 || org.sub_package_security === true || (Buffer.isBuffer(org.sub_package_security) && org.sub_package_security[0] === 1);
+
+            if (isSubDevops) packagesToCheck.push('devops');
+            if (isSubDeveloper) packagesToCheck.push('developer');
+            if (isSubSecurity) packagesToCheck.push('security');
+            
+            for (const pkgKey of packagesToCheck) {
+                const pkgInfo = pricing[pkgKey];
+                const expectedPrice = pkgInfo[currency];
+                const pkgType = pkgInfo.type;
+                
+                const [existingInvoices] = await db.query(
+                    'SELECT * FROM billing_invoices WHERE organization_id = ? AND invoice_type = ? ORDER BY id ASC',
+                    [orgId, pkgType]
+                );
+                
+                if (existingInvoices.length > 1) {
+                    const idsToDelete = existingInvoices.slice(1).map(inv => inv.id);
+                    await db.query(
+                        'DELETE FROM billing_invoices WHERE id IN (?) AND status = "Pending"',
+                        [idsToDelete]
+                    );
+                    const [cleanedInvoices] = await db.query(
+                        'SELECT * FROM billing_invoices WHERE organization_id = ? AND invoice_type = ?',
+                        [orgId, pkgType]
+                    );
+                    existingInvoices.splice(0, existingInvoices.length, ...cleanedInvoices);
+                }
+                
+                if (existingInvoices.length > 0) {
+                    const invoice = existingInvoices[0];
+                    if (parseFloat(invoice.amount) !== expectedPrice || invoice.currency !== currency) {
+                        await db.query(
+                            'UPDATE billing_invoices SET amount = ?, currency = ? WHERE id = ?',
+                            [expectedPrice, currency, invoice.id]
+                        );
+                    }
+                } else {
+                    const [legacyInvoices] = await db.query(
+                        'SELECT * FROM billing_invoices WHERE organization_id = ? AND invoice_type IS NULL AND amount = ? AND currency = ?',
+                        [orgId, expectedPrice, currency]
+                    );
+                    if (legacyInvoices.length > 0) {
+                        await db.query(
+                            'UPDATE billing_invoices SET invoice_type = ? WHERE id = ?',
+                            [pkgType, legacyInvoices[0].id]
+                        );
+                    } else {
+                        const invoiceNumber = `INV-EV-${orgId}-${pkgInfo.label.toUpperCase()}-${Date.now()}`;
+                        const issueDate = new Date();
+                        const dueDate = new Date();
+                        dueDate.setDate(issueDate.getDate() + 7);
+                        await db.query(
+                            `INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date, currency, invoice_type)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                            [orgId, invoiceNumber, expectedPrice, 'Pending', issueDate, dueDate, currency, pkgType]
+                        );
+                    }
+                }
+            }
+
+            // Part 2: Platform Seat & License Fee Invoices
+            const tier = (org.license_tier || 'growth').toLowerCase();
+            const platformPricing = {
+                USD: { growth: { base: 1000, perSeat: 40 }, enterprise: { base: 2000, perSeat: 90 }, sovereign: { base: 4000, perSeat: 30 } },
+                INR: { growth: { base: 83333, perSeat: 3333 }, enterprise: { base: 166666, perSeat: 7500 }, sovereign: { base: 333333, perSeat: 2500 } }
+            };
+            const pricingGroup = platformPricing[currency] || platformPricing.USD;
+            const tierPricing = pricingGroup[tier] || pricingGroup.growth;
+
+            const [[{ activeSeats }]] = await db.query(
+                `SELECT COUNT(*) AS activeSeats FROM users 
+                 WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor')`,
+                [orgId]
+            );
+
+            const expectedPlatformPrice = tierPricing.base + (activeSeats * tierPricing.perSeat);
+            
+            const [existingPlatformInvoices] = await db.query(
+                'SELECT * FROM billing_invoices WHERE organization_id = ? AND invoice_type IS NULL ORDER BY id ASC',
+                [orgId]
+            );
+
+            if (existingPlatformInvoices.length > 1) {
+                const idsToDelete = existingPlatformInvoices.slice(1).map(inv => inv.id);
+                await db.query(
+                    'DELETE FROM billing_invoices WHERE id IN (?) AND status = "Pending"',
+                    [idsToDelete]
+                );
+                const [cleanedPlatformInvoices] = await db.query(
+                    'SELECT * FROM billing_invoices WHERE organization_id = ? AND invoice_type IS NULL',
+                    [orgId]
+                );
+                existingPlatformInvoices.splice(0, existingPlatformInvoices.length, ...cleanedPlatformInvoices);
+            }
+
+            if (existingPlatformInvoices.length > 0) {
+                const platformInv = existingPlatformInvoices[0];
+                if (parseFloat(platformInv.amount) !== expectedPlatformPrice || platformInv.currency !== currency) {
+                    await db.query(
+                        'UPDATE billing_invoices SET amount = ?, currency = ? WHERE id = ?',
+                        [expectedPlatformPrice, currency, platformInv.id]
+                    );
+                }
+            } else {
+                const platformInvoiceNumber = `INV-EV-${orgId}-PLATFORM-${Date.now()}`;
+                const platformIssueDate = new Date();
+                const platformDueDate = new Date();
+                platformDueDate.setDate(platformIssueDate.getDate() + 7);
+                await db.query(
+                    `INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date, currency, invoice_type)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
+                    [orgId, platformInvoiceNumber, expectedPlatformPrice, 'Pending', platformIssueDate, platformDueDate, currency]
+                );
+            }
+        }
+        console.log('[DevOps DB] Invoices correction/regeneration executed successfully.');
+    } catch (err) {
+        console.error('[DevOps DB] Error during auto invoice regeneration:', err);
+    }
+}
+
 runAutoMigration();
 
 module.exports = pool;
