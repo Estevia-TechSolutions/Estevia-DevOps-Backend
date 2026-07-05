@@ -10630,7 +10630,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
      */
     cancelOlderPipelineBuilds: async (req, res) => {
         try {
-            const { organizationId = 'estevia', pipelineId } = req.body;
+            const { organizationId = 'estevia', pipelineId, branch } = req.body;
 
             if (!pipelineId) {
                 return res.status(400).json({ success: false, message: 'Missing parameter (pipelineId).' });
@@ -10645,7 +10645,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 }
 
                 // Fetch active runs
-                const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?status=in_progress`;
+                const cleanBranch = branch ? branch.replace(/^refs\/heads\//, '') : null;
+                const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?status=in_progress${cleanBranch ? '&branch=' + encodeURIComponent(cleanBranch) : ''}`;
                 console.log(`[AppController] cancelOlderPipelineBuilds (GitHub): Fetching active runs from: ${runsUrl}`);
                 const runsRes = await axios.get(runsUrl, {
                     headers: {
@@ -10655,7 +10656,10 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     }
                 });
 
-                const runs = runsRes.data?.workflow_runs || [];
+                let runs = runsRes.data?.workflow_runs || [];
+                if (cleanBranch) {
+                    runs = runs.filter(r => r.head_branch === cleanBranch);
+                }
                 if (runs.length <= 1) {
                     return res.json({ success: true, message: 'No older running workflows found to cancel.' });
                 }
@@ -10703,8 +10707,9 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
 
             // Fetch running and queued builds
-            const runningUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=inProgress&api-version=7.1`;
-            const queuedUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=notStarted&api-version=7.1`;
+            const branchFilter = branch ? `&branchName=${encodeURIComponent(branch)}` : '';
+            const runningUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=inProgress${branchFilter}&api-version=7.1`;
+            const queuedUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=notStarted${branchFilter}&api-version=7.1`;
 
             console.log(`[AppController] Fetching active builds from: ${runningUrl} & ${queuedUrl}`);
             const [runningRes, queuedRes] = await Promise.all([
