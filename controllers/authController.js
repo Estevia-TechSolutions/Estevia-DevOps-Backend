@@ -303,13 +303,14 @@ const getMe = async (req, res) => {
 // Developer Override Login — always grants viewer-only access (for local dev/testing)
 const bypassLogin = async (req, res) => {
     try {
-        const { organizationId } = req.body;
+        const { organizationId, requestedRole } = req.body;
         if (!organizationId) {
             return res.status(400).json({ error: 'organizationId is required for Developer Override login.' });
         }
         const cleanOrgId = organizationId.toLowerCase().trim();
+        const bypassRole = requestedRole === 'admin' ? 'admin' : 'viewer';
 
-        console.log(`[authController] Developer Override authenticating (viewer role) for organization: ${cleanOrgId}...`);
+        console.log(`[authController] Developer Override authenticating (${bypassRole} role) for organization: ${cleanOrgId}...`);
         
         // Ensure organization exists
         const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [cleanOrgId]);
@@ -323,20 +324,20 @@ const bypassLogin = async (req, res) => {
 
         let user;
         if (users.length === 0) {
-            // Create bypass user with viewer role for this organization
+            // Create bypass user with requested role for this organization
             const bypassEmail = `dev-bypass@${cleanOrgId}.evaops`;
             await db.query(
-                "INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES (?, ?, ?, ?, ?, 'viewer')",
-                [bypassUserId, bypassEmail, 'Developer Override', cleanOrgId, org.tenant_id || '']
+                "INSERT INTO users (id, email, name, organization_id, tenant_id, role) VALUES (?, ?, ?, ?, ?, ?)",
+                [bypassUserId, bypassEmail, 'Developer Override', cleanOrgId, org.tenant_id || '', bypassRole]
             );
-            user = { id: bypassUserId, email: bypassEmail, name: 'Developer Override', organization_id: cleanOrgId, tenant_id: org.tenant_id || '', role: 'viewer' };
+            user = { id: bypassUserId, email: bypassEmail, name: 'Developer Override', organization_id: cleanOrgId, tenant_id: org.tenant_id || '', role: bypassRole };
         } else {
             user = users[0];
-            // Force-reset: Developer Override must always be viewer — downgrade if elevated
-            if (user.role !== 'viewer' || user.name !== 'Developer Override' || user.organization_id !== cleanOrgId) {
-                console.log(`[authController] Developer Override: resetting role from '${user.role}' → 'viewer' for organization '${cleanOrgId}'`);
-                await db.query("UPDATE users SET role = 'viewer', name = 'Developer Override', organization_id = ? WHERE id = ?", [cleanOrgId, bypassUserId]);
-                user.role = 'viewer';
+            // Force-reset role to the requested bypassRole
+            if (user.role !== bypassRole || user.name !== 'Developer Override' || user.organization_id !== cleanOrgId) {
+                console.log(`[authController] Developer Override: resetting role from '${user.role}' → '${bypassRole}' for organization '${cleanOrgId}'`);
+                await db.query("UPDATE users SET role = ?, name = 'Developer Override', organization_id = ? WHERE id = ?", [bypassRole, cleanOrgId, bypassUserId]);
+                user.role = bypassRole;
                 user.name = 'Developer Override';
                 user.organization_id = cleanOrgId;
             }
