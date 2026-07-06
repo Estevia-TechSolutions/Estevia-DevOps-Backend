@@ -370,12 +370,12 @@ const microsoftLogin = async (req, res) => {
             return res.status(401).json({ error: 'Failed to parse Microsoft claims' });
         }
 
-        const email = claims.email || claims.preferred_username || claims.upn;
-        const name = claims.name || email.split('@')[0];
-
-        if (!email) {
+        const rawEmail = claims.email || claims.preferred_username || claims.upn;
+        if (!rawEmail) {
             return res.status(400).json({ error: 'Email claim missing in Microsoft ID Token' });
         }
+        const email = rawEmail.toLowerCase();
+        const name = claims.name || rawEmail.split('@')[0];
 
         // Verify domain
         const isEstevia = email.endsWith('@esteviatech.com') || email.endsWith('@estevia.com');
@@ -478,7 +478,8 @@ const seedCrmUsersFromAzureAD = async () => {
         for (const user of users) {
             const email = user.mail || user.userPrincipalName;
             if (!email) continue;
-            if (!email.endsWith('@esteviatech.com') && !email.endsWith('@estevia.com')) continue;
+            const emailLower = email.toLowerCase();
+            if (!emailLower.endsWith('@esteviatech.com') && !emailLower.endsWith('@estevia.com')) continue;
             if (user.accountEnabled === false) continue;
 
             const name = user.displayName || email.split('@')[0];
