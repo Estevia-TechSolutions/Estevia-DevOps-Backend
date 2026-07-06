@@ -88,6 +88,15 @@ console.log('[DevOps Backend] Running auto-migrations on server startup...');
 runMigrations()
     .then(() => {
         console.log('[DevOps Backend] Database auto-migrations completed successfully.');
+        
+        // Trigger CRM User seeding from Azure AD in background
+        const crmController = require('./controllers/crmController');
+        if (crmController.seedCrmUsersFromAzureAD) {
+            crmController.seedCrmUsersFromAzureAD().catch(err => {
+                console.error('[DevOps Backend] CRM User AD seeding failed:', err.message);
+            });
+        }
+
         app.listen(PORT, () => {
             console.log(`[DevOps Backend] Running on http://localhost:${PORT}`);
             // Start Weekly sleep scheduler background loops

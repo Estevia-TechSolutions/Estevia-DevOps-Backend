@@ -8,6 +8,8 @@ router.get('/ping', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), routes: ['auth/login', 'auth/me', 'users', 'clients'] });
 });
 router.post('/auth/login', crmController.login);
+router.get('/auth/login-url', crmController.getLoginUrl);
+router.post('/auth/microsoft', crmController.microsoftLogin);
 
 // Protected routes (require CRM token)
 router.get('/auth/me', protectCrm, crmController.getMe);

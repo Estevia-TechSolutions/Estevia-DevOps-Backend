@@ -35,10 +35,46 @@ const protect = async (req, res, next) => {
 
             if (!isBypassUrl) {
                 const [orgs] = await db.query('SELECT is_disabled FROM organizations WHERE id = ?', [decoded.organization_id]);
-                if (orgs.length > 0 && orgs[0].is_disabled) {
+                const isManuallyDisabled = orgs.length > 0 && orgs[0].is_disabled;
+
+                // Get pending invoices to calculate dynamic overdue status
+                const [invoices] = await db.query(
+                    'SELECT due_date FROM billing_invoices WHERE organization_id = ? AND status = "Pending"',
+                    [decoded.organization_id]
+                );
+
+                let maxOverdueDays = 0;
+                const today = new Date();
+                invoices.forEach(inv => {
+                    const dueDate = new Date(inv.due_date);
+                    if (dueDate < today) {
+                        const diffTime = Math.abs(today.getTime() - dueDate.getTime());
+                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                        if (diffDays > maxOverdueDays) {
+                            maxOverdueDays = diffDays;
+                        }
+                    }
+                });
+
+                const restrictionDays = 30;
+                const blockDays = 45;
+
+                const isBlocked = isManuallyDisabled || maxOverdueDays > blockDays;
+                const isRestrictedWrite = maxOverdueDays > restrictionDays && maxOverdueDays <= blockDays;
+
+                if (isBlocked) {
                     return res.status(403).json({ 
-                        error: 'Your organization account has been suspended due to pending billing. Access is restricted to billing & licensing.',
+                        error: maxOverdueDays > blockDays
+                            ? `Your organization account has been suspended due to an outstanding invoice overdue by ${maxOverdueDays} days. Access is restricted to billing & licensing.`
+                            : 'Your organization account has been suspended due to pending billing. Access is restricted to billing & licensing.',
                         isOrgDisabled: true
+                    });
+                }
+
+                if (isRestrictedWrite && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+                    return res.status(403).json({
+                        error: `Write operations are restricted because an invoice is overdue by ${maxOverdueDays} days (Grace period expired). Please settle your invoices to restore full access.`,
+                        isOrgRestricted: true
                     });
                 }
             }

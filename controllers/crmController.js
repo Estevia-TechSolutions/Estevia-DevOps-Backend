@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const crypto = require('crypto');
+const axios = require('axios');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'estevia-devops-jwt-super-secret-key-12345';
 
@@ -309,6 +310,215 @@ const updateInvoiceStatus = async (req, res) => {
     }
 };
 
+const getLoginUrl = (req, res) => {
+    const clientId = process.env.MICROSOFT_CLIENT_ID || 'ee43635c-12da-4203-bedf-b45a4d429d20';
+    const redirectUri = req.query.redirectUri || 'https://evaops-crm.esteviatech.com';
+    const tenantId = process.env.MICROSOFT_TENANT_ID || 'common';
+    const loginUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&response_mode=query&scope=openid%20profile%20email`;
+    return res.json({ url: loginUrl });
+};
+
+const microsoftLogin = async (req, res) => {
+    const { code, redirectUri } = req.body;
+
+    if (!code) {
+        return res.status(400).json({ error: 'OAuth authorization code is required' });
+    }
+
+    const clientId = process.env.MICROSOFT_CLIENT_ID || 'ee43635c-12da-4203-bedf-b45a4d429d20';
+    const clientSecret = process.env.MICROSOFT_CLIENT_SECRET;
+    const finalRedirectUri = redirectUri || 'https://evaops-crm.esteviatech.com';
+    const envTenantId = process.env.MICROSOFT_TENANT_ID || 'common';
+
+    try {
+        const params = new URLSearchParams();
+        params.append('client_id', clientId);
+        params.append('client_secret', clientSecret);
+        params.append('code', code);
+        params.append('redirect_uri', finalRedirectUri);
+        params.append('grant_type', 'authorization_code');
+
+        const tokenResponse = await axios.post(
+            `https://login.microsoftonline.com/${envTenantId}/oauth2/v2.0/token`,
+            params.toString(),
+            { 
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                timeout: 15000
+            }
+        );
+
+        const { id_token } = tokenResponse.data;
+        if (!id_token) {
+            return res.status(401).json({ error: 'No ID Token returned from Microsoft authentication' });
+        }
+
+        const decodeJwtPayload = (token) => {
+            try {
+                const base64Url = token.split('.')[1];
+                const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                const jsonPayload = decodeURIComponent(Buffer.from(base64, 'base64').toString().split('').map(c => {
+                    return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+                }).join(''));
+                return JSON.parse(jsonPayload);
+            } catch (e) {
+                return null;
+            }
+        };
+
+        const claims = decodeJwtPayload(id_token);
+        if (!claims) {
+            return res.status(401).json({ error: 'Failed to parse Microsoft claims' });
+        }
+
+        const email = claims.email || claims.preferred_username || claims.upn;
+        const name = claims.name || email.split('@')[0];
+
+        if (!email) {
+            return res.status(400).json({ error: 'Email claim missing in Microsoft ID Token' });
+        }
+
+        // Verify domain
+        const isEstevia = email.endsWith('@esteviatech.com') || email.endsWith('@estevia.com');
+        if (!isEstevia) {
+            return res.status(403).json({ error: 'Access Denied — login restricted to Estevia personnel only.' });
+        }
+
+        // Check if user exists in crm_users
+        let [users] = await db.query('SELECT * FROM crm_users WHERE email = ?', [email]);
+        let user;
+
+        if (users.length === 0) {
+            // Auto pick role
+            let userRole = 'agent';
+            if (email.startsWith('admin@') || email.toLowerCase().includes('owner') || email.toLowerCase().includes('director') || (claims.roles && claims.roles.some(r => ['admin', 'owner'].includes(r.toLowerCase())))) {
+                userRole = 'admin';
+            } else {
+                try {
+                    const [orgs] = await db.query('SELECT id FROM organizations WHERE LOWER(admin_email) = LOWER(?)', [email]);
+                    const [platformUsers] = await db.query('SELECT role FROM users WHERE LOWER(email) = LOWER(?)', [email]);
+                    
+                    const isPlatAdmin = platformUsers.length > 0 && ['admin', 'owner'].includes(platformUsers[0].role.toLowerCase());
+                    const isOrgAdmin = orgs.length > 0;
+                    
+                    if (isPlatAdmin || isOrgAdmin) {
+                        userRole = 'admin';
+                    }
+                } catch (dbErr) {
+                    console.error('[CRM Auth] Failed to check platform user role:', dbErr.message);
+                }
+            }
+
+            await db.query(
+                'INSERT INTO crm_users (email, password_hash, name, role) VALUES (?, NULL, ?, ?)',
+                [email, name, userRole]
+            );
+
+            const [newUsers] = await db.query('SELECT * FROM crm_users WHERE email = ?', [email]);
+            user = newUsers[0];
+        } else {
+            user = users[0];
+        }
+
+        if (user.is_disabled) {
+            return res.status(403).json({ error: 'This CRM user account has been disabled.' });
+        }
+
+        // Generate token
+        const token = jwt.sign(
+            { id: user.id, email: user.email, name: user.name, role: user.role, isCrm: true },
+            JWT_SECRET,
+            { expiresIn: '8h' }
+        );
+
+        res.json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+
+    } catch (err) {
+        console.error('[CRM Auth] Microsoft callback login failed:', err.response?.data || err.message);
+        res.status(500).json({ error: 'SSO Login exchange failed', details: err.response?.data || err.message });
+    }
+};
+
+const seedCrmUsersFromAzureAD = async () => {
+    try {
+        console.log('[CRM Seed] Seeding CRM users from Azure AD...');
+        const tenantId = 'a39c526c-2005-4529-ab5a-f008fc5cbc57';
+        const clientId = process.env.MICROSOFT_CLIENT_ID || 'ee43635c-12da-4203-bedf-b45a4d429d20';
+        const clientSecret = process.env.MICROSOFT_CLIENT_SECRET;
+        
+        if (!clientId || !clientSecret || clientSecret.includes('dummy')) {
+            console.log('[CRM Seed] Microsoft OAuth credentials not set. Skipping Azure AD sync.');
+            return;
+        }
+
+        // Get Client Secret token for MS Graph API
+        const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
+        const params = new URLSearchParams();
+        params.append('client_id', clientId);
+        params.append('client_secret', clientSecret);
+        params.append('scope', 'https://graph.microsoft.com/.default');
+        params.append('grant_type', 'client_credentials');
+
+        const tokenRes = await axios.post(tokenUrl, params.toString(), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        });
+
+        const accessToken = tokenRes.data.access_token;
+        if (!accessToken) {
+            console.log('[CRM Seed] Failed to get Microsoft Graph access token.');
+            return;
+        }
+
+        const graphRes = await axios.get('https://graph.microsoft.com/v1.0/users?$select=id,displayName,mail,userPrincipalName,accountEnabled', {
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+
+        const users = graphRes.data.value || [];
+        console.log(`[CRM Seed] Found ${users.length} users in Azure AD.`);
+
+        for (const user of users) {
+            const email = user.mail || user.userPrincipalName;
+            if (!email) continue;
+            if (!email.endsWith('@esteviatech.com') && !email.endsWith('@estevia.com')) continue;
+            if (user.accountEnabled === false) continue;
+
+            const name = user.displayName || email.split('@')[0];
+            
+            // Auto pick role
+            let role = 'agent';
+            if (email.startsWith('admin@') || email.toLowerCase().includes('owner') || email.toLowerCase().includes('director')) {
+                role = 'admin';
+            } else {
+                try {
+                    const [orgs] = await db.query('SELECT id FROM organizations WHERE LOWER(admin_email) = LOWER(?)', [email]);
+                    const [platformUsers] = await db.query('SELECT role FROM users WHERE LOWER(email) = LOWER(?)', [email]);
+                    
+                    const isPlatAdmin = platformUsers.length > 0 && ['admin', 'owner'].includes(platformUsers[0].role.toLowerCase());
+                    const isOrgAdmin = orgs.length > 0;
+                    
+                    if (isPlatAdmin || isOrgAdmin) {
+                        role = 'admin';
+                    }
+                } catch (dbErr) {
+                    console.error('[CRM Seed] Failed to check platform user role:', dbErr.message);
+                }
+            }
+
+            // Check if user already exists
+            const [existing] = await db.query('SELECT id FROM crm_users WHERE email = ?', [email]);
+            if (existing.length === 0) {
+                console.log(`[CRM Seed] Seeding new CRM user: ${email} (${name}) with role: ${role}`);
+                await db.query(
+                    'INSERT INTO crm_users (email, password_hash, name, role) VALUES (?, NULL, ?, ?)',
+                    [email, name, role]
+                );
+            }
+        }
+        console.log('[CRM Seed] CRM users seeding completed.');
+    } catch (err) {
+        console.error('[CRM Seed] Failed to seed CRM users:', err.response?.data || err.message);
+    }
+};
+
 module.exports = {
     login,
     createCrmUser,
@@ -320,5 +530,8 @@ module.exports = {
     generateInvoice,
     updateInvoiceStatus,
     listCrmUsers,
-    updateCrmUser
+    updateCrmUser,
+    getLoginUrl,
+    microsoftLogin,
+    seedCrmUsersFromAzureAD
 };

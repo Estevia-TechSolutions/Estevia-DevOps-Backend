@@ -2025,7 +2025,7 @@ const appController = {
 
             // Find matching CNAME mapping on GoDaddy
             let matchedDns = {};
-            const matchingCname = godaddyCnames.find(r => {
+            const matchingCnames = godaddyCnames.filter(r => {
                 if (!r.data || !app.hostname) return false;
                 const rData = r.data.toLowerCase();
                 const appHost = app.hostname.toLowerCase();
@@ -2048,12 +2048,14 @@ const appController = {
                 }
                 return false;
             });
-            if (matchingCname) {
+            if (matchingCnames.length > 0) {
+                const primary = matchingCnames[0];
                 matchedDns = {
-                    subdomain: matchingCname.name,
+                    subdomain: primary.name,
                     domain: defaultDomain,
-                    fqdn: `${matchingCname.name}.${defaultDomain}`,
-                    mappedAt: new Date()
+                    fqdn: `${primary.name}.${defaultDomain}`,
+                    mappedAt: new Date(),
+                    fqdns: matchingCnames.map(c => `${c.name}.${defaultDomain}`)
                 };
             }
             if (!matchedDns.fqdn && app.type === 'vm' && app.hostname) {
@@ -2061,7 +2063,8 @@ const appController = {
                     subdomain: app.hostname.split('.')[0],
                     domain: defaultDomain,
                     fqdn: app.hostname,
-                    mappedAt: new Date()
+                    mappedAt: new Date(),
+                    fqdns: [app.hostname]
                 };
             }
             app.dnsDetails = matchedDns;
@@ -3217,35 +3220,37 @@ const appController = {
 
                 // Find matching CNAME mapping on GoDaddy
                 let matchedDns = {};
-                 const matchingCname = godaddyCnames.find(r => {
-                     if (!r.data || !app.hostname) return false;
-                     const rData = r.data.toLowerCase();
-                     const appHost = app.hostname.toLowerCase();
-                     
-                     if (rData === appHost || rData === `${appHost}.` || appHost.includes(rData)) {
-                         return true;
-                     }
-                     
-                     if (app.type === 'backend' && rData.includes('cloudfront.net')) {
-                         const cleanRecordHost = r.name.toLowerCase().replace('.', '-');
-                         const cleanAppName = app.name.toLowerCase();
-                         
-                         const recordWords = cleanRecordHost.split('-');
-                         const appWords = cleanAppName.split('-');
-                         
-                         const isMatch = recordWords.every(w => cleanAppName.includes(w)) && 
-                                         appWords.filter(w => !['prod', 'api', 'dev', 'qa'].includes(w))
-                                                 .every(w => cleanRecordHost.includes(w));
-                         if (isMatch) return true;
-                     }
-                     return false;
-                 });
-                if (matchingCname) {
+                const matchingCnames = godaddyCnames.filter(r => {
+                    if (!r.data || !app.hostname) return false;
+                    const rData = r.data.toLowerCase();
+                    const appHost = app.hostname.toLowerCase();
+                    
+                    if (rData === appHost || rData === `${appHost}.` || appHost.includes(rData)) {
+                        return true;
+                    }
+                    
+                    if (app.type === 'backend' && rData.includes('cloudfront.net')) {
+                        const cleanRecordHost = r.name.toLowerCase().replace('.', '-');
+                        const cleanAppName = app.name.toLowerCase();
+                        
+                        const recordWords = cleanRecordHost.split('-');
+                        const appWords = cleanAppName.split('-');
+                        
+                        const isMatch = recordWords.every(w => cleanAppName.includes(w)) && 
+                                        appWords.filter(w => !['prod', 'api', 'dev', 'qa'].includes(w))
+                                                .every(w => cleanRecordHost.includes(w));
+                        if (isMatch) return true;
+                    }
+                    return false;
+                });
+                if (matchingCnames.length > 0) {
+                    const primary = matchingCnames[0];
                     matchedDns = {
-                        subdomain: matchingCname.name,
+                        subdomain: primary.name,
                         domain: defaultDomain,
-                        fqdn: `${matchingCname.name}.${defaultDomain}`,
-                        mappedAt: new Date()
+                        fqdn: `${primary.name}.${defaultDomain}`,
+                        mappedAt: new Date(),
+                        fqdns: matchingCnames.map(c => `${c.name}.${defaultDomain}`)
                     };
                 }
                 if (!matchedDns.fqdn && app.type === 'vm' && app.hostname) {
@@ -3253,7 +3258,8 @@ const appController = {
                         subdomain: app.hostname.split('.')[0],
                         domain: defaultDomain,
                         fqdn: app.hostname,
-                        mappedAt: new Date()
+                        mappedAt: new Date(),
+                        fqdns: [app.hostname]
                     };
                 }
                 app.dnsDetails = matchedDns;

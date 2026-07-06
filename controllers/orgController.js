@@ -415,10 +415,53 @@ const orgController = {
                 }
             }
 
+            // Get pending invoices to calculate overdue days
+            const [invoices] = await db.query(
+                'SELECT due_date FROM billing_invoices WHERE organization_id = ? AND status = "Pending"',
+                [organizationId]
+            );
+
+            let maxOverdueDays = 0;
+            const today = new Date();
+            invoices.forEach(inv => {
+                const dueDate = new Date(inv.due_date);
+                if (dueDate < today) {
+                    const diffTime = Math.abs(today.getTime() - dueDate.getTime());
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    if (diffDays > maxOverdueDays) {
+                        maxOverdueDays = diffDays;
+                    }
+                }
+            });
+
+            const restrictionDays = 30;
+            const blockDays = 45;
+
+            const isBlocked = org.is_disabled || maxOverdueDays > blockDays;
+            const isRestricted = maxOverdueDays > restrictionDays && maxOverdueDays <= blockDays;
+            const isGrace = maxOverdueDays > 0 && maxOverdueDays <= restrictionDays;
+
+            let enforcementStatus = 'active';
+            if (isBlocked) {
+                enforcementStatus = 'blocked';
+            } else if (isRestricted) {
+                enforcementStatus = 'restricted';
+            } else if (isGrace) {
+                enforcementStatus = 'grace';
+            }
+
             res.json({
                 onboardingComplete: !!org.onboarding_complete,
                 step,
-                organization: org,
+                organization: {
+                    ...org,
+                    is_disabled: isBlocked ? 1 : 0
+                },
+                isOrgDisabled: !!isBlocked,
+                isOrgRestricted: !!isRestricted,
+                isOrgGrace: !!isGrace,
+                maxOverdueDays,
+                enforcementStatus,
                 credentialGate,
                 credentialAlerts
             });

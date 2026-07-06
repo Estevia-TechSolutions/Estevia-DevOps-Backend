@@ -292,13 +292,17 @@ async function main() {
             CREATE TABLE IF NOT EXISTS crm_users (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 email VARCHAR(255) UNIQUE NOT NULL,
-                password_hash VARCHAR(255) NOT NULL,
+                password_hash VARCHAR(255) NULL,
                 name VARCHAR(255) NOT NULL,
                 role VARCHAR(50) DEFAULT 'agent',
                 is_disabled BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
+
+        // Alter crm_users table to make password_hash nullable
+        console.log('Altering crm_users table to make password_hash nullable if not already...');
+        await connection.query('ALTER TABLE crm_users MODIFY COLUMN password_hash VARCHAR(255) NULL');
 
         // Alter crm_users table to add is_disabled column if missing
         console.log('Altering crm_users table to add is_disabled column if missing...');
