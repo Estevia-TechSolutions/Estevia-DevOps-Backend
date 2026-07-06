@@ -520,6 +520,19 @@ const seedCrmUsersFromAzureAD = async () => {
     }
 };
 
+const syncUsers = async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Forbidden: Only administrators can sync with Azure AD.' });
+        }
+        await seedCrmUsersFromAzureAD();
+        res.json({ success: true, message: 'CRM users synchronized with Azure AD successfully.' });
+    } catch (err) {
+        console.error('[CRM Sync] Failed to sync users:', err.message);
+        res.status(500).json({ error: 'Failed to synchronize with Azure AD', details: err.message });
+    }
+};
+
 module.exports = {
     login,
     createCrmUser,
@@ -534,5 +547,6 @@ module.exports = {
     updateCrmUser,
     getLoginUrl,
     microsoftLogin,
-    seedCrmUsersFromAzureAD
+    seedCrmUsersFromAzureAD,
+    syncUsers
 };

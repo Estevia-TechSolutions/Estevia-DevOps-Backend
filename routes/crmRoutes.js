@@ -16,6 +16,7 @@ router.get('/auth/me', protectCrm, crmController.getMe);
 router.post('/auth/create-user', protectCrm, crmController.createCrmUser);
 router.get('/users', protectCrm, crmController.listCrmUsers);
 router.put('/users/:id', protectCrm, crmController.updateCrmUser);
+router.post('/users/sync', protectCrm, crmController.syncUsers);
 
 router.get('/clients', protectCrm, crmController.listClients);
 router.put('/clients/:id/licensing', protectCrm, crmController.updateLicensing);
