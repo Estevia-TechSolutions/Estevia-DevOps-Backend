@@ -1,6 +1,25 @@
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
+const platformPricing = {
+    USD: {
+        growth:     { base: 1000, perSeat: 40 },
+        enterprise: { base: 2000, perSeat: 90 },
+        sovereign:  { base: 4000, perSeat: 30 }
+    },
+    INR: {
+        growth:     { base: 83333, perSeat: 3333 },
+        enterprise: { base: 166666, perSeat: 7500 },
+        sovereign:  { base: 333333, perSeat: 2500 }
+    }
+};
+
+const subPackagePricing = {
+    devops: { USD: 150.00, INR: 12500.00, type: 'devops_package', label: 'DevOps' },
+    developer: { USD: 99.00, INR: 8250.00, type: 'developer_package', label: 'Developer' },
+    security: { USD: 120.00, INR: 10000.00, type: 'security_package', label: 'Security' }
+};
+
 async function main() {
     if (process.env.NODE_ENV === 'test') {
         console.log('[DevOps DB] Skipping migrations & database connection check in test/mock mode.');
@@ -633,6 +652,124 @@ async function main() {
             }
         } catch (backfillErr) {
             console.error('Failed to run audit logs backfill migration:', backfillErr.message);
+        }
+
+        // 10. Regenerate platform invoices to correct active seat counts
+        console.log('Running Platform Invoices regeneration...');
+        try {
+            const [orgs] = await connection.query('SELECT id, name, billing_currency, license_tier, operator_seats_limit, sub_package_devops, sub_package_developer, sub_package_security FROM organizations');
+            console.log(`[Regenerate Invoices] Found ${orgs.length} organizations to process.`);
+            
+            for (const org of orgs) {
+                const orgId = org.id;
+                const currency = org.billing_currency || 'USD';
+                const tier = (org.license_tier || 'growth').toLowerCase();
+                
+                // ── Sub-Package Invoices Correction and Duplicate Cleanup ──
+                const packagesToCheck = [];
+                if (org.sub_package_devops === 1 || org.sub_package_devops === true) {
+                    packagesToCheck.push('devops');
+                }
+                if (org.sub_package_developer === 1 || org.sub_package_developer === true) {
+                    packagesToCheck.push('developer');
+                }
+                if (org.sub_package_security === 1 || org.sub_package_security === true) {
+                    packagesToCheck.push('security');
+                }
+                
+                if (packagesToCheck.length > 0) {
+                    for (const pkgKey of packagesToCheck) {
+                        const pkgInfo = subPackagePricing[pkgKey];
+                        const expectedPrice = pkgInfo[currency];
+                        const pkgType = pkgInfo.type;
+                        
+                        const [existingInvoices] = await connection.query(
+                            'SELECT * FROM billing_invoices WHERE organization_id = ? AND invoice_type = ? ORDER BY id ASC',
+                            [orgId, pkgType]
+                        );
+                        
+                        if (existingInvoices.length > 1) {
+                            console.log(`  [${pkgInfo.label}] Found ${existingInvoices.length} duplicate invoices! Cleaning up extras...`);
+                            const idsToDelete = existingInvoices.slice(1).map(inv => inv.id);
+                            await connection.query(
+                                'DELETE FROM billing_invoices WHERE id IN (?) AND status = "Pending"',
+                                [idsToDelete]
+                            );
+                            const [cleanedInvoices] = await connection.query(
+                                'SELECT * FROM billing_invoices WHERE organization_id = ? AND invoice_type = ?',
+                                [orgId, pkgType]
+                            );
+                            existingInvoices.splice(0, existingInvoices.length, ...cleanedInvoices);
+                        }
+                        
+                        if (existingInvoices.length > 0) {
+                            const invoice = existingInvoices[0];
+                            if (parseFloat(invoice.amount) !== expectedPrice || invoice.currency !== currency) {
+                                console.log(`    -> Fixing invoice ${invoice.invoice_number}: Updating amount to ${expectedPrice} and currency to ${currency}`);
+                                await connection.query(
+                                    'UPDATE billing_invoices SET amount = ?, currency = ? WHERE id = ?',
+                                    [expectedPrice, currency, invoice.id]
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // ── Platform Invoice Correction ──
+                const pricingGroup = platformPricing[currency] || platformPricing.USD;
+                const tierPricing = pricingGroup[tier] || pricingGroup.growth;
+
+                const [seatsResult] = await connection.query(
+                    `SELECT COUNT(*) AS activeSeats FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor') AND id NOT LIKE 'dev-bypass-%' AND id NOT LIKE 'admin-override-%' AND id <> 'dev-bypass-user-id'`,
+                    [orgId]
+                );
+                const activeSeats = seatsResult[0]?.activeSeats || 0;
+                const expectedPlatformPrice = tierPricing.base + (activeSeats * tierPricing.perSeat);
+                
+                const [existingPlatformInvoices] = await connection.query(
+                    'SELECT * FROM billing_invoices WHERE organization_id = ? AND invoice_type IS NULL ORDER BY id ASC',
+                    [orgId]
+                );
+
+                if (existingPlatformInvoices.length > 1) {
+                    console.log(`  [Platform] Found ${existingPlatformInvoices.length} duplicate platform invoices! Cleaning up extras...`);
+                    const idsToDelete = existingPlatformInvoices.slice(1).map(inv => inv.id);
+                    await connection.query(
+                        'DELETE FROM billing_invoices WHERE id IN (?) AND status = "Pending"',
+                        [idsToDelete]
+                    );
+                    const [cleanedPlatformInvoices] = await connection.query(
+                        'SELECT * FROM billing_invoices WHERE organization_id = ? AND invoice_type IS NULL',
+                        [orgId]
+                    );
+                    existingPlatformInvoices.splice(0, existingPlatformInvoices.length, ...cleanedPlatformInvoices);
+                }
+
+                if (existingPlatformInvoices.length > 0) {
+                    const platformInv = existingPlatformInvoices[0];
+                    if (parseFloat(platformInv.amount) !== expectedPlatformPrice || platformInv.currency !== currency) {
+                        console.log(`    -> Fixing platform invoice ${platformInv.invoice_number}: Updating amount to ${expectedPlatformPrice} and currency to ${currency}`);
+                        await connection.query(
+                            'UPDATE billing_invoices SET amount = ?, currency = ? WHERE id = ?',
+                            [expectedPlatformPrice, currency, platformInv.id]
+                        );
+                    }
+                } else {
+                    const platformInvoiceNumber = `INV-EV-${orgId}-PLATFORM-${Date.now()}`;
+                    const platformIssueDate = new Date();
+                    const platformDueDate = new Date();
+                    platformDueDate.setDate(platformIssueDate.getDate() + 7);
+
+                    console.log(`  [Platform] Generating new Pending platform invoice: ${platformInvoiceNumber} (Amount: ${expectedPlatformPrice} ${currency})`);
+                    await connection.query(
+                        `INSERT INTO billing_invoices (organization_id, invoice_number, amount, status, issue_date, due_date, currency, invoice_type)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
+                        [orgId, platformInvoiceNumber, expectedPlatformPrice, 'Pending', platformIssueDate, platformDueDate, currency]
+                    );
+                }
+            }
+        } catch (invoiceErr) {
+            console.error('Failed to run invoice regeneration during migration:', invoiceErr.message);
         }
 
         console.log('\n================================================================');

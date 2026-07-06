@@ -149,7 +149,7 @@ const listClients = async (req, res) => {
         for (const client of clients) {
             const [[{ activeSeats }]] = await db.query(
                 `SELECT COUNT(*) AS activeSeats FROM users 
-                 WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+                 WHERE organization_id = ? AND role IN ('owner','admin','contributor') AND id NOT LIKE 'dev-bypass-%' AND id NOT LIKE 'admin-override-%' AND id <> 'dev-bypass-user-id'`,
                 [client.id]
             );
             const [[{ unpaidInvoicesCount }]] = await db.query(
@@ -256,7 +256,7 @@ const generateInvoice = async (req, res) => {
         const pricing = pricingGroup[tier] || pricingGroup.growth;
 
         const [[{ activeSeats }]] = await db.query(
-            `SELECT COUNT(*) AS activeSeats FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+            `SELECT COUNT(*) AS activeSeats FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor') AND id NOT LIKE 'dev-bypass-%' AND id NOT LIKE 'admin-override-%' AND id <> 'dev-bypass-user-id'`,
             [id]
         );
 

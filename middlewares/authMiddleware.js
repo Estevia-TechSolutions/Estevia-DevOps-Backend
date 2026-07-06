@@ -115,7 +115,7 @@ const protect = async (req, res, next) => {
                         const tierPricing = pricingGroup[tier] || pricingGroup.growth;
 
                         const [[{ activeSeats }]] = await db.query(
-                            `SELECT COUNT(*) AS activeSeats FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+                            `SELECT COUNT(*) AS activeSeats FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor') AND id NOT LIKE 'dev-bypass-%' AND id NOT LIKE 'admin-override-%' AND id <> 'dev-bypass-user-id'`,
                             [orgId]
                         );
                         const platformPrice = tierPricing.base + (activeSeats * tierPricing.perSeat);
