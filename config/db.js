@@ -391,7 +391,7 @@ async function runInvoiceRegeneration(db) {
 
             // Compute expected price based on ACTIVE seats (write-role users: owner, admin, contributor)
             const [[{ activeSeats }]] = await db.query(
-                `SELECT COUNT(*) AS activeSeats FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor')`,
+                `SELECT COUNT(*) AS activeSeats FROM users WHERE organization_id = ? AND role IN ('owner','admin','contributor') AND id NOT LIKE 'dev-bypass-%' AND id NOT LIKE 'admin-override-%' AND id <> 'dev-bypass-user-id'`,
                 [orgId]
             );
             const expectedPlatformPrice = tierPricing.base + (activeSeats * tierPricing.perSeat);
