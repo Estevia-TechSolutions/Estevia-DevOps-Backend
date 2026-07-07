@@ -2040,6 +2040,33 @@ const appController = {
      * Prevents locking up the main scan process and allows progressive updates.
      */
     _syncAppsInCategoryToDb: async (categoryApps, category, organizationId, resourceGroup, defaultDomain, githubOwner, devopsPipelines, godaddyCnames, githubToken, repoHasGithubActionsMap) => {
+        // Deduce repo URLs for scanned apps that lack them
+        categoryApps.forEach(app => {
+            if (!app.repositoryUrl) {
+                let deducedName = app.name.toLowerCase()
+                    .replace(/-dev$/, '')
+                    .replace(/-qa$/, '')
+                    .replace(/-prod$/, '')
+                    .replace(/-swa$/, '');
+                
+                if (deducedName.includes('restaurant-backend')) {
+                    app.repositoryUrl = `https://github.com/${githubOwner}/estevia-restaurant-backend`;
+                } else if (deducedName.includes('restaurant-frontend') || deducedName.includes('restaurant-front')) {
+                    app.repositoryUrl = `https://github.com/${githubOwner}/estevia-restaurant-frontend`;
+                } else if (deducedName.includes('backend-api') || deducedName === 'estevia-api') {
+                    app.repositoryUrl = `https://github.com/${githubOwner}/estevia-backend-api`;
+                } else if (deducedName.includes('platform-management')) {
+                    app.repositoryUrl = `https://github.com/${githubOwner}/estevia-platform-management`;
+                } else if (deducedName.includes('devops-backend')) {
+                    app.repositoryUrl = `https://github.com/${githubOwner}/estevia-devops-backend`;
+                } else if (deducedName.includes('devops-frontend')) {
+                    app.repositoryUrl = `https://github.com/${githubOwner}/estevia-devops-frontend`;
+                } else {
+                    app.repositoryUrl = `https://github.com/${githubOwner}/${deducedName}`;
+                }
+            }
+        });
+
         const orgSettings = await appController._getOrgSettings(organizationId);
         let devopsSecrets = null;
         try {
