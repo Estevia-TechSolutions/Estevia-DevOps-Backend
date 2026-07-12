@@ -529,7 +529,6 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
     // 1. Strip environment/type suffixes and organization prefixes from app name to get base name
     let baseApp = cleanAppName
         .replace(new RegExp(`^${ownerPrefix}-`), '') // strip "estevia-" prefix
-        .replace(new RegExp(`^api-`), '')            // strip "api-" prefix
         .replace(/-swa$/, '')                        // strip "-swa" suffix
         .replace(/-dev$/, '')                        // strip "-dev" suffix
         .replace(/-qa$/, '')                         // strip "-qa" suffix
@@ -538,6 +537,11 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
         .replace(/-backend$/, '')                    // strip "-backend" suffix
         .replace(/-frontend$/, '')                   // strip "-frontend" suffix
         .replace(/-api$/, '');                       // strip "-api" suffix
+
+    // Refinement rule: If baseApp became empty, generic, or just environment name, map it to the core api repo
+    if (baseApp === '' || baseApp === 'api' || ['dev', 'qa', 'prod', 'production'].includes(baseApp)) {
+        baseApp = 'backend-api';
+    }
 
     // 2. Try to find a repository where the repository name matches baseApp or has strong correlation
     let matchedRepo = null;
