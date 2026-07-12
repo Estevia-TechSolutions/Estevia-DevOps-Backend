@@ -472,7 +472,136 @@ const DEFAULT_DOMAIN = process.env.DEFAULT_DOMAIN || 'esteviatech.com';
 // GitHub APIs Caches to avoid secondary rate limiting under rapid polling
 const branchCache = new Map(); // key: repoName, value: { timestamp, branchList }
 const actionsCache = new Map(); // key: repoName, value: { timestamp, hasActions }
+const reposCache = new Map(); // key: orgId:githubOwner, value: { timestamp, repos }
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
+
+async function getGithubReposList(organizationId, githubOwner, githubToken) {
+    const cacheKey = `${organizationId}:${githubOwner}`;
+    const cached = reposCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL_MS)) {
+        return cached.repos;
+    }
+    
+    let repos = [];
+    try {
+        const response = await axios.get(`https://api.github.com/orgs/${githubOwner}/repos?per_page=100`, {
+            headers: {
+                'Authorization': `token ${githubToken}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'User-Agent': getUserAgent(organizationId)
+            },
+            timeout: 5000
+        });
+        repos = response.data || [];
+    } catch (err) {
+        console.warn(`[AppController] Failed to list org repos for ${githubOwner}: ${err.message}. Trying user repos endpoint.`);
+        try {
+            const response = await axios.get(`https://api.github.com/users/${githubOwner}/repos?per_page=100`, {
+                headers: {
+                    'Authorization': `token ${githubToken}`,
+                    'Accept': 'application/vnd.github.v3+json',
+                    'User-Agent': getUserAgent(organizationId)
+                },
+                timeout: 5000
+            });
+            repos = response.data || [];
+        } catch (e) {
+            console.error(`[AppController] Failed to list user repos for ${githubOwner}: ${e.message}`);
+        }
+    }
+    
+    const formatted = repos.map(r => ({
+        name: r.name,
+        fullName: r.full_name,
+        htmlUrl: r.html_url
+    }));
+    
+    reposCache.set(cacheKey, { timestamp: Date.now(), repos: formatted });
+    return formatted;
+}
+
+function deduceRepoUrl(appName, reposList, githubOwner) {
+    if (!appName || !reposList || reposList.length === 0) return null;
+    
+    const ownerPrefix = githubOwner.toLowerCase().replace('-techsolutions', '').replace('-solutions', '').split('-')[0];
+    const cleanAppName = appName.toLowerCase();
+    
+    // 1. Strip environment/type suffixes and organization prefixes from app name to get base name
+    let baseApp = cleanAppName
+        .replace(new RegExp(`^${ownerPrefix}-`), '') // strip "estevia-" prefix
+        .replace(new RegExp(`^api-`), '')            // strip "api-" prefix
+        .replace(/-swa$/, '')                        // strip "-swa" suffix
+        .replace(/-dev$/, '')                        // strip "-dev" suffix
+        .replace(/-qa$/, '')                         // strip "-qa" suffix
+        .replace(/-prod$/, '')                       // strip "-prod" suffix
+        .replace(/-production$/, '')                 // strip "-production" suffix
+        .replace(/-backend$/, '')                    // strip "-backend" suffix
+        .replace(/-frontend$/, '')                   // strip "-frontend" suffix
+        .replace(/-api$/, '');                       // strip "-api" suffix
+
+    // 2. Try to find a repository where the repository name matches baseApp or has strong correlation
+    let matchedRepo = null;
+    
+    // First pass: Exact match of base names
+    for (const repo of reposList) {
+        const repoNameLower = repo.name.toLowerCase();
+        const baseRepo = repoNameLower
+            .replace(new RegExp(`^${ownerPrefix}-`), '')
+            .replace(/-backend$/, '')
+            .replace(/-frontend$/, '')
+            .replace(/-api$/, '')
+            .replace(/-ci-cd$/, '')
+            .replace(/-pipeline$/, '');
+            
+        if (baseApp === baseRepo) {
+            matchedRepo = repo;
+            break;
+        }
+    }
+    
+    // Second pass: Word-level inclusion matching (e.g. "evaops" maps to "Estevia-DevOps-Backend" because "evaops" <-> "devops")
+    if (!matchedRepo) {
+        for (const repo of reposList) {
+            const repoNameLower = repo.name.toLowerCase();
+            const baseRepo = repoNameLower
+                .replace(new RegExp(`^${ownerPrefix}-`), '')
+                .replace(/-backend$/, '')
+                .replace(/-frontend$/, '')
+                .replace(/-api$/, '')
+                .replace(/-ci-cd$/, '')
+                .replace(/-pipeline$/, '');
+                
+            if (baseApp && baseRepo && (baseApp.includes(baseRepo) || baseRepo.includes(baseApp))) {
+                matchedRepo = repo;
+                break;
+            }
+            
+            // Special alias check: "evaops" is equivalent to "devops" in Estevia
+            const isEvaOpsMatch = (baseApp === 'evaops' || baseApp === 'api-evaops') && (baseRepo === 'devops' || baseRepo === 'devops-backend');
+            if (isEvaOpsMatch) {
+                matchedRepo = repo;
+                break;
+            }
+        }
+    }
+    
+    // Third pass: Fallback match
+    if (!matchedRepo) {
+        for (const repo of reposList) {
+            const repoNameLower = repo.name.toLowerCase();
+            if (repoNameLower.includes(baseApp) || baseApp.includes(repoNameLower)) {
+                matchedRepo = repo;
+                break;
+            }
+        }
+    }
+    
+    if (matchedRepo) {
+        return matchedRepo.htmlUrl;
+    }
+    return null;
+}
+
 
 // Dynamic helper to fetch Azure credentials (Service Principal or Default CLI fallback)
 async function getAzureCredential(organizationId) {
@@ -1896,6 +2025,23 @@ const appController = {
         } catch (e) {
             console.warn('[AppController] Failed to decrypt DevOps credentials for sync:', e.message);
         }
+        // Deduce repository URLs for category apps that lack one
+        if (githubToken && githubOwner) {
+            try {
+                const reposList = await getGithubReposList(organizationId, githubOwner, githubToken);
+                for (const categoryApp of categoryApps) {
+                    if (!categoryApp.repositoryUrl) {
+                        const deducedUrl = deduceRepoUrl(categoryApp.name, reposList, githubOwner);
+                        if (deducedUrl) {
+                            categoryApp.repositoryUrl = deducedUrl;
+                            console.log(`[AppController] Deduced repository URL for ${categoryApp.name}: ${deducedUrl}`);
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn('[AppController] Failed to automatically deduce repository URLs:', err.message);
+            }
+        }
 
         // Fetch repository branches for the repositories in this category
         const repoBranchesMap = new Map();
@@ -3123,7 +3269,6 @@ const appController = {
 
 
             // Redundant integration discovery blocks removed (already resolved at start of scanApps)
-
             // 4.3. Resolve repositoryUrl from DB for scanned apps that lack one
             try {
                 const [dbApps] = await db.query(
@@ -3131,18 +3276,31 @@ const appController = {
                     [organizationId]
                 );
                 const dbRepoMap = new Map(dbApps.map(r => [r.name.toLowerCase(), r.repo_url]));
+                let reposList = null;
                 for (const app of apps) {
                     if (!app.repositoryUrl) {
                         const dbRepo = dbRepoMap.get(app.name.toLowerCase());
                         if (dbRepo) {
                             app.repositoryUrl = dbRepo;
+                        } else if (githubToken && githubOwner) {
+                            if (!reposList) {
+                                try {
+                                    reposList = await getGithubReposList(organizationId, githubOwner, githubToken);
+                                } catch (e) {
+                                    reposList = [];
+                                }
+                            }
+                            const deducedUrl = deduceRepoUrl(app.name, reposList, githubOwner);
+                            if (deducedUrl) {
+                                app.repositoryUrl = deducedUrl;
+                                console.log(`[AppController] scanApps: Deduced repository URL for ${app.name}: ${deducedUrl}`);
+                            }
                         }
                     }
                 }
             } catch (dbErr) {
                 console.warn('[AppController] Failed to pre-resolve repo URLs from DB:', dbErr.message);
             }
-
             // 4.5. Dynamic branches lookup from GitHub for scanned apps (reuses githubToken resolved at start)
 
             const repoBranchesMap = new Map();
