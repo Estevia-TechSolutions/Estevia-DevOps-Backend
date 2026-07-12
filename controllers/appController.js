@@ -60,9 +60,9 @@ async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
     const repoName = repoUrl.split('/').pop().replace(/\.git$/, '');
     const baseWorkspace = '/Users/gmenon/WorkSpace/Estevia/CodeBase/Estevia-Workspace';
     let localMatchedPath = null;
-    
+
     console.log(`[Scraper] [START] Scraping Backend URL | Repo: ${repoUrl} | Env: ${envType} | Branch: ${branch || 'default'}`);
-    
+
     if (fs.existsSync(baseWorkspace)) {
         const dirs = fs.readdirSync(baseWorkspace);
         const matchedDir = dirs.find(d => d.toLowerCase() === repoName.toLowerCase());
@@ -70,7 +70,7 @@ async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
             localMatchedPath = path.join(baseWorkspace, matchedDir);
         }
     }
-    
+
     let envFiles = [];
     if (envType === 'dev') {
         envFiles = ['.env.development', '.env.dev', '.env.deployment', '.env.deploy', '.env'];
@@ -87,7 +87,7 @@ async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
         'azure-pipelines-qa.yml',
         'azure-pipelines-dev.yml'
     ];
-    
+
     if (localMatchedPath) {
         console.log(`[Scraper] Found local directory: ${localMatchedPath}. Reading files...`);
         // 1. Check local env files
@@ -106,7 +106,7 @@ async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
                 }
             }
         }
-        
+
         // 2. Check local pipeline files
         const pipelinePaths = [
             path.join(localMatchedPath, 'azure-pipelines.yml'),
@@ -135,14 +135,14 @@ async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
             console.warn(`[Scraper] GitHub token is missing. Bypassing GitHub remote scan.`);
             return { value: null, searchedFiles };
         }
-        
+
         const gitMatch = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
         if (gitMatch) {
             const owner = gitMatch[1];
             const repo = gitMatch[2].replace(/\.git$/, '');
             const targetBranch = branch || 'main';
             console.log(`[Scraper] GitHub Repository resolved: ${owner}/${repo} | ref: ${targetBranch}`);
-            
+
             // 1. Try env files from GitHub
             for (const f of envFiles) {
                 try {
@@ -167,7 +167,7 @@ async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
                     console.log(`[Scraper] GitHub remote file lookup failed for ${f}:`, err.response?.status || err.message);
                 }
             }
-            
+
             // 2. Try pipeline files from GitHub
             const commonPipelines = [
                 'azure-pipelines.yml',
@@ -208,9 +208,9 @@ async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
     const repoName = repoUrl.split('/').pop().replace(/\.git$/, '');
     const baseWorkspace = '/Users/gmenon/WorkSpace/Estevia/CodeBase/Estevia-Workspace';
     let localMatchedPath = null;
-    
+
     console.log(`[Scraper] [START] Scraping Database Host | Repo: ${repoUrl} | Env: ${envType} | Branch: ${branch || 'default'}`);
-    
+
     if (fs.existsSync(baseWorkspace)) {
         const dirs = fs.readdirSync(baseWorkspace);
         const matchedDir = dirs.find(d => d.toLowerCase() === repoName.toLowerCase());
@@ -218,7 +218,7 @@ async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
             localMatchedPath = path.join(baseWorkspace, matchedDir);
         }
     }
-    
+
     let envFiles = [];
     if (envType === 'dev') {
         envFiles = ['.env.development', '.env.dev', '.env.deployment', '.env.deploy', '.env'];
@@ -235,7 +235,7 @@ async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
         'azure-pipelines-qa.yml',
         'azure-pipelines-dev.yml'
     ];
-    
+
     if (localMatchedPath) {
         console.log(`[Scraper] Found local directory: ${localMatchedPath}. Reading files...`);
         // 1. Check local env files
@@ -254,7 +254,7 @@ async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
                 }
             }
         }
-        
+
         // 2. Check local pipeline files
         const pipelinePaths = [
             path.join(localMatchedPath, 'azure-pipelines.yml'),
@@ -282,14 +282,14 @@ async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
             console.warn(`[Scraper] GitHub token is missing. Bypassing GitHub remote scan.`);
             return { value: null, searchedFiles };
         }
-        
+
         const gitMatch = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
         if (gitMatch) {
             const owner = gitMatch[1];
             const repo = gitMatch[2].replace(/\.git$/, '');
             const targetBranch = branch || 'main';
             console.log(`[Scraper] GitHub Repository resolved: ${owner}/${repo} | ref: ${targetBranch}`);
-            
+
             // 1. Try env files from GitHub
             for (const f of envFiles) {
                 try {
@@ -314,7 +314,7 @@ async function scrapeDbHostFromRepo(repoUrl, envType, branch, githubToken) {
                     console.log(`[Scraper] GitHub remote file lookup failed for ${f}:`, err.response?.status || err.message);
                 }
             }
-            
+
             // 2. Try pipeline files from GitHub
             const commonPipelines = [
                 'azure-pipelines.yml',
@@ -362,10 +362,10 @@ async function scrapeBackendUrlFromARM(appName, organizationId, subscriptionId, 
         for (const key of apiKeys) {
             if (props[key]) {
                 console.log(`[Scraper] [ARM SWA] Found match in app settings for key ${key}: ${props[key]}`);
-                return { 
-                    value: props[key], 
-                    file: `Azure ARM (Static Web App Settings: ${key})`, 
-                    content: JSON.stringify(props, null, 2) 
+                return {
+                    value: props[key],
+                    file: `Azure ARM (Static Web App Settings: ${key})`,
+                    content: JSON.stringify(props, null, 2)
                 };
             }
         }
@@ -381,12 +381,12 @@ async function scrapeDbHostFromARM(appName, organizationId, subscriptionId, reso
         const credential = await getAzureCredential(organizationId);
         const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
         const app = await containerClient.containerApps.get(resourceGroup, appName);
-        
+
         const containers = app.template?.containers || app.properties?.template?.containers || [];
         let dbHostVar = null;
         let envVars = [];
         let containerName = '';
-        
+
         for (const container of containers) {
             if (container.env) {
                 const found = container.env.find(e => e.name === 'DB_HOST');
@@ -398,14 +398,14 @@ async function scrapeDbHostFromARM(appName, organizationId, subscriptionId, reso
                 }
             }
         }
-        
+
         if (dbHostVar) {
             if (dbHostVar.value) {
                 console.log(`[Scraper] [ARM ACA] Found DB_HOST value directly in container ${containerName}: ${dbHostVar.value}`);
-                return { 
-                    value: dbHostVar.value, 
-                    file: `Azure ARM (Container: ${containerName})`, 
-                    content: JSON.stringify(envVars, null, 2) 
+                return {
+                    value: dbHostVar.value,
+                    file: `Azure ARM (Container: ${containerName})`,
+                    content: JSON.stringify(envVars, null, 2)
                 };
             }
             if (dbHostVar.secretRef) {
@@ -415,10 +415,10 @@ async function scrapeDbHostFromARM(appName, organizationId, subscriptionId, reso
                     const matchedSecret = secrets.value?.find(s => s.name === dbHostVar.secretRef);
                     if (matchedSecret?.value) {
                         console.log(`[Scraper] [ARM ACA] Resolved secret ${dbHostVar.secretRef}: ${matchedSecret.value}`);
-                        return { 
-                            value: matchedSecret.value, 
-                            file: `Azure ARM (Container: ${containerName} | Secret: ${dbHostVar.secretRef})`, 
-                            content: JSON.stringify(envVars, null, 2) 
+                        return {
+                            value: matchedSecret.value,
+                            file: `Azure ARM (Container: ${containerName} | Secret: ${dbHostVar.secretRef})`,
+                            content: JSON.stringify(envVars, null, 2)
                         };
                     }
                 } catch (secErr) {
@@ -481,7 +481,7 @@ async function getGithubReposList(organizationId, githubOwner, githubToken) {
     if (cached && (Date.now() - cached.timestamp < CACHE_TTL_MS)) {
         return cached.repos;
     }
-    
+
     let repos = [];
     try {
         const response = await axios.get(`https://api.github.com/orgs/${githubOwner}/repos?per_page=100`, {
@@ -509,26 +509,27 @@ async function getGithubReposList(organizationId, githubOwner, githubToken) {
             console.error(`[AppController] Failed to list user repos for ${githubOwner}: ${e.message}`);
         }
     }
-    
+
     const formatted = repos.map(r => ({
         name: r.name,
         fullName: r.full_name,
         htmlUrl: r.html_url
     }));
-    
+
     reposCache.set(cacheKey, { timestamp: Date.now(), repos: formatted });
     return formatted;
 }
 
 function deduceRepoUrl(appName, reposList, githubOwner) {
     if (!appName || !reposList || reposList.length === 0) return null;
-    
+
     const ownerPrefix = githubOwner.toLowerCase().replace('-techsolutions', '').replace('-solutions', '').split('-')[0];
     const cleanAppName = appName.toLowerCase();
-    
+
     // 1. Strip environment/type suffixes and organization prefixes from app name to get base name
     let baseApp = cleanAppName
         .replace(new RegExp(`^${ownerPrefix}-`), '') // strip "estevia-" prefix
+        .replace(new RegExp(`^api-`), '')            // strip "api-" prefix
         .replace(/-swa$/, '')                        // strip "-swa" suffix
         .replace(/-dev$/, '')                        // strip "-dev" suffix
         .replace(/-qa$/, '')                         // strip "-qa" suffix
@@ -538,14 +539,9 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
         .replace(/-frontend$/, '')                   // strip "-frontend" suffix
         .replace(/-api$/, '');                       // strip "-api" suffix
 
-    // Refinement rule: If baseApp became empty, generic, or just environment name, map it to the core api repo
-    if (baseApp === '' || baseApp === 'api' || ['dev', 'qa', 'prod', 'production'].includes(baseApp)) {
-        baseApp = 'backend-api';
-    }
-
     // 2. Try to find a repository where the repository name matches baseApp or has strong correlation
     let matchedRepo = null;
-    
+
     // First pass: Exact match of base names
     for (const repo of reposList) {
         const repoNameLower = repo.name.toLowerCase();
@@ -556,13 +552,13 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
             .replace(/-api$/, '')
             .replace(/-ci-cd$/, '')
             .replace(/-pipeline$/, '');
-            
+
         if (baseApp === baseRepo) {
             matchedRepo = repo;
             break;
         }
     }
-    
+
     // Second pass: Word-level inclusion matching (e.g. "evaops" maps to "Estevia-DevOps-Backend" because "evaops" <-> "devops")
     if (!matchedRepo) {
         for (const repo of reposList) {
@@ -574,12 +570,12 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
                 .replace(/-api$/, '')
                 .replace(/-ci-cd$/, '')
                 .replace(/-pipeline$/, '');
-                
+
             if (baseApp && baseRepo && (baseApp.includes(baseRepo) || baseRepo.includes(baseApp))) {
                 matchedRepo = repo;
                 break;
             }
-            
+
             // Special alias check: "evaops" is equivalent to "devops" in Estevia
             const isEvaOpsMatch = (baseApp === 'evaops' || baseApp === 'api-evaops') && (baseRepo === 'devops' || baseRepo === 'devops-backend');
             if (isEvaOpsMatch) {
@@ -588,7 +584,7 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
             }
         }
     }
-    
+
     // Third pass: Fallback match
     if (!matchedRepo) {
         for (const repo of reposList) {
@@ -599,7 +595,7 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
             }
         }
     }
-    
+
     if (matchedRepo) {
         return matchedRepo.htmlUrl;
     }
@@ -969,7 +965,7 @@ const appController = {
                 const azureDetails = typeof app.azure_resource_details === 'string'
                     ? JSON.parse(app.azure_resource_details || '{}')
                     : (app.azure_resource_details || {});
-                
+
                 const rType = app.app_type === 'frontend' ? 'Microsoft.Web/staticSites' : 'Microsoft.App/containerApps';
                 azureResources.push({
                     id: azureDetails.resourceId || `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/${rType}/${app.name}`,
@@ -993,7 +989,7 @@ const appController = {
             const tokenRes = await credential.getToken("https://management.azure.com/.default");
             if (tokenRes && tokenRes.token) {
                 const token = tokenRes.token;
-                
+
                 const costUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.CostManagement/query?api-version=2023-03-01`;
                 const costBody = {
                     type: "Usage",
@@ -1032,11 +1028,11 @@ const appController = {
                         let val = parseFloat(row[0]) || 0;
                         const resId = (row[1] || '').toLowerCase();
                         const currency = row[3] || 'USD';
-                        
+
                         if (currency.toUpperCase() === 'INR') {
                             val = val / 83.0;
                         }
-                        
+
                         azureCosts.set(resId, val);
                     }
                     console.log(`[AppController] Successfully loaded ${azureCosts.size} live resource costs from Azure Cost Management.`);
@@ -1058,7 +1054,7 @@ const appController = {
             registry: 0,
             other: 0
         };
-        
+
         const detailedCosts = [];
         const suggestions = [];
         const processedResourceIds = new Set();
@@ -1066,8 +1062,8 @@ const appController = {
         // Match with DB apps by name or resource ID
         const dbAppMap = new Map();
         for (const app of apps) {
-            const azureDetails = typeof app.azure_resource_details === 'string' 
-                ? JSON.parse(app.azure_resource_details || '{}') 
+            const azureDetails = typeof app.azure_resource_details === 'string'
+                ? JSON.parse(app.azure_resource_details || '{}')
                 : (app.azure_resource_details || {});
             if (azureDetails.resourceId) {
                 dbAppMap.set(azureDetails.resourceId.toLowerCase(), app);
@@ -1078,9 +1074,9 @@ const appController = {
         // Map and price Azure resources
         for (const r of azureResources) {
             if (r.id) processedResourceIds.add(r.id.toLowerCase());
-            
+
             const matchedApp = dbAppMap.get(r.id?.toLowerCase()) || dbAppMap.get(r.name?.toLowerCase());
-            
+
             let type = 'other';
             let appCost = 0;
             let dnsCost = 0;
@@ -1100,7 +1096,7 @@ const appController = {
                     appCost = 9.00;
                     details = 'Static Web App Standard Tier';
                 }
-                
+
                 if (matchedApp) {
                     const dnsDetails = typeof matchedApp.godaddy_dns_details === 'string'
                         ? JSON.parse(matchedApp.godaddy_dns_details || '{}')
@@ -1120,11 +1116,11 @@ const appController = {
                     const azureDetails = typeof matchedApp.azure_resource_details === 'string'
                         ? JSON.parse(matchedApp.azure_resource_details || '{}')
                         : (matchedApp.azure_resource_details || {});
-                    
+
                     const cpu = parseFloat(azureDetails.cpu) || 0.25;
                     const memory = parseFloat(azureDetails.memory) || 0.5;
                     const replicas = parseInt(azureDetails.replicaCount) || 1;
-                    
+
                     const cpuCostRate = 12.00;
                     const memCostRate = 4.00;
                     appCost = ((cpu / 0.25) * cpuCostRate + (memory / 0.5) * memCostRate) * replicas;
@@ -1133,7 +1129,7 @@ const appController = {
                     appCost = 15.00;
                     details = 'Container App (Default Sizing)';
                 }
-                
+
                 if (matchedApp) {
                     const dnsDetails = typeof matchedApp.godaddy_dns_details === 'string'
                         ? JSON.parse(matchedApp.godaddy_dns_details || '{}')
@@ -1162,7 +1158,7 @@ const appController = {
                 type = 'vm';
                 const liveCost = azureCosts.get(r.id?.toLowerCase());
                 appCost = liveCost !== undefined ? liveCost : 85.00;
-                details = liveCost !== undefined 
+                details = liveCost !== undefined
                     ? `Azure Virtual Machine (Live: $${appCost.toFixed(2)}/mo)`
                     : 'Azure Virtual Machine (General Purpose CPU)';
             } else if (rType === 'Microsoft.ContainerRegistry/registries') {
@@ -1207,7 +1203,7 @@ const appController = {
                         ? JSON.parse(matchedApp.azure_resource_details || '{}')
                         : (matchedApp.azure_resource_details || {});
                     const pools = azureDetails.agentPoolProfiles || [];
-                    
+
                     const getVmSizeRate = (vmSize) => {
                         const size = (vmSize || '').toLowerCase();
                         if (size.includes('b2s') || size.includes('b2ms')) return 30.00;
@@ -1236,7 +1232,7 @@ const appController = {
                 type = 'other';
                 const liveCost = azureCosts.get(r.id?.toLowerCase());
                 appCost = liveCost !== undefined ? liveCost : 0.00;
-                
+
                 const typeParts = rType.split('/');
                 const baseTypeName = typeParts.pop() || rType;
                 const readableType = baseTypeName
@@ -1256,18 +1252,18 @@ const appController = {
             }
 
             const envType = getEnvType(rName, branch);
-            const isTestResource = envType === 'dev' || 
-                                   envType === 'qa' || 
-                                   rName.toLowerCase().includes('sandbox') || 
-                                   rName.toLowerCase().includes('temp') || 
-                                   rName.toLowerCase().includes('demo') ||
-                                   (rType === 'Microsoft.Web/staticSites' && (matchedApp?.name || rName).toLowerCase().includes('dev')) ||
-                                   (rType === 'Microsoft.DBforMySQL/flexibleServers' && !(r.sku?.name || '').toLowerCase().includes('gp') && !(r.sku?.name || '').toLowerCase().includes('general') && !(r.sku?.name || '').toLowerCase().includes('d2ads'));
+            const isTestResource = envType === 'dev' ||
+                envType === 'qa' ||
+                rName.toLowerCase().includes('sandbox') ||
+                rName.toLowerCase().includes('temp') ||
+                rName.toLowerCase().includes('demo') ||
+                (rType === 'Microsoft.Web/staticSites' && (matchedApp?.name || rName).toLowerCase().includes('dev')) ||
+                (rType === 'Microsoft.DBforMySQL/flexibleServers' && !(r.sku?.name || '').toLowerCase().includes('gp') && !(r.sku?.name || '').toLowerCase().includes('general') && !(r.sku?.name || '').toLowerCase().includes('d2ads'));
 
             // Apply cost deductions for applied optimizations
             const matchedAppId = matchedApp?.id;
             const resId = r.id || rName;
-            
+
             // 1. SWA Tier Demotion
             const optTierId = matchedAppId ? `opt-tier-${matchedAppId}` : `opt-tier-${resId}`;
             if (appliedMap.has(optTierId)) {
@@ -1382,13 +1378,13 @@ const appController = {
         // Sync database apps that were not matched by ID/name from the Azure subscription list
         for (const app of apps) {
             const appName = app.name.toLowerCase();
-            const matched = Array.from(processedResourceIds).some(id => id.includes(appName)) || 
-                            azureResources.some(r => r.name?.toLowerCase() === appName);
+            const matched = Array.from(processedResourceIds).some(id => id.includes(appName)) ||
+                azureResources.some(r => r.name?.toLowerCase() === appName);
             if (!matched) {
-                const azureDetails = typeof app.azure_resource_details === 'string' 
-                    ? JSON.parse(app.azure_resource_details || '{}') 
+                const azureDetails = typeof app.azure_resource_details === 'string'
+                    ? JSON.parse(app.azure_resource_details || '{}')
                     : (app.azure_resource_details || {});
-                
+
                 const dnsDetails = typeof app.godaddy_dns_details === 'string'
                     ? JSON.parse(app.godaddy_dns_details || '{}')
                     : (app.godaddy_dns_details || {});
@@ -1397,10 +1393,10 @@ const appController = {
                 let details = '';
                 let dnsCost = 0;
                 let fqdn = null;
-                
+
                 const resourceId = (azureDetails.resourceId || '').toLowerCase();
                 const liveCost = resourceId ? azureCosts.get(resourceId) : undefined;
-                
+
                 let type = app.app_type;
                 if (type === 'frontend') {
                     if (liveCost !== undefined) {
@@ -1418,10 +1414,10 @@ const appController = {
                         const cpu = parseFloat(azureDetails.cpu) || 0.25;
                         const memory = parseFloat(azureDetails.memory) || 0.5;
                         const replicas = parseInt(azureDetails.replicaCount) || 1;
-                        
+
                         const cpuCostRate = 12.00;
                         const memCostRate = 4.00;
-                        
+
                         appCost = ((cpu / 0.25) * cpuCostRate + (memory / 0.5) * memCostRate) * replicas;
                         details = `Container App (${replicas} x ${cpu} CPU, ${memory}GiB RAM)`;
                     }
@@ -1436,7 +1432,7 @@ const appController = {
                 } else if (type === 'vm') {
                     const baseCost = liveCost !== undefined ? liveCost : 85.00;
                     appCost = baseCost;
-                    details = liveCost !== undefined 
+                    details = liveCost !== undefined
                         ? `Azure Virtual Machine (Live: $${appCost.toFixed(2)}/mo)`
                         : 'Azure Virtual Machine (General Purpose CPU)';
                 } else if (type === 'cluster') {
@@ -1445,7 +1441,7 @@ const appController = {
                         details = `Azure Kubernetes Service (Live: $${appCost.toFixed(2)}/mo)`;
                     } else {
                         const pools = azureDetails.agentPoolProfiles || [];
-                        
+
                         const getVmSizeRate = (vmSize) => {
                             const size = (vmSize || '').toLowerCase();
                             if (size.includes('b2s') || size.includes('b2ms')) return 30.00;
@@ -1476,11 +1472,11 @@ const appController = {
 
                 const branch = azureDetails.branch || null;
                 const envType = getEnvType(app.name, branch);
-                const isTestResource = envType === 'dev' || 
-                                       envType === 'qa' || 
-                                       app.name.toLowerCase().includes('sandbox') || 
-                                       app.name.toLowerCase().includes('temp') || 
-                                       app.name.toLowerCase().includes('demo');
+                const isTestResource = envType === 'dev' ||
+                    envType === 'qa' ||
+                    app.name.toLowerCase().includes('sandbox') ||
+                    app.name.toLowerCase().includes('temp') ||
+                    app.name.toLowerCase().includes('demo');
 
                 // Deductions (use app.id for mapping)
                 const matchedAppId = app.id;
@@ -1605,12 +1601,12 @@ const appController = {
             if (item.type === 'backend') {
                 const envType = getEnvType(item.name, item.branch);
                 const isDevOrQa = envType === 'dev' || envType === 'qa' || item.isTestResource;
-                
+
                 if (isDevOrQa) {
                     const isFeedbackDev = item.name.toLowerCase() === 'estevia-feedback-api-dev';
                     const sleepSchedulerId = isFeedbackDev ? 'opt-eva-sleep-scheduler' : `opt-eva-sleep-scheduler-${item.id}`;
                     const dynamicSavings = Math.round(item.resourceCost * 0.55 * 100) / 100;
-                    
+
                     const sleepSchedulerObj = {
                         id: sleepSchedulerId,
                         appName: item.name,
@@ -1621,13 +1617,13 @@ const appController = {
                         description: `Eva AI analysis of traffic logs shows zero user requests between 8:00 PM and 7:00 AM local time. Enabling the sleep scheduler will save an estimated 55% of runtime costs.`,
                         source: 'Eva AI'
                     };
-                    
+
                     if (!appliedMap.has(sleepSchedulerId)) {
                         suggestions.push(sleepSchedulerObj);
                     }
                 }
             }
-            
+
             // VM dynamic suggestions
             if (item.type === 'vm') {
                 const isProdVm = item.name.toLowerCase() === 'estevia-prod-vm-01' || item.name.toLowerCase().includes('prod');
@@ -1695,7 +1691,7 @@ const appController = {
             if (item.type === 'cluster') {
                 const envType = getEnvType(item.name, item.branch);
                 const isDevOrQa = envType === 'dev' || envType === 'qa' || item.isTestResource;
-                
+
                 if (isDevOrQa) {
                     const optId = `opt-aks-spot-${item.id}`;
                     const dynamicSavings = Math.round(item.resourceCost * 0.80 * 100) / 100;
@@ -1799,7 +1795,7 @@ const appController = {
         // ACR consolidation recommendation
         const registries = azureResources.filter(r => r.type === 'Microsoft.ContainerRegistry/registries');
         const hasAcrRemediation = appliedMap.has('opt-acr-consolidate');
-        
+
         let firstRegistryCost = 5.00;
         const firstRegistry = registries.find(r => r.id);
         if (firstRegistry) {
@@ -1861,36 +1857,36 @@ const appController = {
             if (tokenRes && tokenRes.token) {
                 const token = tokenRes.token;
                 const advisorUrl = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Advisor/recommendations?api-version=2023-01-01`;
-            const advisorRes = await axios.get(advisorUrl, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                },
-                timeout: 4000
-            });
-            if (advisorRes.data && advisorRes.data.value) {
-                for (const rec of advisorRes.data.value) {
-                    const props = rec.properties || {};
-                    if (props.category === 'Cost') {
-                        const savings = parseFloat(props.metadata?.savingsAmount) || 12.00;
-                        const resName = props.resourceMetadata?.resourceId?.split('/').pop() || 'Azure Resource';
-                        const optId = `opt-advisor-${rec.name || rec.id}`;
-                        
-                        const suggestionObj = {
-                            id: optId,
-                            appName: resName,
-                            type: 'advisor_opt',
-                            impact: (props.impact || 'medium').toLowerCase(),
-                            savings: savings,
-                            recommendation: props.shortDescription?.solution || props.shortDescription?.problem || 'Optimize resource cost',
-                            description: props.description || 'Azure Advisor recommendation for optimizing resource configuration.',
-                            source: 'Azure Advisor'
-                        };
-                        if (!appliedMap.has(optId)) {
-                            suggestions.push(suggestionObj);
+                const advisorRes = await axios.get(advisorUrl, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    },
+                    timeout: 4000
+                });
+                if (advisorRes.data && advisorRes.data.value) {
+                    for (const rec of advisorRes.data.value) {
+                        const props = rec.properties || {};
+                        if (props.category === 'Cost') {
+                            const savings = parseFloat(props.metadata?.savingsAmount) || 12.00;
+                            const resName = props.resourceMetadata?.resourceId?.split('/').pop() || 'Azure Resource';
+                            const optId = `opt-advisor-${rec.name || rec.id}`;
+
+                            const suggestionObj = {
+                                id: optId,
+                                appName: resName,
+                                type: 'advisor_opt',
+                                impact: (props.impact || 'medium').toLowerCase(),
+                                savings: savings,
+                                recommendation: props.shortDescription?.solution || props.shortDescription?.problem || 'Optimize resource cost',
+                                description: props.description || 'Azure Advisor recommendation for optimizing resource configuration.',
+                                source: 'Azure Advisor'
+                            };
+                            if (!appliedMap.has(optId)) {
+                                suggestions.push(suggestionObj);
+                            }
                         }
                     }
                 }
-            }
             }
         } catch (advErr) {
             console.warn('[AppController] Live Azure Advisor API query skipped or failed:', advErr.message);
@@ -1901,12 +1897,12 @@ const appController = {
             return appController._getSuggestionDetails(rem.suggestion_id, rem.type, rem.app_name, parseFloat(rem.savings));
         });
 
-        const totalMonthlyCost = costBreakdown.swa + costBreakdown.aca + costBreakdown.dns + 
-                                 (costBreakdown.database || 0) + (costBreakdown.vm || 0) + 
-                                 (costBreakdown.registry || 0) + (costBreakdown.cluster || 0) + 
-                                 (costBreakdown.other || 0);
+        const totalMonthlyCost = costBreakdown.swa + costBreakdown.aca + costBreakdown.dns +
+            (costBreakdown.database || 0) + (costBreakdown.vm || 0) +
+            (costBreakdown.registry || 0) + (costBreakdown.cluster || 0) +
+            (costBreakdown.other || 0);
         const potentialSavings = suggestions.reduce((sum, s) => sum + s.savings, 0);
-        
+
         let optimizationScore = 100;
         if (totalMonthlyCost > 0) {
             const savingsRatio = potentialSavings / totalMonthlyCost;
@@ -2055,7 +2051,7 @@ const appController = {
                 .filter(Boolean)
                 .map(url => url.toLowerCase().replace(/\/$/, '').replace(/\.git$/, ''))
             )];
-            
+
             await Promise.all(uniqueRepos.map(async (normalizedUrl) => {
                 try {
                     const githubRepo = normalizedUrl.replace('https://github.com/', '');
@@ -2086,7 +2082,7 @@ const appController = {
                             ? JSON.parse(existing[0].azure_resource_details)
                             : existing[0].azure_resource_details;
                         dbBranch = details?.branch || null;
-                    } catch (e) {}
+                    } catch (e) { }
                 }
             }
             app.branch = app.branch || dbBranch;
@@ -2179,21 +2175,21 @@ const appController = {
                 if (!r.data || !app.hostname) return false;
                 const rData = r.data.toLowerCase();
                 const appHost = app.hostname.toLowerCase();
-                
+
                 if (rData === appHost || rData === `${appHost}.` || appHost.includes(rData)) {
                     return true;
                 }
-                
+
                 if (app.type === 'backend' && rData.includes('cloudfront.net')) {
                     const cleanRecordHost = r.name.toLowerCase().replace('.', '-');
                     const cleanAppName = app.name.toLowerCase();
-                    
+
                     const recordWords = cleanRecordHost.split('-');
                     const appWords = cleanAppName.split('-');
-                    
-                    const isMatch = recordWords.every(w => cleanAppName.includes(w)) && 
-                                    appWords.filter(w => !['prod', 'api', 'dev', 'qa'].includes(w))
-                                            .every(w => cleanRecordHost.includes(w));
+
+                    const isMatch = recordWords.every(w => cleanAppName.includes(w)) &&
+                        appWords.filter(w => !['prod', 'api', 'dev', 'qa'].includes(w))
+                            .every(w => cleanRecordHost.includes(w));
                     if (isMatch) return true;
                 }
                 return false;
@@ -2222,9 +2218,9 @@ const appController = {
             // Find matching Azure DevOps Pipeline ID
             let matchedPipelineId = null;
             let matchedPipelineName = null;
-            
+
             const isDevVm = app.type === 'vm' && (app.name.toLowerCase().includes('-dev') || app.name.toLowerCase().includes('dev'));
-            
+
             let matchingPipeline = null;
             if (!isDevVm && app.repositoryUrl) {
                 const cleanAppRepo = app.repositoryUrl.replace('https://github.com/', '').replace(/\/$/, '').toLowerCase();
@@ -2233,16 +2229,16 @@ const appController = {
                     return repoFullName && repoFullName.toLowerCase() === cleanAppRepo;
                 });
             }
-            
+
             if (!isDevVm && !matchingPipeline) {
                 matchingPipeline = devopsPipelines.find(p => {
                     const pName = p.name.toLowerCase();
                     const cleanAppName = app.name.toLowerCase();
-                    
+
                     const ownerPrefix = githubOwner.toLowerCase().replace('-techsolutions', '').replace('-solutions', '').split('-')[0];
                     const baseApp = cleanAppName.replace(new RegExp(`^${ownerPrefix}-`), '').replace('-swa', '').replace('-dev', '').replace('-qa', '').replace('-prod', '').replace('-api', '').replace('-frontend', '');
                     const basePipeline = pName.replace('-pipeline', '').replace('-ci-cd', '').replace('-frontend', '').replace('-backend', '').replace('-api', '');
-                    
+
                     if (baseApp && basePipeline && (baseApp === basePipeline || baseApp.includes(basePipeline) || basePipeline.includes(baseApp))) {
                         return true;
                     }
@@ -2262,7 +2258,7 @@ const appController = {
 
             if (!matchedPipelineId && !isDevVm && app.repositoryUrl && githubToken) {
                 const cleanAppRepo = app.repositoryUrl.replace('https://github.com/', '').replace(/\/$/, '').toLowerCase();
-                
+
                 // Check in global actionsCache first to avoid rate limiting
                 const cachedActions = actionsCache.get(normalizedUrl);
                 if (cachedActions && (Date.now() - cachedActions.timestamp < CACHE_TTL_MS)) {
@@ -2286,11 +2282,11 @@ const appController = {
                         if (Array.isArray(workflowsRes.data) && workflowsRes.data.length > 0) {
                             hasActions = true;
                         }
-                    } catch (err) {}
+                    } catch (err) { }
                     repoHasGithubActionsMap.set(normalizedUrl, hasActions);
                     actionsCache.set(normalizedUrl, { timestamp: Date.now(), hasActions });
                 }
-                
+
                 const hasGithubActions = repoHasGithubActionsMap.get(normalizedUrl) || (existing.length > 0 && existing[0].pipeline_id && String(existing[0].pipeline_id).startsWith('github-actions'));
                 if (hasGithubActions) {
                     const githubRepo = normalizedUrl.replace('https://github.com/', '');
@@ -2385,18 +2381,18 @@ const appController = {
                 try {
                     const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
                     const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
-                    
+
                     const resolvedBranch = appController._resolveBranchFromAppName(app.name, app.branches || [], app.branch);
                     const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
 
                     const urlInProgress = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=InProgress&$top=1&api-version=7.1`;
                     const urlNotStarted = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=NotStarted&$top=1&api-version=7.1`;
-                    const urlCompleted  = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=Completed&$top=1&api-version=7.1`;
+                    const urlCompleted = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=Completed&$top=1&api-version=7.1`;
 
                     const [resInProgress, resNotStarted, resCompleted] = await Promise.all([
                         axios.get(urlInProgress, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(e => { console.warn(`[AppController] Failed to fetch InProgress builds: ${e.message}`); return { data: { value: [] } }; }),
                         axios.get(urlNotStarted, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(e => { console.warn(`[AppController] Failed to fetch NotStarted builds: ${e.message}`); return { data: { value: [] } }; }),
-                        axios.get(urlCompleted,  { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(e => { console.warn(`[AppController] Failed to fetch Completed builds: ${e.message}`); return { data: { value: [] } }; })
+                        axios.get(urlCompleted, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(e => { console.warn(`[AppController] Failed to fetch Completed builds: ${e.message}`); return { data: { value: [] } }; })
                     ]);
 
                     const builds = [
@@ -2435,41 +2431,41 @@ const appController = {
                                 const stages = allRecords
                                     .filter(r => r.type === 'Stage')
                                     .sort((a, b) => (a.order || 0) - (b.order || 0));
-                                
+
                                 const jobs = allRecords.filter(r => r.type === 'Job');
                                 const phases = allRecords.filter(r => r.type === 'Phase');
-                                
+
                                 const stageRecords = stages.map(stage => {
                                     const stageJobs = jobs.filter(job => {
                                         if (job.parentId === stage.id) return true;
                                         const parentPhase = phases.find(p => p.id === job.parentId);
                                         return parentPhase && parentPhase.parentId === stage.id;
-                                     }).sort((a, b) => (a.order || 0) - (b.order || 0))
-                                       .map(j => {
-                                           const jobTasks = allRecords
-                                               .filter(r => r.type === 'Task' && r.parentId === j.id)
-                                               .sort((a, b) => (a.order || 0) - (b.order || 0))
-                                               .map(t => ({
-                                                   id: t.id,
-                                                   name: t.name,
-                                                   displayName: t.displayName || t.name,
-                                                   state: t.state,
-                                                   result: t.result,
-                                                   startTime: t.startTime || null,
-                                                   finishTime: t.finishTime || null,
-                                                   logId: t.log ? t.log.id : null
-                                               }));
-                                           return {
-                                               id: j.id,
-                                               name: j.name,
-                                               displayName: j.displayName || j.name,
-                                               state: j.state,
-                                               result: j.result,
-                                               startTime: j.startTime || null,
-                                               finishTime: j.finishTime || null,
-                                               steps: jobTasks
-                                           };
-                                       });
+                                    }).sort((a, b) => (a.order || 0) - (b.order || 0))
+                                        .map(j => {
+                                            const jobTasks = allRecords
+                                                .filter(r => r.type === 'Task' && r.parentId === j.id)
+                                                .sort((a, b) => (a.order || 0) - (b.order || 0))
+                                                .map(t => ({
+                                                    id: t.id,
+                                                    name: t.name,
+                                                    displayName: t.displayName || t.name,
+                                                    state: t.state,
+                                                    result: t.result,
+                                                    startTime: t.startTime || null,
+                                                    finishTime: t.finishTime || null,
+                                                    logId: t.log ? t.log.id : null
+                                                }));
+                                            return {
+                                                id: j.id,
+                                                name: j.name,
+                                                displayName: j.displayName || j.name,
+                                                state: j.state,
+                                                result: j.result,
+                                                startTime: j.startTime || null,
+                                                finishTime: j.finishTime || null,
+                                                steps: jobTasks
+                                            };
+                                        });
 
                                     return {
                                         id: stage.id,
@@ -2701,12 +2697,12 @@ const appController = {
 
                                 const urlInProgress = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${app.pipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=InProgress&$top=1&api-version=7.1`;
                                 const urlNotStarted = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${app.pipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=NotStarted&$top=1&api-version=7.1`;
-                                const urlCompleted  = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${app.pipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=Completed&$top=1&api-version=7.1`;
+                                const urlCompleted = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${app.pipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=Completed&$top=1&api-version=7.1`;
 
                                 const [resInProgress, resNotStarted, resCompleted] = await Promise.all([
                                     axios.get(urlInProgress, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(() => ({ data: { value: [] } })),
                                     axios.get(urlNotStarted, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(() => ({ data: { value: [] } })),
-                                    axios.get(urlCompleted,  { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(() => ({ data: { value: [] } }))
+                                    axios.get(urlCompleted, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(() => ({ data: { value: [] } }))
                                 ]);
 
                                 const builds = [
@@ -2808,28 +2804,28 @@ const appController = {
                                                     const parentPhase = phases.find(p => p.id === job.parentId);
                                                     return parentPhase && parentPhase.parentId === stage.id;
                                                 }).sort((a, b) => (a.order || 0) - (b.order || 0))
-                                                  .map(j => ({
-                                                    id: j.id,
-                                                    name: j.name,
-                                                    displayName: j.displayName || j.name,
-                                                    state: j.state,
-                                                    result: j.result,
-                                                    startTime: j.startTime || null,
-                                                    finishTime: j.finishTime || null,
-                                                    steps: allRecords
-                                                        .filter(r => r.type === 'Task' && r.parentId === j.id)
-                                                        .sort((a, b) => (a.order || 0) - (b.order || 0))
-                                                        .map(t => ({
-                                                            id: t.id,
-                                                            name: t.name,
-                                                            displayName: t.displayName || t.name,
-                                                            state: t.state,
-                                                            result: t.result,
-                                                            startTime: t.startTime || null,
-                                                            finishTime: t.finishTime || null,
-                                                            logId: t.log ? t.log.id : null
-                                                        }))
-                                                }));
+                                                    .map(j => ({
+                                                        id: j.id,
+                                                        name: j.name,
+                                                        displayName: j.displayName || j.name,
+                                                        state: j.state,
+                                                        result: j.result,
+                                                        startTime: j.startTime || null,
+                                                        finishTime: j.finishTime || null,
+                                                        steps: allRecords
+                                                            .filter(r => r.type === 'Task' && r.parentId === j.id)
+                                                            .sort((a, b) => (a.order || 0) - (b.order || 0))
+                                                            .map(t => ({
+                                                                id: t.id,
+                                                                name: t.name,
+                                                                displayName: t.displayName || t.name,
+                                                                state: t.state,
+                                                                result: t.result,
+                                                                startTime: t.startTime || null,
+                                                                finishTime: t.finishTime || null,
+                                                                logId: t.log ? t.log.id : null
+                                                            }))
+                                                    }));
                                                 return {
                                                     id: stage.id,
                                                     name: stage.name,
@@ -3038,7 +3034,7 @@ const appController = {
                         try {
                             const fullEnv = await containerClient.managedEnvironments.get(resourceGroup, env.name);
                             subnetId = fullEnv.vnetConfiguration?.infrastructureSubnetId || fullEnv.properties?.vnetConfiguration?.infrastructureSubnetId;
-                        } catch (e) {}
+                        } catch (e) { }
                     }
                     if (subnetId) {
                         envSubnetMap.set(env.id.toLowerCase(), subnetId);
@@ -3314,7 +3310,7 @@ const appController = {
                     .filter(Boolean)
                     .map(url => url.toLowerCase().replace(/\/$/, '').replace(/\.git$/, ''))
                 )];
-                
+
                 await Promise.all(uniqueRepos.map(async (normalizedUrl) => {
                     try {
                         const githubRepo = normalizedUrl.replace('https://github.com/', '');
@@ -3325,7 +3321,7 @@ const appController = {
                     }
                 }));
             }
-            
+
             // Reuses repoHasGithubActionsMap resolved at start
 
             // 5. Sync scanned apps with applications database and cross-reference discovered credentials
@@ -3348,7 +3344,7 @@ const appController = {
                                 ? JSON.parse(existing[0].azure_resource_details)
                                 : existing[0].azure_resource_details;
                             dbBranch = details?.branch || null;
-                        } catch (e) {}
+                        } catch (e) { }
                     }
                 }
                 app.branch = app.branch || dbBranch;
@@ -3386,21 +3382,21 @@ const appController = {
                     if (!r.data || !app.hostname) return false;
                     const rData = r.data.toLowerCase();
                     const appHost = app.hostname.toLowerCase();
-                    
+
                     if (rData === appHost || rData === `${appHost}.` || appHost.includes(rData)) {
                         return true;
                     }
-                    
+
                     if (app.type === 'backend' && rData.includes('cloudfront.net')) {
                         const cleanRecordHost = r.name.toLowerCase().replace('.', '-');
                         const cleanAppName = app.name.toLowerCase();
-                        
+
                         const recordWords = cleanRecordHost.split('-');
                         const appWords = cleanAppName.split('-');
-                        
-                        const isMatch = recordWords.every(w => cleanAppName.includes(w)) && 
-                                        appWords.filter(w => !['prod', 'api', 'dev', 'qa'].includes(w))
-                                                .every(w => cleanRecordHost.includes(w));
+
+                        const isMatch = recordWords.every(w => cleanAppName.includes(w)) &&
+                            appWords.filter(w => !['prod', 'api', 'dev', 'qa'].includes(w))
+                                .every(w => cleanRecordHost.includes(w));
                         if (isMatch) return true;
                     }
                     return false;
@@ -3429,10 +3425,10 @@ const appController = {
                 // Find matching Azure DevOps Pipeline ID
                 let matchedPipelineId = null;
                 let matchedPipelineName = null;
-                
+
                 // Do not map pipelines to development VMs (e.g. estevia-ml-cpu-vm-dev or mock estevia-ml-vm-dev)
                 const isDevVm = app.type === 'vm' && (app.name.toLowerCase().includes('-dev') || app.name.toLowerCase().includes('dev'));
-                
+
                 // Try repository matching first (100% accurate)
                 let matchingPipeline = null;
                 if (!isDevVm && app.repositoryUrl) {
@@ -3442,17 +3438,17 @@ const appController = {
                         return repoFullName && repoFullName.toLowerCase() === cleanAppRepo;
                     });
                 }
-                
+
                 // Fallback to name-based heuristics if no repo matches
                 if (!isDevVm && !matchingPipeline) {
                     matchingPipeline = devopsPipelines.find(p => {
                         const pName = p.name.toLowerCase();
                         const cleanAppName = app.name.toLowerCase();
-                        
+
                         const ownerPrefix = githubOwner.toLowerCase().replace('-techsolutions', '').replace('-solutions', '').split('-')[0];
                         const baseApp = cleanAppName.replace(new RegExp(`^${ownerPrefix}-`), '').replace('-swa', '').replace('-dev', '').replace('-qa', '').replace('-prod', '').replace('-api', '').replace('-frontend', '');
                         const basePipeline = pName.replace('-pipeline', '').replace('-ci-cd', '').replace('-frontend', '').replace('-backend', '').replace('-api', '');
-                        
+
                         if (baseApp && basePipeline && (baseApp === basePipeline || baseApp.includes(basePipeline) || basePipeline.includes(baseApp))) {
                             return true;
                         }
@@ -3495,7 +3491,7 @@ const appController = {
                         }
                         repoHasGithubActionsMap.set(normalizedUrl, hasActions);
                     }
-                    
+
                     const hasGithubActions = repoHasGithubActionsMap.get(normalizedUrl) || (existing.length > 0 && existing[0].pipeline_id && String(existing[0].pipeline_id).startsWith('github-actions'));
                     if (hasGithubActions) {
                         const githubRepo = normalizedUrl.replace('https://github.com/', '');
@@ -3601,20 +3597,20 @@ const appController = {
                     try {
                         const cleanDevopsUrl = (orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
                         const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
-                        
+
                         const resolvedBranch = appController._resolveBranchFromAppName(app.name, app.branches || [], app.branch);
                         const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
 
                         // Fetch InProgress, NotStarted, and Completed in parallel due to Azure DevOps API limitation
                         const urlInProgress = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=InProgress&$top=1&api-version=7.1`;
                         const urlNotStarted = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=NotStarted&$top=1&api-version=7.1`;
-                        const urlCompleted  = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=Completed&$top=1&api-version=7.1`;
+                        const urlCompleted = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${matchedPipelineId}&branchName=${encodeURIComponent(resolvedBranch)}&statusFilter=Completed&$top=1&api-version=7.1`;
 
                         console.log(`[AppController] Fetching runs in parallel for pipeline ${matchedPipelineId} branch ${resolvedBranch}`);
                         const [resInProgress, resNotStarted, resCompleted] = await Promise.all([
                             axios.get(urlInProgress, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(e => { console.warn(`[AppController] Failed to fetch InProgress builds: ${e.message}`); return { data: { value: [] } }; }),
                             axios.get(urlNotStarted, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(e => { console.warn(`[AppController] Failed to fetch NotStarted builds: ${e.message}`); return { data: { value: [] } }; }),
-                            axios.get(urlCompleted,  { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(e => { console.warn(`[AppController] Failed to fetch Completed builds: ${e.message}`); return { data: { value: [] } }; })
+                            axios.get(urlCompleted, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 5000 }).catch(e => { console.warn(`[AppController] Failed to fetch Completed builds: ${e.message}`); return { data: { value: [] } }; })
                         ]);
 
                         const builds = [
@@ -3653,50 +3649,50 @@ const appController = {
 
                                 if (tlRes.data && Array.isArray(tlRes.data.records)) {
                                     const allRecords = tlRes.data.records;
-                                    
+
                                     // Find stages
                                     const stages = allRecords
                                         .filter(r => r.type === 'Stage')
                                         .sort((a, b) => (a.order || 0) - (b.order || 0));
-                                    
+
                                     // Find jobs and phases
                                     const jobs = allRecords.filter(r => r.type === 'Job');
                                     const phases = allRecords.filter(r => r.type === 'Phase');
-                                    
+
                                     const stageRecords = stages.map(stage => {
                                         // Find jobs belonging to this stage
                                         const stageJobs = jobs.filter(job => {
                                             if (job.parentId === stage.id) return true;
-                                            
+
                                             // Check if parent is a phase belonging to this stage
                                             const parentPhase = phases.find(p => p.id === job.parentId);
                                             return parentPhase && parentPhase.parentId === stage.id;
-                                         }).sort((a, b) => (a.order || 0) - (b.order || 0))
-                                           .map(j => {
-                                               const jobTasks = allRecords
-                                                   .filter(r => r.type === 'Task' && r.parentId === j.id)
-                                                   .sort((a, b) => (a.order || 0) - (b.order || 0))
-                                                   .map(t => ({
-                                                       id: t.id,
-                                                       name: t.name,
-                                                       displayName: t.displayName || t.name,
-                                                       state: t.state,
-                                                       result: t.result,
-                                                       startTime: t.startTime || null,
-                                                       finishTime: t.finishTime || null,
-                                                       logId: t.log ? t.log.id : null
-                                                   }));
-                                               return {
-                                                   id: j.id,
-                                                   name: j.name,
-                                                   displayName: j.displayName || j.name,
-                                                   state: j.state,       // waiting | inProgress | completed
-                                                   result: j.result,     // succeeded | failed | canceled | skipped | null
-                                                   startTime: j.startTime || null,
-                                                   finishTime: j.finishTime || null,
-                                                   steps: jobTasks
-                                               };
-                                           });
+                                        }).sort((a, b) => (a.order || 0) - (b.order || 0))
+                                            .map(j => {
+                                                const jobTasks = allRecords
+                                                    .filter(r => r.type === 'Task' && r.parentId === j.id)
+                                                    .sort((a, b) => (a.order || 0) - (b.order || 0))
+                                                    .map(t => ({
+                                                        id: t.id,
+                                                        name: t.name,
+                                                        displayName: t.displayName || t.name,
+                                                        state: t.state,
+                                                        result: t.result,
+                                                        startTime: t.startTime || null,
+                                                        finishTime: t.finishTime || null,
+                                                        logId: t.log ? t.log.id : null
+                                                    }));
+                                                return {
+                                                    id: j.id,
+                                                    name: j.name,
+                                                    displayName: j.displayName || j.name,
+                                                    state: j.state,       // waiting | inProgress | completed
+                                                    result: j.result,     // succeeded | failed | canceled | skipped | null
+                                                    startTime: j.startTime || null,
+                                                    finishTime: j.finishTime || null,
+                                                    steps: jobTasks
+                                                };
+                                            });
 
                                         return {
                                             id: stage.id,
@@ -3922,12 +3918,12 @@ const appController = {
      */
     provisionApp: async (req, res) => {
         try {
-            const { 
-                organizationId, 
-                name, 
-                type, 
-                location, 
-                githubRepo, 
+            const {
+                organizationId,
+                name,
+                type,
+                location,
+                githubRepo,
                 resourceGroup: customResourceGroup,
                 managedEnvironment,
                 cpu,
@@ -4010,7 +4006,7 @@ const appController = {
             } else {
                 appId = existing[0].id;
                 await db.query(
-                    'UPDATE applications SET status = ?, repo_url = ?, app_type = ? WHERE id = ?', 
+                    'UPDATE applications SET status = ?, repo_url = ?, app_type = ? WHERE id = ?',
                     ['provisioning', repoUrl || existing[0].repo_url || '', type, appId]
                 );
             }
@@ -4057,13 +4053,13 @@ const appController = {
             } else if (type === 'backend') {
                 const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
                 console.log(`[AppController] Provisioning Container App: ${name} in ${targetLocation} under RG: ${targetResourceGroup}...`);
-                
+
                 // If a managed environment resource ID is not supplied, build or resolve it
                 const devEnv = orgSettings.dev_managed_env_id || `/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.App/managedEnvironments/${organizationId}-dev-env`;
                 const prodEnv = orgSettings.prod_managed_env_id || `/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.App/managedEnvironments/${organizationId}-prod-env`;
                 const defaultEnv = (name.toLowerCase().includes('prod') || name.toLowerCase().includes('production')) ? prodEnv : devEnv;
                 const selectedEnvId = managedEnvironment || defaultEnv;
-                
+
                 const targetPortVal = parseInt(req.body.targetPort || 5005, 10);
 
                 const containerAppEnvelope = {
@@ -4132,7 +4128,7 @@ const appController = {
                     const token = tokenRes.token;
 
                     const dnsPrefix = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-                    
+
                     const agentPool = {
                         name: "agentpool",
                         count: parseInt(nodeCount || 3, 10),
@@ -4155,7 +4151,7 @@ const appController = {
                     };
 
                     const putUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${targetResourceGroup}/providers/Microsoft.ContainerService/managedClusters/${name}?api-version=2023-08-01`;
-                    
+
                     const putRes = await axios.put(putUrl, aksEnvelope, {
                         headers: {
                             'Authorization': `Bearer ${token}`,
@@ -4426,14 +4422,14 @@ const appController = {
 
             if (conflictingApp) {
                 console.log(`[AppController] Found conflicting domain mapping for ${customDomainName} on app ${conflictingApp.name}. Unlinking first.`);
-                
+
                 if (conflictingApp.app_type === 'frontend') {
                     try {
                         const credential = await getAzureCredential(organizationId);
                         const webClient = new WebSiteManagementClient(credential, subscriptionId);
-                        
+
                         console.log(`[AppController] Calling Azure to delete custom domain '${customDomainName}' from Static Web App '${conflictingApp.name}'`);
-                        
+
                         if (typeof webClient.staticSites.beginDeleteStaticSiteCustomDomainAndWait === 'function') {
                             await webClient.staticSites.beginDeleteStaticSiteCustomDomainAndWait(resourceGroup, conflictingApp.name, customDomainName);
                         } else if (typeof webClient.staticSites.deleteStaticSiteCustomDomain === 'function') {
@@ -4459,7 +4455,7 @@ const appController = {
             // Update GoDaddy DNS record
             const godaddyUrl = `https://api.godaddy.com/v1/domains/${targetDomain}/records/CNAME/${subdomain}`;
             const body = [{ data: azureDetails.hostname, ttl: 3600 }];
-            
+
             console.log(`[AppController] Updating GoDaddy CNAME: ${subdomain}.${targetDomain} -> ${azureDetails.hostname}`);
             await axios.put(godaddyUrl, body, {
                 headers: {
@@ -4559,13 +4555,13 @@ const appController = {
                 } catch (e) {
                     hasDockerfile = false;
                 }
-                
+
                 if (!hasDockerfile) {
-                    return res.json({ 
-                        exists: false, 
-                        code: 'DOCKERFILE_MISSING', 
+                    return res.json({
+                        exists: false,
+                        code: 'DOCKERFILE_MISSING',
                         message: `Dockerfile was not found in the repository "${githubRepo}" on branch "${branch || 'main'}". A Dockerfile is required to build the container image for Azure Container Apps.`,
-                        githubRepo 
+                        githubRepo
                     });
                 }
             }
@@ -4592,7 +4588,7 @@ const appController = {
     async _checkYmlExists(githubToken, githubRepo, branch = 'main', organizationId, pipelineProvider = 'azure_devops') {
         const isGitHubAction = pipelineProvider === 'github_actions';
         let filePath = isGitHubAction ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
-        
+
         // If GitHub actions, first try dynamically discovering workflow files
         if (isGitHubAction) {
             try {
@@ -4633,7 +4629,7 @@ const appController = {
                 // Try fallback to check other provider
                 const fallbackProvider = pipelineProvider === 'github_actions' ? 'azure_devops' : 'github_actions';
                 let fallbackPath = fallbackProvider === 'github_actions' ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
-                
+
                 if (fallbackProvider === 'github_actions') {
                     try {
                         const listUrl = `https://api.github.com/repos/${githubRepo}/contents/.github/workflows?ref=${encodeURIComponent(branch)}`;
@@ -4656,7 +4652,7 @@ const appController = {
                         // ignore and use fallbackPath
                     }
                 }
-                
+
                 const fallbackUrl = `https://api.github.com/repos/${githubRepo}/contents/${fallbackPath}?ref=${encodeURIComponent(branch)}`;
                 try {
                     const fallbackRes = await axios.get(fallbackUrl, {
@@ -4884,7 +4880,7 @@ const appController = {
         // 5. Determine product-specific API URL suffix (e.g. peoplecraft-api for Peoplecraft)
         let apiSubdomainPrefix = 'api';
         const prefix = repoShortName.split('-')[0].toLowerCase();
-        
+
         if (prefix !== 'estevia' && prefix !== 'connecthub' && prefix !== 'docai' && prefix !== 'evafusion' && prefix !== 'protrack' && prefix !== 'talenthq') {
             try {
                 const [backends] = await db.query(
@@ -4936,7 +4932,7 @@ const appController = {
         if (isBackend) {
             // BACKEND CONTAINER APP (ACA) PIPELINE
             const appNameLower = repoShortName.toLowerCase();
-            
+
             let backendSyncUrlScript = [];
             let bSyncIfCond = 'if';
             if (hasMain) {
@@ -4996,11 +4992,11 @@ const appController = {
             let notInList = [];
             if (hasMain) notInList.push("'main'");
             if (hasQa) notInList.push("'qa'");
-            
-            const devCondition = notInList.length > 0 
+
+            const devCondition = notInList.length > 0
                 ? `  \${{ if not(in(variables['Build.SourceBranchName'], ${notInList.join(', ')})) }}:`
                 : "  ${{ if true }}:";
-                
+
             backendVars.push(
                 devCondition,
                 "    environment: 'development'",
@@ -5122,10 +5118,10 @@ const appController = {
         }
 
         const buildDir = customAppLocation ? customAppLocation.replace(/^\//, '').replace(/\/$/, '') : '';
-        const appLocation = customOutputLocation 
+        const appLocation = customOutputLocation
             ? (buildDir ? `${buildDir}/${customOutputLocation}` : customOutputLocation)
             : (buildDir ? `${buildDir}/${defaultOutput}` : defaultOutput);
-        
+
         const apiLocation = customApiLocation ? customApiLocation.replace(/^\//, '').replace(/\/$/, '') : '';
 
         let frontendSyncUrlScript = [];
@@ -5162,7 +5158,7 @@ const appController = {
         let bashTokenScript = [
             '        BRANCH_NAME="$(Build.SourceBranchName)"'
         ];
-        
+
         let ifCond = 'if';
         if (hasMain) {
             bashTokenScript.push(`        ${ifCond} [ "$BRANCH_NAME" = "main" ]; then`);
@@ -5540,7 +5536,7 @@ const appController = {
                             } else if (lowerName.includes('dev') || lowerName.includes('development')) {
                                 envSuffix = 'DEV';
                             }
-                            
+
                             const varName = `${repoShortName.toUpperCase().replace(/-/g, '_')}_SWA_TOKEN_${envSuffix}`;
                             console.log(`[AppController] Syncing ${varName} to Azure DevOps variable group ${pipelineVarGroup}...`);
                             await appController._updateDevOpsVariableGroup(
@@ -5607,16 +5603,16 @@ const appController = {
             });
             if (devRes.data && Array.isArray(devRes.data.value)) {
                 // Find by name or ID
-                const endpoint = devRes.data.value.find(e => 
-                    e.id === connectionNameOrId || 
+                const endpoint = devRes.data.value.find(e =>
+                    e.id === connectionNameOrId ||
                     e.name?.toLowerCase() === connectionNameOrId.toLowerCase()
                 );
                 if (endpoint) {
                     // Extract SPN object ID
                     const spObjectId = endpoint.servicePrincipalObjectId ||
-                                       endpoint.authorization?.parameters?.servicePrincipalObjectId ||
-                                       endpoint.properties?.servicePrincipalObjectId ||
-                                       endpoint.authorization?.parameters?.serviceprincipalid;
+                        endpoint.authorization?.parameters?.servicePrincipalObjectId ||
+                        endpoint.properties?.servicePrincipalObjectId ||
+                        endpoint.authorization?.parameters?.serviceprincipalid;
                     console.log(`[AppController] Found service connection ${connectionNameOrId} principal ID: ${spObjectId}`);
                     return spObjectId;
                 }
@@ -5637,7 +5633,7 @@ const appController = {
             if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId)) {
                 return clientId;
             }
-            
+
             const orgSettings = await appController._getOrgSettings(organizationId);
             const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
             const credential = await getAzureCredential(organizationId);
@@ -5883,10 +5879,10 @@ const appController = {
             res.json({ success: true, logs: response.data });
         } catch (error) {
             console.error('[AppController] getPipelineLogs failed:', error.message);
-            res.status(500).json({ 
-                success: false, 
-                message: 'Failed to fetch build task logs from Azure DevOps.', 
-                error: error.message 
+            res.status(500).json({
+                success: false,
+                message: 'Failed to fetch build task logs from Azure DevOps.',
+                error: error.message
             });
         }
     },
@@ -6037,31 +6033,31 @@ const appController = {
                             const parentPhase = phases.find(p => p.id === job.parentId);
                             return parentPhase && parentPhase.parentId === stage.id;
                         }).sort((a, b) => (a.order || 0) - (b.order || 0))
-                          .map(j => {
-                              const jobTasks = allRecords
-                                  .filter(r => r.type === 'Task' && r.parentId === j.id)
-                                  .sort((a, b) => (a.order || 0) - (b.order || 0))
-                                  .map(t => ({
-                                      id: t.id,
-                                      name: t.name,
-                                      displayName: t.displayName || t.name,
-                                      state: t.state,
-                                      result: t.result,
-                                      startTime: t.startTime || null,
-                                      finishTime: t.finishTime || null,
-                                      logId: t.log ? t.log.id : null
-                                  }));
-                              return {
-                                  id: j.id,
-                                  name: j.name,
-                                  displayName: j.displayName || j.name,
-                                  state: j.state,
-                                  result: j.result,
-                                  startTime: j.startTime || null,
-                                  finishTime: j.finishTime || null,
-                                  steps: jobTasks
-                              };
-                          });
+                            .map(j => {
+                                const jobTasks = allRecords
+                                    .filter(r => r.type === 'Task' && r.parentId === j.id)
+                                    .sort((a, b) => (a.order || 0) - (b.order || 0))
+                                    .map(t => ({
+                                        id: t.id,
+                                        name: t.name,
+                                        displayName: t.displayName || t.name,
+                                        state: t.state,
+                                        result: t.result,
+                                        startTime: t.startTime || null,
+                                        finishTime: t.finishTime || null,
+                                        logId: t.log ? t.log.id : null
+                                    }));
+                                return {
+                                    id: j.id,
+                                    name: j.name,
+                                    displayName: j.displayName || j.name,
+                                    state: j.state,
+                                    result: j.result,
+                                    startTime: j.startTime || null,
+                                    finishTime: j.finishTime || null,
+                                    steps: jobTasks
+                                };
+                            });
 
                         return {
                             id: stage.id,
@@ -6082,10 +6078,10 @@ const appController = {
             res.json({ success: true, pipelineRun });
         } catch (error) {
             console.error('[AppController] getPipelineTimeline failed:', error.message);
-            res.status(500).json({ 
-                success: false, 
-                message: 'Failed to fetch pipeline build timeline.', 
-                error: error.message 
+            res.status(500).json({
+                success: false,
+                message: 'Failed to fetch pipeline build timeline.',
+                error: error.message
             });
         }
     },
@@ -6236,17 +6232,17 @@ const appController = {
 
             // Fetch latest 1 build for this pipeline definition, optionally filtered by branchName
             const branchFilter = branchName ? `&branchName=${encodeURIComponent(branchName)}` : '';
-            
+
             // Fetch InProgress, NotStarted, and Completed in parallel due to Azure DevOps API limitation
             const urlInProgress = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=InProgress&$top=10${branchFilter}&api-version=7.1`;
             const urlNotStarted = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=NotStarted&$top=10${branchFilter}&api-version=7.1`;
-            const urlCompleted  = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=Completed&$top=1${branchFilter}&api-version=7.1`;
+            const urlCompleted = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&statusFilter=Completed&$top=1${branchFilter}&api-version=7.1`;
 
             console.log(`[AppController] getLatestPipelineBuild: Fetching runs in parallel for pipeline ${pipelineId} branch ${branchName || 'all'}`);
             const [resInProgress, resNotStarted, resCompleted] = await Promise.all([
                 axios.get(urlInProgress, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 6000 }).catch(e => { console.warn(`[AppController] getLatestPipelineBuild: Failed to fetch InProgress: ${e.message}`); return { data: { value: [] } }; }),
                 axios.get(urlNotStarted, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 6000 }).catch(e => { console.warn(`[AppController] getLatestPipelineBuild: Failed to fetch NotStarted: ${e.message}`); return { data: { value: [] } }; }),
-                axios.get(urlCompleted,  { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 6000 }).catch(e => { console.warn(`[AppController] getLatestPipelineBuild: Failed to fetch Completed: ${e.message}`); return { data: { value: [] } }; })
+                axios.get(urlCompleted, { headers: { 'Authorization': authHeader, 'Accept': 'application/json' }, timeout: 6000 }).catch(e => { console.warn(`[AppController] getLatestPipelineBuild: Failed to fetch Completed: ${e.message}`); return { data: { value: [] } }; })
             ]);
 
             const allInProgress = resInProgress.data?.value || [];
@@ -6297,28 +6293,28 @@ const appController = {
                             const parentPhase = phases.find(p => p.id === job.parentId);
                             return parentPhase && parentPhase.parentId === stage.id;
                         }).sort((a, b) => (a.order || 0) - (b.order || 0))
-                          .map(j => ({
-                            id: j.id,
-                            name: j.name,
-                            displayName: j.displayName || j.name,
-                            state: j.state,
-                            result: j.result,
-                            startTime: j.startTime || null,
-                            finishTime: j.finishTime || null,
-                            steps: allRecords
-                                .filter(r => r.type === 'Task' && r.parentId === j.id)
-                                .sort((a, b) => (a.order || 0) - (b.order || 0))
-                                .map(t => ({
-                                    id: t.id,
-                                    name: t.name,
-                                    displayName: t.displayName || t.name,
-                                    state: t.state,
-                                    result: t.result,
-                                    startTime: t.startTime || null,
-                                    finishTime: t.finishTime || null,
-                                    logId: t.log ? t.log.id : null
-                                }))
-                        }));
+                            .map(j => ({
+                                id: j.id,
+                                name: j.name,
+                                displayName: j.displayName || j.name,
+                                state: j.state,
+                                result: j.result,
+                                startTime: j.startTime || null,
+                                finishTime: j.finishTime || null,
+                                steps: allRecords
+                                    .filter(r => r.type === 'Task' && r.parentId === j.id)
+                                    .sort((a, b) => (a.order || 0) - (b.order || 0))
+                                    .map(t => ({
+                                        id: t.id,
+                                        name: t.name,
+                                        displayName: t.displayName || t.name,
+                                        state: t.state,
+                                        result: t.result,
+                                        startTime: t.startTime || null,
+                                        finishTime: t.finishTime || null,
+                                        logId: t.log ? t.log.id : null
+                                    }))
+                            }));
                         return {
                             id: stage.id,
                             name: stage.name,
@@ -6427,7 +6423,7 @@ const appController = {
 
             const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
             const historyUrl = `${cleanDevopsUrl}/${devopsProject}/_apis/build/builds?definitions=${pipelineId}&$top=${top}&api-version=7.1`;
-            
+
             console.log(`[AppController] Fetching build history from: ${historyUrl}`);
             const historyRes = await axios.get(historyUrl, {
                 headers: { 'Authorization': authHeader, 'Accept': 'application/json' },
@@ -6435,7 +6431,7 @@ const appController = {
             });
 
             const builds = historyRes.data?.value || [];
-            
+
             const mappedBuilds = builds.map(b => {
                 const branchRaw = b.sourceBranch || '';
                 const branchShort = branchRaw.startsWith('refs/heads/') ? branchRaw.replace('refs/heads/', '') : branchRaw;
@@ -6459,10 +6455,10 @@ const appController = {
             res.json({ success: true, builds: mappedBuilds });
         } catch (error) {
             console.error('[AppController] getBuildHistory failed:', error.message);
-            res.status(500).json({ 
-                success: false, 
-                message: 'Failed to fetch build history.', 
-                error: error.message 
+            res.status(500).json({
+                success: false,
+                message: 'Failed to fetch build history.',
+                error: error.message
             });
         }
     },
@@ -6485,9 +6481,9 @@ const appController = {
             const isProductionBranch = ['main', 'master', 'prod', 'production'].includes(cleanBranchName.toLowerCase()) || cleanBranchName.toLowerCase().startsWith('release/');
 
             if (isProductionBranch && !['owner', 'admin'].includes(userRole)) {
-                return res.status(403).json({ 
-                    success: false, 
-                    message: `Forbidden: Only Administrator or Owner roles can re-deploy to production-related branch: ${cleanBranchName}.` 
+                return res.status(403).json({
+                    success: false,
+                    message: `Forbidden: Only Administrator or Owner roles can re-deploy to production-related branch: ${cleanBranchName}.`
                 });
             }
 
@@ -6516,7 +6512,7 @@ const appController = {
                 try {
                     const { sendTeamsNotification } = require('../utils/teamsNotifier');
                     const triggerUser = req.user?.name || req.user?.email || 'Unknown User';
-                    
+
                     await sendTeamsNotification(organizationId, {
                         title: '🔄 Application Re-deploy Triggered (GitHub Actions)',
                         text: `A workflow re-run has been triggered for repository **${repoPath}** run ID **${runId}**.`,
@@ -6538,9 +6534,9 @@ const appController = {
                     console.warn('[AppController] Failed to send Teams notification for re-deploy:', notifyErr.message);
                 }
 
-                return res.json({ 
-                    success: true, 
-                    message: `Re-deploy run successfully triggered.`, 
+                return res.json({
+                    success: true,
+                    message: `Re-deploy run successfully triggered.`,
                     buildId: buildId
                 });
             }
@@ -6580,7 +6576,7 @@ const appController = {
             try {
                 const { sendTeamsNotification } = require('../utils/teamsNotifier');
                 const triggerUser = req.user?.name || req.user?.email || 'Unknown User';
-                
+
                 await sendTeamsNotification(organizationId, {
                     title: '🔄 Application Re-deploy Triggered',
                     text: `A rollback / re-deploy has been triggered for pipeline definition ID **${pipelineId}**.`,
@@ -6604,18 +6600,18 @@ const appController = {
                 console.warn('[AppController] Failed to send Teams notification for re-deploy:', notifyErr.message);
             }
 
-            res.json({ 
-                success: true, 
-                message: `Re-deploy build successfully queued.`, 
+            res.json({
+                success: true,
+                message: `Re-deploy build successfully queued.`,
                 buildId: newBuild.id,
-                buildNumber: newBuild.buildNumber 
+                buildNumber: newBuild.buildNumber
             });
         } catch (error) {
             console.error('[AppController] reDeployBuild failed:', error.message);
-            res.status(500).json({ 
-                success: false, 
-                message: 'Failed to trigger re-deploy build on Azure DevOps.', 
-                error: error.message 
+            res.status(500).json({
+                success: false,
+                message: 'Failed to trigger re-deploy build on Azure DevOps.',
+                error: error.message
             });
         }
     },
@@ -6745,7 +6741,7 @@ const appController = {
 
             res.json({
                 success: true,
-                message: isGitHubAction 
+                message: isGitHubAction
                     ? `GitHub Actions pipeline registered successfully.`
                     : `Azure DevOps pipeline associated successfully.`,
                 pipelineId,
@@ -6767,14 +6763,14 @@ const appController = {
      */
     createPipelineYml: async (req, res) => {
         try {
-            const { 
-                organizationId, 
-                appName, 
-                githubRepo, 
-                devopsOrgUrl, 
-                devopsProject, 
-                branch, 
-                skipRegistration, 
+            const {
+                organizationId,
+                appName,
+                githubRepo,
+                devopsOrgUrl,
+                devopsProject,
+                branch,
+                skipRegistration,
                 customYml,
                 customAppLocation,
                 customApiLocation,
@@ -6817,11 +6813,11 @@ const appController = {
             const fileLabel = isGitHubAction ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
             console.log(`[AppController] Committing ${fileLabel} to ${githubRepo} (exists: ${ymlStatus.exists}) on branch ${branch || 'main'}...`);
             await appController._commitYmlToRepo(
-                githubToken, 
-                githubRepo, 
-                ymlStatus.sha, 
-                orgSettings, 
-                branch || 'main', 
+                githubToken,
+                githubRepo,
+                ymlStatus.sha,
+                orgSettings,
+                branch || 'main',
                 customYml,
                 customAppLocation,
                 customApiLocation,
@@ -7100,7 +7096,7 @@ const appController = {
                             headers: { 'Authorization': `sso-key ${godaddySecrets.apiKey}:${godaddySecrets.apiSecret}` }
                         });
                         if (Array.isArray(gdRes.data)) {
-                            const match = gdRes.data.find(r => 
+                            const match = gdRes.data.find(r =>
                                 r.data && (
                                     r.data.toLowerCase() === hostname.toLowerCase() ||
                                     r.data.toLowerCase() === `${hostname.toLowerCase()}.` ||
@@ -7233,7 +7229,7 @@ const appController = {
                 return res.status(400).json({ message: 'Missing organizationId query parameter.' });
             }
             const settings = await appController._getOrgSettings(organizationId);
-            
+
             const [[{ writeCount }]] = await db.query(
                 `SELECT COUNT(*) AS writeCount FROM users WHERE organization_id = ? AND status = 'active' AND role IN ('owner','admin','contributor') AND id NOT LIKE 'dev-bypass-%' AND id NOT LIKE 'admin-override-%' AND id <> 'dev-bypass-user-id'`,
                 [organizationId]
@@ -7267,7 +7263,7 @@ const appController = {
             if (!org) return res.status(404).json({ message: 'Organization not found.' });
 
             const currentTier = org.license_tier || 'growth';
-            const tierRank   = { growth: 1, enterprise: 2, sovereign: 3 };
+            const tierRank = { growth: 1, enterprise: 2, sovereign: 3 };
             const tierLimits = { growth: 5, enterprise: 25, sovereign: Infinity };
 
             if ((tierRank[targetTier] ?? 0) >= (tierRank[currentTier] ?? 0)) {
@@ -7284,14 +7280,14 @@ const appController = {
                 'SELECT name FROM applications WHERE organization_id = ? AND license_frozen = 0 ORDER BY created_at ASC',
                 [organizationId]
             );
-            const activeCount   = allApps.length;
-            const excess        = Math.max(0, activeCount - targetCap);
-            const frozenApps    = excess > 0 ? allApps.slice(targetCap).map(a => a.name) : [];
+            const activeCount = allApps.length;
+            const excess = Math.max(0, activeCount - targetCap);
+            const frozenApps = excess > 0 ? allApps.slice(targetCap).map(a => a.name) : [];
 
-            const allRules    = ['tagging', 'tls', 'network-security', 'https-only', 'containment', 'registry-auth', 'secrets-expiry', 'residency', 'shadow-it'];
-            const tierRules   = { growth: new Set(['tagging', 'tls', 'network-security']), enterprise: null, sovereign: null };
+            const allRules = ['tagging', 'tls', 'network-security', 'https-only', 'containment', 'registry-auth', 'secrets-expiry', 'residency', 'shadow-it'];
+            const tierRules = { growth: new Set(['tagging', 'tls', 'network-security']), enterprise: null, sovereign: null };
             const targetAllowed = tierRules[targetTier];
-            const willBeLocked  = targetAllowed ? allRules.filter(r => !targetAllowed.has(r)) : [];
+            const willBeLocked = targetAllowed ? allRules.filter(r => !targetAllowed.has(r)) : [];
 
             return res.json({
                 currentTier,
@@ -7299,14 +7295,14 @@ const appController = {
                 isDowngrade: true,
                 impact: {
                     environments: {
-                        current:        activeCount,
-                        cap:            targetCap === Infinity ? null : targetCap,
+                        current: activeCount,
+                        cap: targetCap === Infinity ? null : targetCap,
                         excess,
-                        willBeFrozen:   excess,
+                        willBeFrozen: excess,
                         frozenAppNames: frozenApps
                     },
                     rules: {
-                        currentlyActive:     allRules.length,
+                        currentlyActive: allRules.length,
                         allowedUnderNewTier: targetAllowed ? targetAllowed.size : allRules.length,
                         willBeLocked
                     },
@@ -7326,14 +7322,14 @@ const appController = {
      */
     updateOrgSettings: async (req, res) => {
         try {
-            const { 
-                organizationId, 
-                azureSubscriptionId, 
-                azureResourceGroup, 
-                defaultDnsDomain, 
-                azureDevopsOrgUrl, 
-                azureDevopsProject, 
-                pipelineVariableGroup, 
+            const {
+                organizationId,
+                azureSubscriptionId,
+                azureResourceGroup,
+                defaultDnsDomain,
+                azureDevopsOrgUrl,
+                azureDevopsProject,
+                pipelineVariableGroup,
                 githubOwner,
                 azureContainerRegistry,
                 azureDevopsServiceConnection,
@@ -7417,10 +7413,10 @@ const appController = {
                 'SELECT license_tier, operator_seats_limit FROM organizations WHERE id = ?',
                 [organizationId]
             );
-            const currentTier       = currentOrg?.license_tier || 'growth';
-            const tierRank          = { growth: 1, enterprise: 2, sovereign: 3 };
-            const isChangingTier    = licenseTier && licenseTier !== currentTier;
-            const isDowngrade       = isChangingTier && (tierRank[licenseTier] ?? 0) < (tierRank[currentTier] ?? 0);
+            const currentTier = currentOrg?.license_tier || 'growth';
+            const tierRank = { growth: 1, enterprise: 2, sovereign: 3 };
+            const isChangingTier = licenseTier && licenseTier !== currentTier;
+            const isDowngrade = isChangingTier && (tierRank[licenseTier] ?? 0) < (tierRank[currentTier] ?? 0);
 
             // Gate 1: Only owner or admin can change tier
             if (isChangingTier && req.user?.role !== 'owner' && req.user?.role !== 'admin') {
@@ -7500,11 +7496,11 @@ const appController = {
                                         themeColor: 'FF4444',
                                         text: `EvaOps subscription tier for **${organizationId}** has been downgraded.`,
                                         facts: [
-                                            { name: 'Downgraded By',      value: req.user?.email || 'System' },
-                                            { name: 'Previous Tier',      value: currentTier.toUpperCase() },
-                                            { name: 'New Tier',           value: licenseTier.toUpperCase() },
-                                            { name: 'Environments Frozen',value: String(frozenCount) },
-                                            { name: 'Timestamp',          value: new Date().toISOString() }
+                                            { name: 'Downgraded By', value: req.user?.email || 'System' },
+                                            { name: 'Previous Tier', value: currentTier.toUpperCase() },
+                                            { name: 'New Tier', value: licenseTier.toUpperCase() },
+                                            { name: 'Environments Frozen', value: String(frozenCount) },
+                                            { name: 'Timestamp', value: new Date().toISOString() }
                                         ]
                                     });
                                 }
@@ -7687,11 +7683,11 @@ const appController = {
                     'UPDATE organizations SET log_analytics_workspace_id = ?, prod_log_analytics_workspace_id = ? WHERE id = ?',
                     [devWorkspaceId, prodWorkspaceId, organizationId]
                 );
-                return res.json({ 
-                    success: true, 
-                    message: 'Log Analytics Workspaces discovered successfully.', 
-                    workspaceId: devWorkspaceId, 
-                    prodWorkspaceId: prodWorkspaceId 
+                return res.json({
+                    success: true,
+                    message: 'Log Analytics Workspaces discovered successfully.',
+                    workspaceId: devWorkspaceId,
+                    prodWorkspaceId: prodWorkspaceId
                 });
             } else {
                 return res.status(404).json({ success: false, message: 'No Container App Managed Environments found in resource group to discover workspace from.' });
@@ -7746,7 +7742,7 @@ const appController = {
             const token = tokenRes.token;
             const url = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.DBforMySQL/flexibleServers?api-version=2021-05-01`;
             const response = await axios.get(url, {
-                headers: { 
+                headers: {
                     'Authorization': `Bearer ${token}`,
                     'User-Agent': getUserAgent('discovery')
                 }
@@ -7865,8 +7861,8 @@ const appController = {
                 projectId = projRes.data.id;
             } catch (projErr) {
                 console.error('[AppController] Failed to retrieve Azure DevOps Project ID:', projErr.response?.data || projErr.message);
-                return res.status(400).json({ 
-                    success: false, 
+                return res.status(400).json({
+                    success: false,
                     message: `Failed to find Azure DevOps project '${devopsProject}': ` + (projErr.response?.data?.message || projErr.message)
                 });
             }
@@ -7889,21 +7885,21 @@ const appController = {
 
             try {
                 const hookRes = await axios.post(hookUrl, payload, {
-                    headers: { 
+                    headers: {
                         'Authorization': `Basic ${basicAuth}`,
                         'Content-Type': 'application/json'
                     }
                 });
                 console.log(`[AppController] Service Hook created successfully:`, hookRes.data.id);
-                res.json({ 
-                    success: true, 
-                    message: `Successfully registered Build Completed Service Hook in Azure DevOps project '${devopsProject}'!` 
+                res.json({
+                    success: true,
+                    message: `Successfully registered Build Completed Service Hook in Azure DevOps project '${devopsProject}'!`
                 });
             } catch (hookErr) {
                 console.error('[AppController] Failed to create DevOps Service Hook:', hookErr.response?.data || hookErr.message);
-                res.status(400).json({ 
-                    success: false, 
-                    message: 'Failed to create Service Hook subscription in Azure DevOps: ' + (hookErr.response?.data?.message || hookErr.message) 
+                res.status(400).json({
+                    success: false,
+                    message: 'Failed to create Service Hook subscription in Azure DevOps: ' + (hookErr.response?.data?.message || hookErr.message)
                 });
             }
         } catch (error) {
@@ -8023,13 +8019,13 @@ const appController = {
             if (!githubToken) {
                 return res.status(400).json({ message: 'GitHub integration token not found.' });
             }
-            
+
             const isGitHubAction = pipelineProvider === 'github_actions';
             const defaultPath = isGitHubAction ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
             const resolvedPath = filePath || defaultPath;
             const branchName = branch || 'main';
             const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/${resolvedPath}?ref=${encodeURIComponent(branchName)}`;
-            
+
             try {
                 const response = await axios.get(contentsUrl, {
                     headers: {
@@ -8039,12 +8035,12 @@ const appController = {
                     },
                     timeout: 8000
                 });
-                
+
                 if (response.data && response.data.content) {
                     const decodedYml = Buffer.from(response.data.content, 'base64').toString('utf-8');
                     return res.json({ success: true, exists: true, content: decodedYml, sha: response.data.sha });
                 }
-                
+
                 return res.json({ success: true, exists: false, content: '' });
             } catch (err) {
                 if (err.response && err.response.status === 404) {
@@ -8071,7 +8067,7 @@ const appController = {
             if (!organizationId || !githubRepo) {
                 return res.status(400).json({ message: 'Missing organizationId or githubRepo parameters.' });
             }
-            
+
             const orgSettings = await appController._getOrgSettings(organizationId);
 
             let githubToken = null;
@@ -8196,19 +8192,19 @@ const appController = {
             }
 
             const organizationId = req.body.organizationId || req.user?.organization_id || 'estevia';
-            
+
             // Fetch dynamic resource details and optimization suggestions using unified helper
             const costData = await appController._getCostAndOptimizationData(organizationId);
             const detailedCosts = costData.detailedCosts || [];
             const suggestions = costData.suggestions || [];
-            
+
             const frontends = detailedCosts.filter(a => a.type === 'frontend');
             const backends = detailedCosts.filter(a => a.type === 'backend');
             const databases = detailedCosts.filter(a => a.type === 'database');
             const vms = detailedCosts.filter(a => a.type === 'vm');
 
             const resourceSummary = detailedCosts.map(a => `${a.name} (${a.type}, status: ${a.status || 'active'})`).join(', ');
-            
+
             // Format active suggestions for system prompt
             const activeSuggestionsText = suggestions.length > 0
                 ? suggestions.map(s => `- ${s.recommendation} (saves $${s.savings.toFixed(2)}/mo, ID: ${s.id})`).join('\n')
@@ -8227,7 +8223,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             try {
                 const evaApiUrl = process.env.EVA_AI_API_URL || 'https://api.esteviatech.com/api/eva/v1/query/analyst';
                 const apiKey = process.env.EVA_AI_API_KEY || 'dummy-devops-platform-key-12345';
-                
+
                 const response = await axios.post(evaApiUrl, {
                     payload: {
                         prompt: systemPrompt,
@@ -8251,7 +8247,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
 
             if (!aiResponse) {
                 const q = question.toLowerCase();
-                
+
                 // Helper to retrieve dynamic savings from active suggestions list
                 const getSavings = (type, appName) => {
                     const found = suggestions.find(s => s.type === type && (!appName || s.appName?.toLowerCase() === appName.toLowerCase()));
@@ -8385,7 +8381,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 const sName = s.name.toLowerCase();
                 let resolvedHost = s.properties?.fullyQualifiedDomainName || `${s.name}.mysql.database.azure.com`;
                 let privateNetwork = s.properties?.network?.publicNetworkAccess === 'Disabled';
-                
+
                 if (sName.includes('dev')) {
                     resolvedHost = orgSettings.dev_db_host || resolvedHost;
                 } else if (sName.includes('qa')) {
@@ -8416,7 +8412,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         } catch (error) {
             console.error('[AppController] getDbServers failed:', error.message);
             const fallbackServers = [];
-            
+
             if (orgSettings.dev_db_host) {
                 fallbackServers.push({
                     id: 'db-server-dev',
@@ -8562,7 +8558,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     ssl: { require: true, rejectUnauthorized: false },
                     connectTimeout: 5000
                 });
-                
+
                 const [rows] = await conn.query('SHOW DATABASES');
                 await conn.end();
 
@@ -8607,14 +8603,14 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const token = tokenRes.token;
 
             const url = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.DBforMySQL/flexibleServers/${serverName}/databases/${dbName}?api-version=2021-05-01`;
-            
+
             await axios.put(url, {
                 properties: {
                     charset: 'utf8mb4',
                     collation: 'utf8mb4_unicode_ci'
                 }
             }, {
-                headers: { 
+                headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
                 }
@@ -8623,9 +8619,9 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             res.json({ success: true, message: `Database '${dbName}' deployed successfully on server '${serverName}'.` });
         } catch (error) {
             console.error('[AppController] provisionDatabase failed:', error.response?.data || error.message);
-            res.json({ 
-                success: true, 
-                message: `Database '${dbName}' deployed successfully on server '${serverName}' (Fallback Sandbox Mode).` 
+            res.json({
+                success: true,
+                message: `Database '${dbName}' deployed successfully on server '${serverName}' (Fallback Sandbox Mode).`
             });
         }
     },
@@ -8723,7 +8719,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const orgSettings = await appController._getOrgSettings(organizationId);
             const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
-            
+
             const conn = await mysql.createConnection({
                 host: resolvedHost,
                 user: process.env.DB_USER,
@@ -8736,7 +8732,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
 
             try {
                 const [results, fields] = await conn.query(query);
-                
+
                 // If results is an array, it's a SELECT / SHOW query returning rows
                 if (Array.isArray(results)) {
                     res.json({
@@ -8835,7 +8831,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                             id: r.id,
                             resourceGroup: rgName,
                             location: r.location,
-                            vnetName: envDetail.vnetConfiguration?.infrastructureSubnetId 
+                            vnetName: envDetail.vnetConfiguration?.infrastructureSubnetId
                                 ? envDetail.vnetConfiguration.infrastructureSubnetId.match(/\/virtualnetworks\/([^\/]+)/i)?.[1] || 'Custom VPC'
                                 : 'None (Public Cloud)'
                         });
@@ -9079,1525 +9075,1525 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 message: `Dockerfile committed successfully to "${githubRepo}" on branch "${branch || 'main'}"`
             });
         } catch (error) {
-      console.error('[AppController] createDockerfile failed:', error);
-      res.status(500).json({
-        message: 'Failed to commit Dockerfile.',
-        error: error.response?.data?.message || error.message
-      });
-    }
-  },
-
-  getDockerfile: async (req, res) => {
-    try {
-      const { organizationId, githubRepo, branch } = req.query;
-      if (!organizationId || !githubRepo) {
-        return res.status(400).json({ message: 'Missing organizationId or githubRepo parameters.' });
-      }
-      const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
-      const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
-      if (!githubToken) {
-        return res.status(400).json({ message: 'GitHub integration token not found.' });
-      }
-      
-      const branchName = branch || 'main';
-      const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/Dockerfile?ref=${encodeURIComponent(branchName)}`;
-      
-      try {
-        const response = await axios.get(contentsUrl, {
-          headers: {
-            'Authorization': `token ${githubToken}`,
-            'Accept': 'application/vnd.github.v3+json',
-            'User-Agent': getUserAgent(organizationId)
-          },
-          timeout: 8000
-        });
-        
-        if (response.data && response.data.content) {
-          const decodedDockerfile = Buffer.from(response.data.content, 'base64').toString('utf-8');
-          return res.json({ success: true, exists: true, content: decodedDockerfile, sha: response.data.sha });
+            console.error('[AppController] createDockerfile failed:', error);
+            res.status(500).json({
+                message: 'Failed to commit Dockerfile.',
+                error: error.response?.data?.message || error.message
+            });
         }
-        
-        return res.json({ success: true, exists: false, content: '' });
-      } catch (err) {
-        if (err.response && err.response.status === 404) {
-          return res.json({ success: true, exists: false, content: '' });
-        }
-        throw err;
-      }
-    } catch (error) {
-      console.error('[AppController] getDockerfile failed:', error);
-      if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-        return res.status(400).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
-      }
-      res.status(500).json({ message: 'Failed to fetch Dockerfile.', error: error.message });
-    }
-  },
+    },
 
-  /**
-   * PUT /api/apps/update-dockerfile
-   * Push custom Dockerfile content to GitHub (create or update)
-   */
-  updateDockerfile: async (req, res) => {
-    try {
-      const { organizationId, githubRepo, branch, content, commitMessage } = req.body;
-      if (!organizationId || !githubRepo || !content) {
-        return res.status(400).json({ message: 'Missing organizationId, githubRepo, or content.' });
-      }
-
-      const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
-      const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
-      if (!githubToken) {
-        return res.status(400).json({ message: 'GitHub integration token not found for organization.' });
-      }
-
-      const branchName = branch || 'main';
-      const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/Dockerfile`;
-
-      // Fetch existing SHA so GitHub allows the update
-      let existingSha = null;
-      try {
-        const checkRes = await axios.get(`${contentsUrl}?ref=${encodeURIComponent(branchName)}`, {
-          headers: {
-            'Authorization': `token ${githubToken}`,
-            'Accept': 'application/vnd.github.v3+json',
-            'User-Agent': getUserAgent(organizationId)
-          }
-        });
-        if (checkRes.data && checkRes.data.sha) existingSha = checkRes.data.sha;
-      } catch (e) {
-        // File doesn't exist yet — will create it
-      }
-
-      // Validate Dockerfile before committing (server-side gate)
-      const dockerValidation = _validateDockerfile(content);
-      if (!dockerValidation.valid) {
-          return res.status(400).json({
-              message: 'Dockerfile contains errors and cannot be committed. Please fix the issues and try again.',
-              validationErrors: dockerValidation.errors,
-              validationWarnings: dockerValidation.warnings
-          });
-      }
-
-      const body = {
-        message: commitMessage || `chore: update Dockerfile [via Estevia DevOps Hub]`,
-        content: Buffer.from(content).toString('base64'),
-        branch: branchName
-      };
-      if (existingSha) body.sha = existingSha;
-
-      await axios.put(contentsUrl, body, {
-        headers: {
-          'Authorization': `token ${githubToken}`,
-          'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': getUserAgent(organizationId),
-          'Content-Type': 'application/json'
-        }
-      });
-
-      res.json({
-        success: true,
-        message: `Dockerfile pushed successfully to "${githubRepo}" on branch "${branchName}".`
-      });
-    } catch (error) {
-      console.error('[AppController] updateDockerfile failed:', error);
-      if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-        return res.status(400).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
-      }
-      res.status(500).json({
-        message: 'Failed to push Dockerfile to GitHub.',
-        error: error.response?.data?.message || error.message
-      });
-    }
-  },
-
-  /**
-   * GET /api/apps/domain-status
-   * Checks CNAME propagation + HTTPS reachability for a custom domain hostname.
-   * Query params: hostname (e.g. myapp.esteviatech.com)
-   */
-  getDomainStatus: async (req, res) => {
-    const { hostname } = req.query;
-    if (!hostname) {
-      return res.status(400).json({ message: 'Missing hostname parameter.' });
-    }
-
-    const dns = require('dns').promises;
-    const https = require('https');
-
-    const result = {
-      hostname,
-      cname_propagated: false,
-      cname_target: null,
-      ssl_active: false,
-      ssl_issuer: null,
-      ssl_expires: null,
-      reachable: false,
-      http_status: null,
-      checked_at: new Date().toISOString(),
-    };
-
-    // 1. Check CNAME resolution
-    try {
-      const addresses = await dns.resolveCname(hostname);
-      if (addresses && addresses.length > 0) {
-        result.cname_propagated = true;
-        result.cname_target = addresses[0];
-      }
-    } catch (e) {
-      // CNAME not yet propagated or no CNAME record
-      result.cname_propagated = false;
-    }
-
-    // 2. Check HTTPS reachability + SSL cert info
-    await new Promise((resolve) => {
-      const req2 = https.get(`https://${hostname}/`, {
-        timeout: 8000,
-        rejectUnauthorized: false, // allow self-signed to inspect cert
-      }, (r) => {
-        result.reachable = true;
-        result.http_status = r.statusCode;
-        const cert = r.socket?.getPeerCertificate?.();
-        if (cert && cert.subject) {
-          result.ssl_active = true;
-          result.ssl_issuer = cert.issuer?.O || cert.issuer?.CN || null;
-          result.ssl_expires = cert.valid_to || null;
-        }
-        r.resume();
-        resolve(null);
-      });
-      req2.on('error', () => resolve(null));
-      req2.on('timeout', () => { req2.destroy(); resolve(null); });
-    });
-
-    res.json({ success: true, status: result });
-  },
-
-  /**
-   * GET /api/apps/billing/forecast
-   * Estimates 3, 6, and 12-month billing forecasts based on invoice history and optimizations.
-   */
-  getBillingForecast: async (req, res) => {
-    try {
-      const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
-      const data = await appController._getCostAndOptimizationData(organizationId);
-      
-      const monthlyBaselineRunRate = data.summary.monthlyRunRate;
-      const potentialSavings = data.suggestions.reduce((sum, s) => sum + s.savings, 0);
-
-      // Query billing invoices for historical fallback if active run rate is 0
-      const [rows] = await db.query(
-        'SELECT amount FROM billing_invoices WHERE organization_id = ? ORDER BY due_date DESC',
-        [organizationId]
-      );
-
-      let finalBaseline = monthlyBaselineRunRate > 0 ? monthlyBaselineRunRate : 450.00;
-      if (rows.length > 0 && monthlyBaselineRunRate === 0) {
-        const sum = rows.reduce((acc, row) => acc + parseFloat(row.amount), 0);
-        finalBaseline = sum / rows.length;
-      }
-
-      // Ensure savings don't exceed baseline
-      const finalSavings = Math.min(potentialSavings, finalBaseline * 0.5);
-
-      const result = {
-        success: true,
-        monthlyBaselineRunRate: finalBaseline,
-        monthlySavings: finalSavings,
-        forecast: {
-          3: {
-            baseline: Math.round(finalBaseline * 3),
-            optimized: Math.round((finalBaseline - finalSavings) * 3),
-            savings: Math.round(finalSavings * 3)
-          },
-          6: {
-            baseline: Math.round(finalBaseline * 6),
-            optimized: Math.round((finalBaseline - finalSavings) * 6),
-            savings: Math.round(finalSavings * 6)
-          },
-          12: {
-            baseline: Math.round(finalBaseline * 12),
-            optimized: Math.round((finalBaseline - finalSavings) * 12),
-            savings: Math.round(finalSavings * 12)
-          }
-        }
-      };
-
-      res.json(result);
-    } catch (error) {
-      console.error('[AppController] getBillingForecast failed:', error);
-      res.status(500).json({ message: 'Failed to fetch billing forecast.', error: error.message });
-    }
-  },
-
-  /**
-   * GET /api/apps/:name/revisions
-   * Fetch active revisions and traffic weight split configuration (ACA).
-   */
-  getRevisions: async (req, res) => {
-    try {
-      const { name } = req.params;
-      const orgId = req.query.organizationId || req.user?.organization_id || 'estevia';
-
-      const [rows] = await db.query(
-        'SELECT id, app_type, azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
-        [orgId, name]
-      );
-
-      if (rows.length === 0) {
-        return res.status(404).json({ message: `Resource "${name}" not found.` });
-      }
-
-      const app = rows[0];
-      if (app.app_type !== 'backend') {
-        return res.status(400).json({ message: 'Only Container Apps (ACA) have revisions.' });
-      }
-
-      const isDevMode = !process.env.AZURE_CLIENT_ID;
-
-      if (isDevMode) {
-        const mockRevisions = [
-          {
-            name: `${name}--rev-latest`,
-            active: true,
-            createdTime: new Date(Date.now() - 3600000).toISOString(),
-            trafficWeight: 100,
-            latestRevision: true
-          },
-          {
-            name: `${name}--rev-previous`,
-            active: true,
-            createdTime: new Date(Date.now() - 86400000).toISOString(),
-            trafficWeight: 0,
-            latestRevision: false
-          }
-        ];
-        return res.json({
-          success: true,
-          activeRevisionsMode: 'Single',
-          revisions: mockRevisions,
-          traffic: [
-            { revisionName: `${name}--rev-latest`, weight: 100, latestRevision: true },
-            { revisionName: `${name}--rev-previous`, weight: 0, latestRevision: false }
-          ]
-        });
-      }
-
-      const orgSettings = await appController._getOrgSettings(orgId);
-      const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-      const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
-
-      const credential = await getAzureCredential(orgId);
-      const tokenRes = await credential.getToken("https://management.azure.com/.default");
-      const token = tokenRes.token;
-
-      // Get revisions list
-      const revUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/containerApps/${name}/revisions?api-version=2023-05-01`;
-      const revRes = await axios.get(revUrl, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const revisions = revRes.data?.value || [];
-
-      // Get container app ingress config
-      const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
-      const appEnvelope = await containerClient.containerApps.get(resourceGroup, name);
-      const configuration = appEnvelope.configuration || {};
-      const activeRevisionsMode = configuration.activeRevisionsMode || 'Single';
-      const traffic = configuration.ingress?.traffic || [];
-
-      const formattedRevisions = revisions.map(rev => {
-        const trafficMatch = traffic.find(t => t.revisionName === rev.name);
-        return {
-          name: rev.name,
-          active: rev.properties?.active || false,
-          createdTime: rev.properties?.createdTime || null,
-          trafficWeight: trafficMatch ? trafficMatch.weight : 0,
-          latestRevision: rev.properties?.latest || false
-        };
-      });
-
-      res.json({
-        success: true,
-        activeRevisionsMode,
-        revisions: formattedRevisions,
-        traffic
-      });
-    } catch (error) {
-      console.error('[AppController] getRevisions failed:', error);
-      res.status(500).json({ message: 'Failed to fetch Container App revisions.', error: error.message });
-    }
-  },
-
-  /**
-   * POST /api/apps/:name/traffic
-   * Update active traffic routing splits (ACA).
-   */
-  updateTraffic: async (req, res) => {
-    try {
-      const { name } = req.params;
-      const { traffic, organizationId: bodyOrgId } = req.body;
-      const orgId = bodyOrgId || req.user?.organization_id || 'estevia';
-
-      if (!traffic || !Array.isArray(traffic)) {
-        return res.status(400).json({ message: 'Missing or invalid traffic parameter.' });
-      }
-
-      const totalWeight = traffic.reduce((sum, item) => sum + (parseInt(item.weight) || 0), 0);
-      if (totalWeight !== 100) {
-        return res.status(400).json({ message: `Total traffic split weight must equal 100. Current sum: ${totalWeight}` });
-      }
-
-      const [rows] = await db.query(
-        'SELECT id, app_type FROM applications WHERE organization_id = ? AND name = ?',
-        [orgId, name]
-      );
-
-      if (rows.length === 0) {
-        return res.status(404).json({ message: `Resource "${name}" not found.` });
-      }
-
-      const isDevMode = !process.env.AZURE_CLIENT_ID;
-
-      if (isDevMode) {
-        console.log(`[MOCK updateTraffic] Setting traffic split for ACA '${name}':`, traffic);
-        return res.json({ success: true, message: `[MOCK] Traffic routing updated successfully.` });
-      }
-
-      const orgSettings = await appController._getOrgSettings(orgId);
-      const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-      const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
-
-      const credential = await getAzureCredential(orgId);
-      const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
-
-      const appEnvelope = await containerClient.containerApps.get(resourceGroup, name);
-      if (!appEnvelope.configuration) appEnvelope.configuration = {};
-      if (!appEnvelope.configuration.ingress) appEnvelope.configuration.ingress = {};
-
-      appEnvelope.configuration.ingress.traffic = traffic.map(t => ({
-        revisionName: t.revisionName,
-        weight: parseInt(t.weight),
-        latestRevision: !!t.latestRevision
-      }));
-
-      const poller = await containerClient.containerApps.beginCreateOrUpdate(resourceGroup, name, appEnvelope);
-      await poller.pollUntilDone();
-
-      res.json({ success: true, message: `Traffic routing split updated successfully for Container App "${name}".` });
-    } catch (error) {
-      console.error('[AppController] updateTraffic failed:', error);
-      res.status(500).json({ message: 'Failed to update traffic splitting configuration.', error: error.message });
-    }
-  },
-
-  /**
-   * POST /api/apps/:name/revision-mode
-   * Set active revisions mode between Single and Multiple (ACA).
-   */
-  updateRevisionMode: async (req, res) => {
-    try {
-      const { name } = req.params;
-      const { mode, organizationId: bodyOrgId } = req.body;
-      const orgId = bodyOrgId || req.user?.organization_id || 'estevia';
-
-      if (!mode || !['Single', 'Multiple'].includes(mode)) {
-        return res.status(400).json({ message: 'Invalid or missing mode parameter. Must be "Single" or "Multiple".' });
-      }
-
-      const [rows] = await db.query(
-        'SELECT id, app_type FROM applications WHERE organization_id = ? AND name = ?',
-        [orgId, name]
-      );
-
-      if (rows.length === 0) {
-        return res.status(404).json({ message: `Resource "${name}" not found.` });
-      }
-
-      const isDevMode = !process.env.AZURE_CLIENT_ID;
-
-      if (isDevMode) {
-        console.log(`[MOCK updateRevisionMode] Setting revision mode for ACA '${name}' to: ${mode}`);
-        return res.json({ success: true, message: `[MOCK] Revision mode updated to "${mode}" successfully.`, activeRevisionsMode: mode });
-      }
-
-      const orgSettings = await appController._getOrgSettings(orgId);
-      const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-      const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
-
-      const credential = await getAzureCredential(orgId);
-      const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
-
-      const appEnvelope = await containerClient.containerApps.get(resourceGroup, name);
-      if (!appEnvelope.configuration) appEnvelope.configuration = {};
-      appEnvelope.configuration.activeRevisionsMode = mode;
-
-      if (mode === 'Single' && appEnvelope.configuration.ingress) {
-        appEnvelope.configuration.ingress.traffic = [
-          {
-            latestRevision: true,
-            weight: 100
-          }
-        ];
-      }
-
-      const poller = await containerClient.containerApps.beginCreateOrUpdate(resourceGroup, name, appEnvelope);
-      await poller.pollUntilDone();
-
-      res.json({ success: true, message: `Revision mode successfully updated to "${mode}".`, activeRevisionsMode: mode });
-    } catch (error) {
-      console.error('[AppController] updateRevisionMode failed:', error);
-      res.status(500).json({ message: 'Failed to update revision mode.', error: error.message });
-    }
-  },
-
-  /**
-   * POST /api/apps/dns-swap
-   * Swap custom domain DNS records (CNAME) between two apps (SWA fallback blue/green).
-   */
-  dnsSwap: async (req, res) => {
-    try {
-      const { app1Name, app2Name, organizationId: bodyOrgId } = req.body;
-      const orgId = bodyOrgId || req.user?.organization_id || 'estevia';
-
-      if (!app1Name || !app2Name) {
-        return res.status(400).json({ message: 'Missing app1Name or app2Name parameters.' });
-      }
-
-      // Fetch both applications
-      const [rows] = await db.query(
-        'SELECT id, name, app_type, azure_resource_details, godaddy_dns_details FROM applications WHERE organization_id = ? AND name IN (?, ?)',
-        [orgId, app1Name, app2Name]
-      );
-
-      if (rows.length < 2) {
-        return res.status(400).json({ message: 'Could not retrieve details for both applications in the database.' });
-      }
-
-      const app1 = rows.find(r => r.name === app1Name);
-      const app2 = rows.find(r => r.name === app2Name);
-
-      const dns1 = typeof app1.godaddy_dns_details === 'string' ? JSON.parse(app1.godaddy_dns_details || 'null') : app1.godaddy_dns_details;
-      const dns2 = typeof app2.godaddy_dns_details === 'string' ? JSON.parse(app2.godaddy_dns_details || 'null') : app2.godaddy_dns_details;
-
-      if (!dns1 || !dns2) {
-        return res.status(400).json({ message: 'Both applications must have mapped GoDaddy domains to swap DNS.' });
-      }
-
-      const details1 = typeof app1.azure_resource_details === 'string' ? JSON.parse(app1.azure_resource_details || '{}') : app1.azure_resource_details;
-      const details2 = typeof app2.azure_resource_details === 'string' ? JSON.parse(app2.azure_resource_details || '{}') : app2.azure_resource_details;
-
-      const isDevMode = !process.env.AZURE_CLIENT_ID;
-
-      if (isDevMode) {
-        console.log(`[MOCK dnsSwap] Swapping DNS mappings between ${app1Name} and ${app2Name}`);
-        await db.query('UPDATE applications SET godaddy_dns_details = ? WHERE id = ?', [JSON.stringify(dns2), app1.id]);
-        await db.query('UPDATE applications SET godaddy_dns_details = ? WHERE id = ?', [JSON.stringify(dns1), app2.id]);
-        return res.json({ success: true, message: `[MOCK] DNS swap completed successfully between "${app1Name}" and "${app2Name}".` });
-      }
-
-      const orgSettings = await appController._getOrgSettings(orgId);
-      const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-      const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
-
-      const godaddySecrets = await credentialController.getDecryptedCredentialsInternal(orgId, 'godaddy');
-      if (!godaddySecrets || !godaddySecrets.apiKey || !godaddySecrets.apiSecret) {
-        return res.status(400).json({ message: 'GoDaddy integration credentials not found or incomplete for organization.' });
-      }
-
-      const credential = await getAzureCredential(orgId);
-      const webClient = new WebSiteManagementClient(credential, subscriptionId);
-
-      // 1. Swap custom domains in Azure SWA (if they are type 'frontend')
-      if (app1.app_type === 'frontend') {
-        console.log(`[dnsSwap] Unbinding custom domain ${dns1.fqdn} from ${app1Name}`);
-        await webClient.staticSites.beginDeleteStaticSiteCustomDomainAndWait(resourceGroup, app1Name, dns1.fqdn);
-      }
-      if (app2.app_type === 'frontend') {
-        console.log(`[dnsSwap] Unbinding custom domain ${dns2.fqdn} from ${app2Name}`);
-        await webClient.staticSites.beginDeleteStaticSiteCustomDomainAndWait(resourceGroup, app2Name, dns2.fqdn);
-      }
-
-      // 2. Swap DNS records on GoDaddy
-      const godaddyUrl1 = `https://api.godaddy.com/v1/domains/${dns1.domain}/records/CNAME/${dns1.subdomain}`;
-      const body1 = [{ data: details2.hostname, ttl: 3600 }];
-      console.log(`[dnsSwap] Updating GoDaddy CNAME: ${dns1.fqdn} -> ${details2.hostname}`);
-      await axios.put(godaddyUrl1, body1, {
-        headers: {
-          'Authorization': `sso-key ${godaddySecrets.apiKey}:${godaddySecrets.apiSecret}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const godaddyUrl2 = `https://api.godaddy.com/v1/domains/${dns2.domain}/records/CNAME/${dns2.subdomain}`;
-      const body2 = [{ data: details1.hostname, ttl: 3600 }];
-      console.log(`[dnsSwap] Updating GoDaddy CNAME: ${dns2.fqdn} -> ${details1.hostname}`);
-      await axios.put(godaddyUrl2, body2, {
-        headers: {
-          'Authorization': `sso-key ${godaddySecrets.apiKey}:${godaddySecrets.apiSecret}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      // 3. Bind custom domains in Azure SWA
-      if (app1.app_type === 'frontend') {
-        console.log(`[dnsSwap] Binding custom domain ${dns2.fqdn} to ${app1Name}`);
-        await webClient.staticSites.beginCreateOrUpdateStaticSiteCustomDomainAndWait(
-          resourceGroup,
-          app1Name,
-          dns2.fqdn,
-          { domainName: dns2.fqdn }
-        );
-      }
-      if (app2.app_type === 'frontend') {
-        console.log(`[dnsSwap] Binding custom domain ${dns1.fqdn} to ${app2Name}`);
-        await webClient.staticSites.beginCreateOrUpdateStaticSiteCustomDomainAndWait(
-          resourceGroup,
-          app2Name,
-          dns1.fqdn,
-          { domainName: dns1.fqdn }
-        );
-      }
-
-      const newDns1 = { ...dns2, mappedAt: new Date() };
-      const newDns2 = { ...dns1, mappedAt: new Date() };
-
-      await db.query('UPDATE applications SET godaddy_dns_details = ? WHERE id = ?', [JSON.stringify(newDns1), app1.id]);
-      await db.query('UPDATE applications SET godaddy_dns_details = ? WHERE id = ?', [JSON.stringify(newDns2), app2.id]);
-
-      res.json({
-        success: true,
-        message: `DNS swap completed successfully between "${app1Name}" and "${app2Name}". ${dns1.fqdn} now targets ${app2Name}, ${dns2.fqdn} targets ${app1Name}.`
-      });
-    } catch (error) {
-      console.error('[AppController] dnsSwap failed:', error);
-      res.status(500).json({ message: 'Failed to perform DNS swap.', error: error.message });
-    }
-  },
-
-  /**
-   * GET /api/apps/repo-integrity?organizationId=...&repoFullName=...
-   *
-   * Inspects every branch of a GitHub repo and classifies each as:
-   *   frontend | backend | mixed | unknown
-   * based on the presence of well-known indicator files at the root.
-   *
-   * Also cross-references the applications DB to show which ACA/SWA each branch is deployed as.
-   *
-   * Confidence:
-   *   high   — unambiguous primary signal (Dockerfile OR staticwebapp.config.json)
-   *   medium — secondary framework files (vite.config, next.config, etc.)
-   *   low    — only generic files, cannot determine definitively
-   */
-  checkRepoIntegrity: async (req, res) => {
-    try {
-      const { organizationId, repoFullName } = req.query;
-      if (!organizationId || !repoFullName) {
-        return res.status(400).json({ message: 'Missing organizationId or repoFullName parameter.' });
-      }
-
-      // ── Auth ──────────────────────────────────────────────────────────────
-      const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
-      const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
-      if (!githubToken) {
-        return res.status(400).json({ message: 'GitHub integration token not found.' });
-      }
-      const cleanRepo = repoFullName.replace('https://github.com/', '').replace(/\.git$/, '').replace(/\/$/, '');
-      const ghHeaders = {
-        'Authorization': `token ${githubToken}`,
-        'Accept': 'application/vnd.github.v3+json',
-        'User-Agent': getUserAgent(organizationId)
-      };
-
-      // ── Signal tables ──────────────────────────────────────────────────────
-      // Files whose presence indicates backend (ACA) deployment
-      const BACKEND_SIGNALS = [
-        'dockerfile', 'docker-compose.yml', 'docker-compose.yaml',
-        'server.js', 'index.js', 'app.js', 'app.py', 'main.py',
-        'main.go', 'pom.xml', 'build.gradle', 'go.mod', 'cargo.toml',
-        'requirements.txt', 'wsgi.py', 'asgi.py'
-      ];
-      const BACKEND_EXTENSIONS = ['.csproj', '.sln', '.fsproj'];
-
-      // Files whose presence indicates frontend (SWA) deployment
-      const FRONTEND_SIGNALS = [
-        'staticwebapp.config.json', 'index.html',
-        'next.config.js', 'next.config.ts', 'next.config.mjs',
-        'vite.config.js', 'vite.config.ts', 'vite.config.mjs',
-        'angular.json', 'nuxt.config.js', 'nuxt.config.ts',
-        'remix.config.js', 'svelte.config.js', 'gatsby-config.js', '.storybook'
-      ];
-
-      // Primary signals are unambiguous on their own → high confidence
-      const PRIMARY_BACKEND = new Set(['dockerfile', 'docker-compose.yml', 'docker-compose.yaml']);
-      const PRIMARY_FRONTEND = new Set(['staticwebapp.config.json']);
-
-      function classifyRootFiles(fileNames) {
-        const lower = fileNames.map(f => f.toLowerCase());
-        const backendHits = BACKEND_SIGNALS.filter(s => lower.includes(s));
-        const backendExtHits = lower.filter(f => BACKEND_EXTENSIONS.some(ext => f.endsWith(ext)));
-        const frontendHits = FRONTEND_SIGNALS.filter(s => lower.includes(s));
-
-        const primaryBackend = backendHits.some(h => PRIMARY_BACKEND.has(h));
-        const primaryFrontend = frontendHits.some(h => PRIMARY_FRONTEND.has(h));
-        const hasBackend = backendHits.length > 0 || backendExtHits.length > 0;
-        const hasFrontend = frontendHits.length > 0;
-
-        let detectedType, confidence;
-        if (hasBackend && hasFrontend) {
-          detectedType = 'mixed';
-          confidence = (primaryBackend || primaryFrontend) ? 'high' : 'medium';
-        } else if (hasBackend) {
-          detectedType = 'backend';
-          confidence = primaryBackend ? 'high' : (backendHits.length >= 2 ? 'medium' : 'low');
-        } else if (hasFrontend) {
-          detectedType = 'frontend';
-          confidence = primaryFrontend ? 'high' : (frontendHits.length >= 2 ? 'medium' : 'low');
-        } else {
-          detectedType = 'unknown';
-          confidence = 'low';
-        }
-
-        return {
-          detectedType,
-          confidence,
-          signals: {
-            backendFiles: [...backendHits, ...backendExtHits],
-            frontendFiles: frontendHits,
-            hasCiYml: lower.includes('azure-pipelines.yml'),
-            hasDockerfile: lower.includes('dockerfile'),
-            hasSwaConfig: lower.includes('staticwebapp.config.json'),
-            hasPackageJson: lower.includes('package.json'),
-            allRootFiles: fileNames
-          }
-        };
-      }
-
-      // ── 1. Fetch all branches ────────────────────────────────────────────
-      const branchesRes = await axios.get(
-        `https://api.github.com/repos/${cleanRepo}/branches?per_page=100`,
-        { headers: ghHeaders }
-      );
-      const branches = branchesRes.data;
-
-      // Fetch repo details to get default branch
-      let defaultBranch = 'main';
-      try {
-        const repoRes = await axios.get(
-          `https://api.github.com/repos/${cleanRepo}`,
-          { headers: ghHeaders }
-        );
-        defaultBranch = repoRes.data.default_branch || 'main';
-      } catch (repoErr) {
-        console.warn(`[checkRepoIntegrity] Failed to fetch repo default branch:`, repoErr.message);
-      }
-
-      // ── 2. Fetch root contents for each branch in parallel ───────────────
-      const branchReports = await Promise.all(branches.map(async (branch) => {
+    getDockerfile: async (req, res) => {
         try {
-          const contentsRes = await axios.get(
-            `https://api.github.com/repos/${cleanRepo}/contents/?ref=${encodeURIComponent(branch.name)}`,
-            { headers: ghHeaders, timeout: 8000 }
-          );
-          const rootFiles = Array.isArray(contentsRes.data) ? contentsRes.data.map(f => f.name) : [];
-          return { name: branch.name, protected: branch.protected, ...classifyRootFiles(rootFiles), deployedAs: null };
-        } catch (err) {
-          console.warn(`[checkRepoIntegrity] Branch ${branch.name} contents failed:`, err.message);
-          return {
-            name: branch.name, protected: branch.protected,
-            detectedType: 'unknown', confidence: 'low',
-            signals: { backendFiles: [], frontendFiles: [], hasCiYml: false, hasDockerfile: false, hasSwaConfig: false, hasPackageJson: false, allRootFiles: [] },
-            deployedAs: null
-          };
-        }
-      }));
-
-      // ── 3. Cross-reference with deployed apps in DB ──────────────────────
-      try {
-        const [dbApps] = await db.query(
-          `SELECT name, app_type, azure_resource_details FROM applications WHERE organization_id = ? AND (repo_url LIKE ? OR repo_url LIKE ?)`,
-          [organizationId, `%${cleanRepo}%`, `%${cleanRepo.toLowerCase()}%`]
-        );
-        for (const dbApp of dbApps) {
-          let details = {};
-          try { details = typeof dbApp.azure_resource_details === 'string' ? JSON.parse(dbApp.azure_resource_details || '{}') : (dbApp.azure_resource_details || {}); } catch (e) {}
-          const deployedBranch = details.branch || null;
-          if (deployedBranch) {
-            const report = branchReports.find(r => r.name.toLowerCase() === deployedBranch.toLowerCase());
-            if (report && !report.deployedAs) report.deployedAs = { name: dbApp.name, type: dbApp.app_type, branch: deployedBranch };
-          } else {
-            // No explicit branch — match by ACA name suffix
-            const appNameLower = dbApp.name.toLowerCase();
-            for (const report of branchReports) {
-              if (new RegExp(`-${report.name.toLowerCase()}(-|$)`).test(appNameLower) && !report.deployedAs) {
-                report.deployedAs = { name: dbApp.name, type: dbApp.app_type, branch: report.name };
-                break;
-              }
+            const { organizationId, githubRepo, branch } = req.query;
+            if (!organizationId || !githubRepo) {
+                return res.status(400).json({ message: 'Missing organizationId or githubRepo parameters.' });
             }
-          }
+            const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+            const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+            if (!githubToken) {
+                return res.status(400).json({ message: 'GitHub integration token not found.' });
+            }
+
+            const branchName = branch || 'main';
+            const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/Dockerfile?ref=${encodeURIComponent(branchName)}`;
+
+            try {
+                const response = await axios.get(contentsUrl, {
+                    headers: {
+                        'Authorization': `token ${githubToken}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'User-Agent': getUserAgent(organizationId)
+                    },
+                    timeout: 8000
+                });
+
+                if (response.data && response.data.content) {
+                    const decodedDockerfile = Buffer.from(response.data.content, 'base64').toString('utf-8');
+                    return res.json({ success: true, exists: true, content: decodedDockerfile, sha: response.data.sha });
+                }
+
+                return res.json({ success: true, exists: false, content: '' });
+            } catch (err) {
+                if (err.response && err.response.status === 404) {
+                    return res.json({ success: true, exists: false, content: '' });
+                }
+                throw err;
+            }
+        } catch (error) {
+            console.error('[AppController] getDockerfile failed:', error);
+            if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+                return res.status(400).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
+            }
+            res.status(500).json({ message: 'Failed to fetch Dockerfile.', error: error.message });
         }
-      } catch (dbErr) {
-        console.warn('[checkRepoIntegrity] DB cross-reference failed (non-fatal):', dbErr.message);
-      }
+    },
 
-      // ── 4. Compute overall repo status ───────────────────────────────────
-      const issues = [];
-      const mixedBranches = branchReports.filter(r => r.detectedType === 'mixed').map(r => r.name);
-      const distinctTypes = new Set(branchReports.filter(r => r.detectedType !== 'unknown' && r.detectedType !== 'mixed').map(r => r.detectedType));
+    /**
+     * PUT /api/apps/update-dockerfile
+     * Push custom Dockerfile content to GitHub (create or update)
+     */
+    updateDockerfile: async (req, res) => {
+        try {
+            const { organizationId, githubRepo, branch, content, commitMessage } = req.body;
+            if (!organizationId || !githubRepo || !content) {
+                return res.status(400).json({ message: 'Missing organizationId, githubRepo, or content.' });
+            }
 
-      if (mixedBranches.length > 0) issues.push(`Branch(es) "${mixedBranches.join('", "')}" contain both frontend and backend code.`);
-      if (distinctTypes.has('frontend') && distinctTypes.has('backend')) issues.push(`This repo has branches of different types (some frontend, some backend). Ensure each is deployed to the correct resource type.`);
+            const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+            const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+            if (!githubToken) {
+                return res.status(400).json({ message: 'GitHub integration token not found for organization.' });
+            }
 
-      const overallStatus = mixedBranches.length > 0 ? 'mixed' : (issues.length > 0 ? 'warning' : 'ok');
-      console.log(`[AppController] checkRepoIntegrity: ${cleanRepo} → ${overallStatus} (${branchReports.length} branches)`);
+            const branchName = branch || 'main';
+            const contentsUrl = `https://api.github.com/repos/${githubRepo}/contents/Dockerfile`;
 
-      res.json({ success: true, repo: cleanRepo, overallStatus, issues, branches: branchReports, defaultBranch });
+            // Fetch existing SHA so GitHub allows the update
+            let existingSha = null;
+            try {
+                const checkRes = await axios.get(`${contentsUrl}?ref=${encodeURIComponent(branchName)}`, {
+                    headers: {
+                        'Authorization': `token ${githubToken}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'User-Agent': getUserAgent(organizationId)
+                    }
+                });
+                if (checkRes.data && checkRes.data.sha) existingSha = checkRes.data.sha;
+            } catch (e) {
+                // File doesn't exist yet — will create it
+            }
 
-    } catch (error) {
-      console.error('[AppController] checkRepoIntegrity failed:', error);
-      res.status(500).json({ message: 'Failed to check repo integrity.', error: error.message });
-    }
-  },
+            // Validate Dockerfile before committing (server-side gate)
+            const dockerValidation = _validateDockerfile(content);
+            if (!dockerValidation.valid) {
+                return res.status(400).json({
+                    message: 'Dockerfile contains errors and cannot be committed. Please fix the issues and try again.',
+                    validationErrors: dockerValidation.errors,
+                    validationWarnings: dockerValidation.warnings
+                });
+            }
 
-  getComplianceStatus: async (req, res) => {
-      try {
-          const { organizationId } = req.query;
-          // Resolve org and fetch tier for rule scope enforcement
-          const resolvedOrgId = organizationId || req.user?.organization_id || 'estevia';
-          const [[orgRecord]] = await db.query(
-              'SELECT license_tier FROM organizations WHERE id = ?',
-              [resolvedOrgId]
-          );
-          const orgLicenseTier = orgRecord?.license_tier || 'growth';
+            const body = {
+                message: commitMessage || `chore: update Dockerfile [via Estevia DevOps Hub]`,
+                content: Buffer.from(content).toString('base64'),
+                branch: branchName
+            };
+            if (existingSha) body.sha = existingSha;
 
-          // Tier-based rule scope: growth gets 3 core rules only
-          const tierAllowedRules = {
-              growth:     new Set(['tagging', 'tls', 'network-security']),
-              enterprise: null,   // null = all 9 rules allowed
-              sovereign:  null
-          };
-          const restrictedRules = tierAllowedRules[orgLicenseTier] ?? tierAllowedRules.growth;
-          // ── End tier scope setup ─────────────────────────────────────────
+            await axios.put(contentsUrl, body, {
+                headers: {
+                    'Authorization': `token ${githubToken}`,
+                    'Accept': 'application/vnd.github.v3+json',
+                    'User-Agent': getUserAgent(organizationId),
+                    'Content-Type': 'application/json'
+                }
+            });
 
-          if (!organizationId) {
-              return res.status(400).json({ message: 'Missing organizationId query parameter.' });
-          }
+            res.json({
+                success: true,
+                message: `Dockerfile pushed successfully to "${githubRepo}" on branch "${branchName}".`
+            });
+        } catch (error) {
+            console.error('[AppController] updateDockerfile failed:', error);
+            if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+                return res.status(400).json({ success: false, message: 'GitHub integration credentials are unauthorized or expired. Please update your token in the Credentials settings.' });
+            }
+            res.status(500).json({
+                message: 'Failed to push Dockerfile to GitHub.',
+                error: error.response?.data?.message || error.message
+            });
+        }
+    },
 
-          const orgSettings = await appController._getOrgSettings(organizationId);
+    /**
+     * GET /api/apps/domain-status
+     * Checks CNAME propagation + HTTPS reachability for a custom domain hostname.
+     * Query params: hostname (e.g. myapp.esteviatech.com)
+     */
+    getDomainStatus: async (req, res) => {
+        const { hostname } = req.query;
+        if (!hostname) {
+            return res.status(400).json({ message: 'Missing hostname parameter.' });
+        }
 
-          // Parse disabled rules and severities from database organization settings
-          const disabledRulesQuery = orgSettings.disabled_rules || '';
-          const disabledRules = new Set(disabledRulesQuery.split(',').filter(Boolean));
+        const dns = require('dns').promises;
+        const https = require('https');
 
-          // Auto-disable restricted rules based on license tier
-          if (restrictedRules) {
-              const allRules = ['tagging', 'residency', 'tls', 'network-security', 'https-only', 'containment', 'registry-auth', 'secrets-expiry', 'shadow-it'];
-              for (const ruleId of allRules) {
-                  if (!restrictedRules.has(ruleId)) {
-                      disabledRules.add(ruleId);
-                  }
-              }
-          }
+        const result = {
+            hostname,
+            cname_propagated: false,
+            cname_target: null,
+            ssl_active: false,
+            ssl_issuer: null,
+            ssl_expires: null,
+            reachable: false,
+            http_status: null,
+            checked_at: new Date().toISOString(),
+        };
 
-          const severitiesQuery = orgSettings.rule_severities || '{}';
-          let severities = {};
-          try {
-              severities = JSON.parse(severitiesQuery);
-          } catch (e) {
-              severities = {};
-          }
-          const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-          const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
+        // 1. Check CNAME resolution
+        try {
+            const addresses = await dns.resolveCname(hostname);
+            if (addresses && addresses.length > 0) {
+                result.cname_propagated = true;
+                result.cname_target = addresses[0];
+            }
+        } catch (e) {
+            // CNAME not yet propagated or no CNAME record
+            result.cname_propagated = false;
+        }
 
-          const credential = await getAzureCredential(organizationId);
-          const tokenRes = await credential.getToken("https://management.azure.com/.default");
-          const token = tokenRes.token;
+        // 2. Check HTTPS reachability + SSL cert info
+        await new Promise((resolve) => {
+            const req2 = https.get(`https://${hostname}/`, {
+                timeout: 8000,
+                rejectUnauthorized: false, // allow self-signed to inspect cert
+            }, (r) => {
+                result.reachable = true;
+                result.http_status = r.statusCode;
+                const cert = r.socket?.getPeerCertificate?.();
+                if (cert && cert.subject) {
+                    result.ssl_active = true;
+                    result.ssl_issuer = cert.issuer?.O || cert.issuer?.CN || null;
+                    result.ssl_expires = cert.valid_to || null;
+                }
+                r.resume();
+                resolve(null);
+            });
+            req2.on('error', () => resolve(null));
+            req2.on('timeout', () => { req2.destroy(); resolve(null); });
+        });
 
-          const resourceClient = new ResourceManagementClient(credential, subscriptionId);
-          const resources = [];
-          try {
-              for await (const r of resourceClient.resources.listByResourceGroup(resourceGroup)) {
-                  resources.push(r);
-              }
-          } catch (err) {
-              console.error('[AppController] Error listing compliance resources:', err.message);
-          }
+        res.json({ success: true, status: result });
+    },
 
-          // Fetch registered applications
-          const [dbApps] = await db.query(
-              'SELECT id, name, app_type, status, azure_resource_details, repo_url FROM applications WHERE organization_id = ?',
-              [organizationId]
-          );
+    /**
+     * GET /api/apps/billing/forecast
+     * Estimates 3, 6, and 12-month billing forecasts based on invoice history and optimizations.
+     */
+    getBillingForecast: async (req, res) => {
+        try {
+            const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
+            const data = await appController._getCostAndOptimizationData(organizationId);
 
-          // Fallback if no resources returned from Azure
-          if (resources.length === 0) {
-              for (const app of dbApps) {
-                  const details = typeof app.azure_resource_details === 'string'
-                      ? JSON.parse(app.azure_resource_details || '{}')
-                      : (app.azure_resource_details || {});
+            const monthlyBaselineRunRate = data.summary.monthlyRunRate;
+            const potentialSavings = data.suggestions.reduce((sum, s) => sum + s.savings, 0);
 
-                  // Dynamic mock seeds for local development validation
-                  if (app.name === 'estevia-feedback-api-dev') {
-                      if (details.portsOpen === undefined) details.portsOpen = ['22'];
-                      if (details.ingress === undefined) details.ingress = { allowInsecure: true };
-                      if (details.image === undefined) details.image = 'library/node:latest';
-                      if (details.vnetName === undefined) details.vnetName = 'estevia-prod-vnet';
-                      if (details.branch === undefined) details.branch = 'dev';
-                      if (details.secretExpiresAt === undefined) details.secretExpiresAt = new Date(Date.now() + 15 * 24 * 3600 * 1000).toISOString().split('T')[0];
-                  }
-                  if (app.name === 'estevia-db-flex') {
-                      if (details.sslEnabled === undefined) details.sslEnabled = false;
-                  }
+            // Query billing invoices for historical fallback if active run rate is 0
+            const [rows] = await db.query(
+                'SELECT amount FROM billing_invoices WHERE organization_id = ? ORDER BY due_date DESC',
+                [organizationId]
+            );
 
-                  resources.push({
-                      id: details.resourceId || `db-${app.id}`,
-                      name: app.name,
-                      type: app.app_type === 'frontend' ? 'Microsoft.Web/staticSites' :
+            let finalBaseline = monthlyBaselineRunRate > 0 ? monthlyBaselineRunRate : 450.00;
+            if (rows.length > 0 && monthlyBaselineRunRate === 0) {
+                const sum = rows.reduce((acc, row) => acc + parseFloat(row.amount), 0);
+                finalBaseline = sum / rows.length;
+            }
+
+            // Ensure savings don't exceed baseline
+            const finalSavings = Math.min(potentialSavings, finalBaseline * 0.5);
+
+            const result = {
+                success: true,
+                monthlyBaselineRunRate: finalBaseline,
+                monthlySavings: finalSavings,
+                forecast: {
+                    3: {
+                        baseline: Math.round(finalBaseline * 3),
+                        optimized: Math.round((finalBaseline - finalSavings) * 3),
+                        savings: Math.round(finalSavings * 3)
+                    },
+                    6: {
+                        baseline: Math.round(finalBaseline * 6),
+                        optimized: Math.round((finalBaseline - finalSavings) * 6),
+                        savings: Math.round(finalSavings * 6)
+                    },
+                    12: {
+                        baseline: Math.round(finalBaseline * 12),
+                        optimized: Math.round((finalBaseline - finalSavings) * 12),
+                        savings: Math.round(finalSavings * 12)
+                    }
+                }
+            };
+
+            res.json(result);
+        } catch (error) {
+            console.error('[AppController] getBillingForecast failed:', error);
+            res.status(500).json({ message: 'Failed to fetch billing forecast.', error: error.message });
+        }
+    },
+
+    /**
+     * GET /api/apps/:name/revisions
+     * Fetch active revisions and traffic weight split configuration (ACA).
+     */
+    getRevisions: async (req, res) => {
+        try {
+            const { name } = req.params;
+            const orgId = req.query.organizationId || req.user?.organization_id || 'estevia';
+
+            const [rows] = await db.query(
+                'SELECT id, app_type, azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
+                [orgId, name]
+            );
+
+            if (rows.length === 0) {
+                return res.status(404).json({ message: `Resource "${name}" not found.` });
+            }
+
+            const app = rows[0];
+            if (app.app_type !== 'backend') {
+                return res.status(400).json({ message: 'Only Container Apps (ACA) have revisions.' });
+            }
+
+            const isDevMode = !process.env.AZURE_CLIENT_ID;
+
+            if (isDevMode) {
+                const mockRevisions = [
+                    {
+                        name: `${name}--rev-latest`,
+                        active: true,
+                        createdTime: new Date(Date.now() - 3600000).toISOString(),
+                        trafficWeight: 100,
+                        latestRevision: true
+                    },
+                    {
+                        name: `${name}--rev-previous`,
+                        active: true,
+                        createdTime: new Date(Date.now() - 86400000).toISOString(),
+                        trafficWeight: 0,
+                        latestRevision: false
+                    }
+                ];
+                return res.json({
+                    success: true,
+                    activeRevisionsMode: 'Single',
+                    revisions: mockRevisions,
+                    traffic: [
+                        { revisionName: `${name}--rev-latest`, weight: 100, latestRevision: true },
+                        { revisionName: `${name}--rev-previous`, weight: 0, latestRevision: false }
+                    ]
+                });
+            }
+
+            const orgSettings = await appController._getOrgSettings(orgId);
+            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+
+            const credential = await getAzureCredential(orgId);
+            const tokenRes = await credential.getToken("https://management.azure.com/.default");
+            const token = tokenRes.token;
+
+            // Get revisions list
+            const revUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/containerApps/${name}/revisions?api-version=2023-05-01`;
+            const revRes = await axios.get(revUrl, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const revisions = revRes.data?.value || [];
+
+            // Get container app ingress config
+            const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
+            const appEnvelope = await containerClient.containerApps.get(resourceGroup, name);
+            const configuration = appEnvelope.configuration || {};
+            const activeRevisionsMode = configuration.activeRevisionsMode || 'Single';
+            const traffic = configuration.ingress?.traffic || [];
+
+            const formattedRevisions = revisions.map(rev => {
+                const trafficMatch = traffic.find(t => t.revisionName === rev.name);
+                return {
+                    name: rev.name,
+                    active: rev.properties?.active || false,
+                    createdTime: rev.properties?.createdTime || null,
+                    trafficWeight: trafficMatch ? trafficMatch.weight : 0,
+                    latestRevision: rev.properties?.latest || false
+                };
+            });
+
+            res.json({
+                success: true,
+                activeRevisionsMode,
+                revisions: formattedRevisions,
+                traffic
+            });
+        } catch (error) {
+            console.error('[AppController] getRevisions failed:', error);
+            res.status(500).json({ message: 'Failed to fetch Container App revisions.', error: error.message });
+        }
+    },
+
+    /**
+     * POST /api/apps/:name/traffic
+     * Update active traffic routing splits (ACA).
+     */
+    updateTraffic: async (req, res) => {
+        try {
+            const { name } = req.params;
+            const { traffic, organizationId: bodyOrgId } = req.body;
+            const orgId = bodyOrgId || req.user?.organization_id || 'estevia';
+
+            if (!traffic || !Array.isArray(traffic)) {
+                return res.status(400).json({ message: 'Missing or invalid traffic parameter.' });
+            }
+
+            const totalWeight = traffic.reduce((sum, item) => sum + (parseInt(item.weight) || 0), 0);
+            if (totalWeight !== 100) {
+                return res.status(400).json({ message: `Total traffic split weight must equal 100. Current sum: ${totalWeight}` });
+            }
+
+            const [rows] = await db.query(
+                'SELECT id, app_type FROM applications WHERE organization_id = ? AND name = ?',
+                [orgId, name]
+            );
+
+            if (rows.length === 0) {
+                return res.status(404).json({ message: `Resource "${name}" not found.` });
+            }
+
+            const isDevMode = !process.env.AZURE_CLIENT_ID;
+
+            if (isDevMode) {
+                console.log(`[MOCK updateTraffic] Setting traffic split for ACA '${name}':`, traffic);
+                return res.json({ success: true, message: `[MOCK] Traffic routing updated successfully.` });
+            }
+
+            const orgSettings = await appController._getOrgSettings(orgId);
+            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+
+            const credential = await getAzureCredential(orgId);
+            const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
+
+            const appEnvelope = await containerClient.containerApps.get(resourceGroup, name);
+            if (!appEnvelope.configuration) appEnvelope.configuration = {};
+            if (!appEnvelope.configuration.ingress) appEnvelope.configuration.ingress = {};
+
+            appEnvelope.configuration.ingress.traffic = traffic.map(t => ({
+                revisionName: t.revisionName,
+                weight: parseInt(t.weight),
+                latestRevision: !!t.latestRevision
+            }));
+
+            const poller = await containerClient.containerApps.beginCreateOrUpdate(resourceGroup, name, appEnvelope);
+            await poller.pollUntilDone();
+
+            res.json({ success: true, message: `Traffic routing split updated successfully for Container App "${name}".` });
+        } catch (error) {
+            console.error('[AppController] updateTraffic failed:', error);
+            res.status(500).json({ message: 'Failed to update traffic splitting configuration.', error: error.message });
+        }
+    },
+
+    /**
+     * POST /api/apps/:name/revision-mode
+     * Set active revisions mode between Single and Multiple (ACA).
+     */
+    updateRevisionMode: async (req, res) => {
+        try {
+            const { name } = req.params;
+            const { mode, organizationId: bodyOrgId } = req.body;
+            const orgId = bodyOrgId || req.user?.organization_id || 'estevia';
+
+            if (!mode || !['Single', 'Multiple'].includes(mode)) {
+                return res.status(400).json({ message: 'Invalid or missing mode parameter. Must be "Single" or "Multiple".' });
+            }
+
+            const [rows] = await db.query(
+                'SELECT id, app_type FROM applications WHERE organization_id = ? AND name = ?',
+                [orgId, name]
+            );
+
+            if (rows.length === 0) {
+                return res.status(404).json({ message: `Resource "${name}" not found.` });
+            }
+
+            const isDevMode = !process.env.AZURE_CLIENT_ID;
+
+            if (isDevMode) {
+                console.log(`[MOCK updateRevisionMode] Setting revision mode for ACA '${name}' to: ${mode}`);
+                return res.json({ success: true, message: `[MOCK] Revision mode updated to "${mode}" successfully.`, activeRevisionsMode: mode });
+            }
+
+            const orgSettings = await appController._getOrgSettings(orgId);
+            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+
+            const credential = await getAzureCredential(orgId);
+            const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
+
+            const appEnvelope = await containerClient.containerApps.get(resourceGroup, name);
+            if (!appEnvelope.configuration) appEnvelope.configuration = {};
+            appEnvelope.configuration.activeRevisionsMode = mode;
+
+            if (mode === 'Single' && appEnvelope.configuration.ingress) {
+                appEnvelope.configuration.ingress.traffic = [
+                    {
+                        latestRevision: true,
+                        weight: 100
+                    }
+                ];
+            }
+
+            const poller = await containerClient.containerApps.beginCreateOrUpdate(resourceGroup, name, appEnvelope);
+            await poller.pollUntilDone();
+
+            res.json({ success: true, message: `Revision mode successfully updated to "${mode}".`, activeRevisionsMode: mode });
+        } catch (error) {
+            console.error('[AppController] updateRevisionMode failed:', error);
+            res.status(500).json({ message: 'Failed to update revision mode.', error: error.message });
+        }
+    },
+
+    /**
+     * POST /api/apps/dns-swap
+     * Swap custom domain DNS records (CNAME) between two apps (SWA fallback blue/green).
+     */
+    dnsSwap: async (req, res) => {
+        try {
+            const { app1Name, app2Name, organizationId: bodyOrgId } = req.body;
+            const orgId = bodyOrgId || req.user?.organization_id || 'estevia';
+
+            if (!app1Name || !app2Name) {
+                return res.status(400).json({ message: 'Missing app1Name or app2Name parameters.' });
+            }
+
+            // Fetch both applications
+            const [rows] = await db.query(
+                'SELECT id, name, app_type, azure_resource_details, godaddy_dns_details FROM applications WHERE organization_id = ? AND name IN (?, ?)',
+                [orgId, app1Name, app2Name]
+            );
+
+            if (rows.length < 2) {
+                return res.status(400).json({ message: 'Could not retrieve details for both applications in the database.' });
+            }
+
+            const app1 = rows.find(r => r.name === app1Name);
+            const app2 = rows.find(r => r.name === app2Name);
+
+            const dns1 = typeof app1.godaddy_dns_details === 'string' ? JSON.parse(app1.godaddy_dns_details || 'null') : app1.godaddy_dns_details;
+            const dns2 = typeof app2.godaddy_dns_details === 'string' ? JSON.parse(app2.godaddy_dns_details || 'null') : app2.godaddy_dns_details;
+
+            if (!dns1 || !dns2) {
+                return res.status(400).json({ message: 'Both applications must have mapped GoDaddy domains to swap DNS.' });
+            }
+
+            const details1 = typeof app1.azure_resource_details === 'string' ? JSON.parse(app1.azure_resource_details || '{}') : app1.azure_resource_details;
+            const details2 = typeof app2.azure_resource_details === 'string' ? JSON.parse(app2.azure_resource_details || '{}') : app2.azure_resource_details;
+
+            const isDevMode = !process.env.AZURE_CLIENT_ID;
+
+            if (isDevMode) {
+                console.log(`[MOCK dnsSwap] Swapping DNS mappings between ${app1Name} and ${app2Name}`);
+                await db.query('UPDATE applications SET godaddy_dns_details = ? WHERE id = ?', [JSON.stringify(dns2), app1.id]);
+                await db.query('UPDATE applications SET godaddy_dns_details = ? WHERE id = ?', [JSON.stringify(dns1), app2.id]);
+                return res.json({ success: true, message: `[MOCK] DNS swap completed successfully between "${app1Name}" and "${app2Name}".` });
+            }
+
+            const orgSettings = await appController._getOrgSettings(orgId);
+            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+
+            const godaddySecrets = await credentialController.getDecryptedCredentialsInternal(orgId, 'godaddy');
+            if (!godaddySecrets || !godaddySecrets.apiKey || !godaddySecrets.apiSecret) {
+                return res.status(400).json({ message: 'GoDaddy integration credentials not found or incomplete for organization.' });
+            }
+
+            const credential = await getAzureCredential(orgId);
+            const webClient = new WebSiteManagementClient(credential, subscriptionId);
+
+            // 1. Swap custom domains in Azure SWA (if they are type 'frontend')
+            if (app1.app_type === 'frontend') {
+                console.log(`[dnsSwap] Unbinding custom domain ${dns1.fqdn} from ${app1Name}`);
+                await webClient.staticSites.beginDeleteStaticSiteCustomDomainAndWait(resourceGroup, app1Name, dns1.fqdn);
+            }
+            if (app2.app_type === 'frontend') {
+                console.log(`[dnsSwap] Unbinding custom domain ${dns2.fqdn} from ${app2Name}`);
+                await webClient.staticSites.beginDeleteStaticSiteCustomDomainAndWait(resourceGroup, app2Name, dns2.fqdn);
+            }
+
+            // 2. Swap DNS records on GoDaddy
+            const godaddyUrl1 = `https://api.godaddy.com/v1/domains/${dns1.domain}/records/CNAME/${dns1.subdomain}`;
+            const body1 = [{ data: details2.hostname, ttl: 3600 }];
+            console.log(`[dnsSwap] Updating GoDaddy CNAME: ${dns1.fqdn} -> ${details2.hostname}`);
+            await axios.put(godaddyUrl1, body1, {
+                headers: {
+                    'Authorization': `sso-key ${godaddySecrets.apiKey}:${godaddySecrets.apiSecret}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const godaddyUrl2 = `https://api.godaddy.com/v1/domains/${dns2.domain}/records/CNAME/${dns2.subdomain}`;
+            const body2 = [{ data: details1.hostname, ttl: 3600 }];
+            console.log(`[dnsSwap] Updating GoDaddy CNAME: ${dns2.fqdn} -> ${details1.hostname}`);
+            await axios.put(godaddyUrl2, body2, {
+                headers: {
+                    'Authorization': `sso-key ${godaddySecrets.apiKey}:${godaddySecrets.apiSecret}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            // 3. Bind custom domains in Azure SWA
+            if (app1.app_type === 'frontend') {
+                console.log(`[dnsSwap] Binding custom domain ${dns2.fqdn} to ${app1Name}`);
+                await webClient.staticSites.beginCreateOrUpdateStaticSiteCustomDomainAndWait(
+                    resourceGroup,
+                    app1Name,
+                    dns2.fqdn,
+                    { domainName: dns2.fqdn }
+                );
+            }
+            if (app2.app_type === 'frontend') {
+                console.log(`[dnsSwap] Binding custom domain ${dns1.fqdn} to ${app2Name}`);
+                await webClient.staticSites.beginCreateOrUpdateStaticSiteCustomDomainAndWait(
+                    resourceGroup,
+                    app2Name,
+                    dns1.fqdn,
+                    { domainName: dns1.fqdn }
+                );
+            }
+
+            const newDns1 = { ...dns2, mappedAt: new Date() };
+            const newDns2 = { ...dns1, mappedAt: new Date() };
+
+            await db.query('UPDATE applications SET godaddy_dns_details = ? WHERE id = ?', [JSON.stringify(newDns1), app1.id]);
+            await db.query('UPDATE applications SET godaddy_dns_details = ? WHERE id = ?', [JSON.stringify(newDns2), app2.id]);
+
+            res.json({
+                success: true,
+                message: `DNS swap completed successfully between "${app1Name}" and "${app2Name}". ${dns1.fqdn} now targets ${app2Name}, ${dns2.fqdn} targets ${app1Name}.`
+            });
+        } catch (error) {
+            console.error('[AppController] dnsSwap failed:', error);
+            res.status(500).json({ message: 'Failed to perform DNS swap.', error: error.message });
+        }
+    },
+
+    /**
+     * GET /api/apps/repo-integrity?organizationId=...&repoFullName=...
+     *
+     * Inspects every branch of a GitHub repo and classifies each as:
+     *   frontend | backend | mixed | unknown
+     * based on the presence of well-known indicator files at the root.
+     *
+     * Also cross-references the applications DB to show which ACA/SWA each branch is deployed as.
+     *
+     * Confidence:
+     *   high   — unambiguous primary signal (Dockerfile OR staticwebapp.config.json)
+     *   medium — secondary framework files (vite.config, next.config, etc.)
+     *   low    — only generic files, cannot determine definitively
+     */
+    checkRepoIntegrity: async (req, res) => {
+        try {
+            const { organizationId, repoFullName } = req.query;
+            if (!organizationId || !repoFullName) {
+                return res.status(400).json({ message: 'Missing organizationId or repoFullName parameter.' });
+            }
+
+            // ── Auth ──────────────────────────────────────────────────────────────
+            const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
+            const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
+            if (!githubToken) {
+                return res.status(400).json({ message: 'GitHub integration token not found.' });
+            }
+            const cleanRepo = repoFullName.replace('https://github.com/', '').replace(/\.git$/, '').replace(/\/$/, '');
+            const ghHeaders = {
+                'Authorization': `token ${githubToken}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'User-Agent': getUserAgent(organizationId)
+            };
+
+            // ── Signal tables ──────────────────────────────────────────────────────
+            // Files whose presence indicates backend (ACA) deployment
+            const BACKEND_SIGNALS = [
+                'dockerfile', 'docker-compose.yml', 'docker-compose.yaml',
+                'server.js', 'index.js', 'app.js', 'app.py', 'main.py',
+                'main.go', 'pom.xml', 'build.gradle', 'go.mod', 'cargo.toml',
+                'requirements.txt', 'wsgi.py', 'asgi.py'
+            ];
+            const BACKEND_EXTENSIONS = ['.csproj', '.sln', '.fsproj'];
+
+            // Files whose presence indicates frontend (SWA) deployment
+            const FRONTEND_SIGNALS = [
+                'staticwebapp.config.json', 'index.html',
+                'next.config.js', 'next.config.ts', 'next.config.mjs',
+                'vite.config.js', 'vite.config.ts', 'vite.config.mjs',
+                'angular.json', 'nuxt.config.js', 'nuxt.config.ts',
+                'remix.config.js', 'svelte.config.js', 'gatsby-config.js', '.storybook'
+            ];
+
+            // Primary signals are unambiguous on their own → high confidence
+            const PRIMARY_BACKEND = new Set(['dockerfile', 'docker-compose.yml', 'docker-compose.yaml']);
+            const PRIMARY_FRONTEND = new Set(['staticwebapp.config.json']);
+
+            function classifyRootFiles(fileNames) {
+                const lower = fileNames.map(f => f.toLowerCase());
+                const backendHits = BACKEND_SIGNALS.filter(s => lower.includes(s));
+                const backendExtHits = lower.filter(f => BACKEND_EXTENSIONS.some(ext => f.endsWith(ext)));
+                const frontendHits = FRONTEND_SIGNALS.filter(s => lower.includes(s));
+
+                const primaryBackend = backendHits.some(h => PRIMARY_BACKEND.has(h));
+                const primaryFrontend = frontendHits.some(h => PRIMARY_FRONTEND.has(h));
+                const hasBackend = backendHits.length > 0 || backendExtHits.length > 0;
+                const hasFrontend = frontendHits.length > 0;
+
+                let detectedType, confidence;
+                if (hasBackend && hasFrontend) {
+                    detectedType = 'mixed';
+                    confidence = (primaryBackend || primaryFrontend) ? 'high' : 'medium';
+                } else if (hasBackend) {
+                    detectedType = 'backend';
+                    confidence = primaryBackend ? 'high' : (backendHits.length >= 2 ? 'medium' : 'low');
+                } else if (hasFrontend) {
+                    detectedType = 'frontend';
+                    confidence = primaryFrontend ? 'high' : (frontendHits.length >= 2 ? 'medium' : 'low');
+                } else {
+                    detectedType = 'unknown';
+                    confidence = 'low';
+                }
+
+                return {
+                    detectedType,
+                    confidence,
+                    signals: {
+                        backendFiles: [...backendHits, ...backendExtHits],
+                        frontendFiles: frontendHits,
+                        hasCiYml: lower.includes('azure-pipelines.yml'),
+                        hasDockerfile: lower.includes('dockerfile'),
+                        hasSwaConfig: lower.includes('staticwebapp.config.json'),
+                        hasPackageJson: lower.includes('package.json'),
+                        allRootFiles: fileNames
+                    }
+                };
+            }
+
+            // ── 1. Fetch all branches ────────────────────────────────────────────
+            const branchesRes = await axios.get(
+                `https://api.github.com/repos/${cleanRepo}/branches?per_page=100`,
+                { headers: ghHeaders }
+            );
+            const branches = branchesRes.data;
+
+            // Fetch repo details to get default branch
+            let defaultBranch = 'main';
+            try {
+                const repoRes = await axios.get(
+                    `https://api.github.com/repos/${cleanRepo}`,
+                    { headers: ghHeaders }
+                );
+                defaultBranch = repoRes.data.default_branch || 'main';
+            } catch (repoErr) {
+                console.warn(`[checkRepoIntegrity] Failed to fetch repo default branch:`, repoErr.message);
+            }
+
+            // ── 2. Fetch root contents for each branch in parallel ───────────────
+            const branchReports = await Promise.all(branches.map(async (branch) => {
+                try {
+                    const contentsRes = await axios.get(
+                        `https://api.github.com/repos/${cleanRepo}/contents/?ref=${encodeURIComponent(branch.name)}`,
+                        { headers: ghHeaders, timeout: 8000 }
+                    );
+                    const rootFiles = Array.isArray(contentsRes.data) ? contentsRes.data.map(f => f.name) : [];
+                    return { name: branch.name, protected: branch.protected, ...classifyRootFiles(rootFiles), deployedAs: null };
+                } catch (err) {
+                    console.warn(`[checkRepoIntegrity] Branch ${branch.name} contents failed:`, err.message);
+                    return {
+                        name: branch.name, protected: branch.protected,
+                        detectedType: 'unknown', confidence: 'low',
+                        signals: { backendFiles: [], frontendFiles: [], hasCiYml: false, hasDockerfile: false, hasSwaConfig: false, hasPackageJson: false, allRootFiles: [] },
+                        deployedAs: null
+                    };
+                }
+            }));
+
+            // ── 3. Cross-reference with deployed apps in DB ──────────────────────
+            try {
+                const [dbApps] = await db.query(
+                    `SELECT name, app_type, azure_resource_details FROM applications WHERE organization_id = ? AND (repo_url LIKE ? OR repo_url LIKE ?)`,
+                    [organizationId, `%${cleanRepo}%`, `%${cleanRepo.toLowerCase()}%`]
+                );
+                for (const dbApp of dbApps) {
+                    let details = {};
+                    try { details = typeof dbApp.azure_resource_details === 'string' ? JSON.parse(dbApp.azure_resource_details || '{}') : (dbApp.azure_resource_details || {}); } catch (e) { }
+                    const deployedBranch = details.branch || null;
+                    if (deployedBranch) {
+                        const report = branchReports.find(r => r.name.toLowerCase() === deployedBranch.toLowerCase());
+                        if (report && !report.deployedAs) report.deployedAs = { name: dbApp.name, type: dbApp.app_type, branch: deployedBranch };
+                    } else {
+                        // No explicit branch — match by ACA name suffix
+                        const appNameLower = dbApp.name.toLowerCase();
+                        for (const report of branchReports) {
+                            if (new RegExp(`-${report.name.toLowerCase()}(-|$)`).test(appNameLower) && !report.deployedAs) {
+                                report.deployedAs = { name: dbApp.name, type: dbApp.app_type, branch: report.name };
+                                break;
+                            }
+                        }
+                    }
+                }
+            } catch (dbErr) {
+                console.warn('[checkRepoIntegrity] DB cross-reference failed (non-fatal):', dbErr.message);
+            }
+
+            // ── 4. Compute overall repo status ───────────────────────────────────
+            const issues = [];
+            const mixedBranches = branchReports.filter(r => r.detectedType === 'mixed').map(r => r.name);
+            const distinctTypes = new Set(branchReports.filter(r => r.detectedType !== 'unknown' && r.detectedType !== 'mixed').map(r => r.detectedType));
+
+            if (mixedBranches.length > 0) issues.push(`Branch(es) "${mixedBranches.join('", "')}" contain both frontend and backend code.`);
+            if (distinctTypes.has('frontend') && distinctTypes.has('backend')) issues.push(`This repo has branches of different types (some frontend, some backend). Ensure each is deployed to the correct resource type.`);
+
+            const overallStatus = mixedBranches.length > 0 ? 'mixed' : (issues.length > 0 ? 'warning' : 'ok');
+            console.log(`[AppController] checkRepoIntegrity: ${cleanRepo} → ${overallStatus} (${branchReports.length} branches)`);
+
+            res.json({ success: true, repo: cleanRepo, overallStatus, issues, branches: branchReports, defaultBranch });
+
+        } catch (error) {
+            console.error('[AppController] checkRepoIntegrity failed:', error);
+            res.status(500).json({ message: 'Failed to check repo integrity.', error: error.message });
+        }
+    },
+
+    getComplianceStatus: async (req, res) => {
+        try {
+            const { organizationId } = req.query;
+            // Resolve org and fetch tier for rule scope enforcement
+            const resolvedOrgId = organizationId || req.user?.organization_id || 'estevia';
+            const [[orgRecord]] = await db.query(
+                'SELECT license_tier FROM organizations WHERE id = ?',
+                [resolvedOrgId]
+            );
+            const orgLicenseTier = orgRecord?.license_tier || 'growth';
+
+            // Tier-based rule scope: growth gets 3 core rules only
+            const tierAllowedRules = {
+                growth: new Set(['tagging', 'tls', 'network-security']),
+                enterprise: null,   // null = all 9 rules allowed
+                sovereign: null
+            };
+            const restrictedRules = tierAllowedRules[orgLicenseTier] ?? tierAllowedRules.growth;
+            // ── End tier scope setup ─────────────────────────────────────────
+
+            if (!organizationId) {
+                return res.status(400).json({ message: 'Missing organizationId query parameter.' });
+            }
+
+            const orgSettings = await appController._getOrgSettings(organizationId);
+
+            // Parse disabled rules and severities from database organization settings
+            const disabledRulesQuery = orgSettings.disabled_rules || '';
+            const disabledRules = new Set(disabledRulesQuery.split(',').filter(Boolean));
+
+            // Auto-disable restricted rules based on license tier
+            if (restrictedRules) {
+                const allRules = ['tagging', 'residency', 'tls', 'network-security', 'https-only', 'containment', 'registry-auth', 'secrets-expiry', 'shadow-it'];
+                for (const ruleId of allRules) {
+                    if (!restrictedRules.has(ruleId)) {
+                        disabledRules.add(ruleId);
+                    }
+                }
+            }
+
+            const severitiesQuery = orgSettings.rule_severities || '{}';
+            let severities = {};
+            try {
+                severities = JSON.parse(severitiesQuery);
+            } catch (e) {
+                severities = {};
+            }
+            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
+
+            const credential = await getAzureCredential(organizationId);
+            const tokenRes = await credential.getToken("https://management.azure.com/.default");
+            const token = tokenRes.token;
+
+            const resourceClient = new ResourceManagementClient(credential, subscriptionId);
+            const resources = [];
+            try {
+                for await (const r of resourceClient.resources.listByResourceGroup(resourceGroup)) {
+                    resources.push(r);
+                }
+            } catch (err) {
+                console.error('[AppController] Error listing compliance resources:', err.message);
+            }
+
+            // Fetch registered applications
+            const [dbApps] = await db.query(
+                'SELECT id, name, app_type, status, azure_resource_details, repo_url FROM applications WHERE organization_id = ?',
+                [organizationId]
+            );
+
+            // Fallback if no resources returned from Azure
+            if (resources.length === 0) {
+                for (const app of dbApps) {
+                    const details = typeof app.azure_resource_details === 'string'
+                        ? JSON.parse(app.azure_resource_details || '{}')
+                        : (app.azure_resource_details || {});
+
+                    // Dynamic mock seeds for local development validation
+                    if (app.name === 'estevia-feedback-api-dev') {
+                        if (details.portsOpen === undefined) details.portsOpen = ['22'];
+                        if (details.ingress === undefined) details.ingress = { allowInsecure: true };
+                        if (details.image === undefined) details.image = 'library/node:latest';
+                        if (details.vnetName === undefined) details.vnetName = 'estevia-prod-vnet';
+                        if (details.branch === undefined) details.branch = 'dev';
+                        if (details.secretExpiresAt === undefined) details.secretExpiresAt = new Date(Date.now() + 15 * 24 * 3600 * 1000).toISOString().split('T')[0];
+                    }
+                    if (app.name === 'estevia-db-flex') {
+                        if (details.sslEnabled === undefined) details.sslEnabled = false;
+                    }
+
+                    resources.push({
+                        id: details.resourceId || `db-${app.id}`,
+                        name: app.name,
+                        type: app.app_type === 'frontend' ? 'Microsoft.Web/staticSites' :
                             app.app_type === 'backend' ? 'Microsoft.App/containerApps' :
-                            app.app_type === 'database' ? 'Microsoft.DBforMySQL/flexibleServers' :
-                            app.app_type === 'vm' ? 'Microsoft.Compute/virtualMachines' :
-                            app.app_type === 'cluster' ? 'Microsoft.ContainerService/managedClusters' : 'other',
-                      location: details.location || 'Central US',
-                      tags: details.tags || {},
-                      details: details
-                  });
-              }
+                                app.app_type === 'database' ? 'Microsoft.DBforMySQL/flexibleServers' :
+                                    app.app_type === 'vm' ? 'Microsoft.Compute/virtualMachines' :
+                                        app.app_type === 'cluster' ? 'Microsoft.ContainerService/managedClusters' : 'other',
+                        location: details.location || 'Central US',
+                        tags: details.tags || {},
+                        details: details
+                    });
+                }
 
-              // Inject mock orphaned vm to showcase shadow-it compliance auditing
-              if (resources.length > 0 && !resources.some(r => r.name === 'untracked-vm-sandbox')) {
-                  resources.push({
-                      id: 'db-shadow-vm',
-                      name: 'untracked-vm-sandbox',
-                      type: 'Microsoft.Compute/virtualMachines',
-                      location: 'East US',
-                      tags: { Owner: 'unknown' },
-                      details: { portsOpen: ['3389'] }
-                  });
-              }
-          }
+                // Inject mock orphaned vm to showcase shadow-it compliance auditing
+                if (resources.length > 0 && !resources.some(r => r.name === 'untracked-vm-sandbox')) {
+                    resources.push({
+                        id: 'db-shadow-vm',
+                        name: 'untracked-vm-sandbox',
+                        type: 'Microsoft.Compute/virtualMachines',
+                        location: 'East US',
+                        tags: { Owner: 'unknown' },
+                        details: { portsOpen: ['3389'] }
+                    });
+                }
+            }
 
-          // Fetch applied remediations to check override states
-          const [appliedRemediations] = await db.query(
-              'SELECT suggestion_id FROM applied_remediations WHERE organization_id = ?',
-              [organizationId]
-          );
-          const appliedSet = new Set(appliedRemediations.map(r => r.suggestion_id));
+            // Fetch applied remediations to check override states
+            const [appliedRemediations] = await db.query(
+                'SELECT suggestion_id FROM applied_remediations WHERE organization_id = ?',
+                [organizationId]
+            );
+            const appliedSet = new Set(appliedRemediations.map(r => r.suggestion_id));
 
-          // Fetch last 10 audit log entries for the SOC 2 compliance panel
-          const [auditLogs] = await db.query(
-              `SELECT id, actor_email, action_type, target, details, created_at 
+            // Fetch last 10 audit log entries for the SOC 2 compliance panel
+            const [auditLogs] = await db.query(
+                `SELECT id, actor_email, action_type, target, details, created_at 
                FROM audit_logs 
                ORDER BY created_at DESC 
                LIMIT 10`
-          );
+            );
 
-          const appMap = new Map();
-          for (const app of dbApps) {
-              appMap.set(app.name.toLowerCase(), app);
-          }
+            const appMap = new Map();
+            for (const app of dbApps) {
+                appMap.set(app.name.toLowerCase(), app);
+            }
 
-          let totalChecks = 0;
-          let passedChecks = 0;
-          const violations = [];
+            let totalChecks = 0;
+            let passedChecks = 0;
+            const violations = [];
 
-          // 9 Rules Definitions Map
-          const rulesDef = [
-              {
-                  id: 'tagging',
-                  name: 'Required Resource Tagging',
-                  description: 'Enforces presence of enterprise tagging standards: Environment, Owner, and CostCenter.',
-                  rootCause: 'Lack of strict resource group template constraints or manual provisioning bypassing setup scripts.',
-                  whyImportant: 'Crucial for cost allocation, resource categorization, and compliance auditing. Yields up to 25% cost tracking efficiency.',
-                  impactOfFix: 'Applies missing tags to resource groups via ARM APIs, ensuring 100% accurate attribution without downtime.',
-                  standards: ['ISO 27001 (A.12.1.1)', 'SOC 2 (CC7.1)']
-              },
-              {
-                  id: 'residency',
-                  name: 'Data Region Residency Lock',
-                  description: 'Verifies all hosted assets reside within approved sovereign geo boundaries (US-only).',
-                  rootCause: 'Developers selecting incorrect deployment regions in cloud config templates.',
-                  whyImportant: 'Avoids regulatory legal penalties (e.g. GDPR, CCPA) by guaranteeing sensitive customer data does not cross international borders.',
-                  impactOfFix: 'Restricts non-compliant traffic routes and flags the deployment to prevent data residency leaks.',
-                  standards: ['GDPR (Article 45)', 'SOC 2 (CC6.6)']
-              },
-              {
-                  id: 'tls',
-                  name: 'MySQL SSL/TLS Enforcement',
-                  description: 'Checks if databases enforce secure transport (SSL/TLS v1.2+) settings.',
-                  rootCause: 'Default database server configurations allowing unencrypted connections for legacy compatibility.',
-                  whyImportant: 'Prevents man-in-the-middle attacks and packet sniffing of database credentials, satisfying PCI-DSS requirements.',
-                  impactOfFix: 'Executes server configuration patches to require TLS 1.2+, rejecting non-SSL database traffic instantly.',
-                  standards: ['PCI-DSS (v4.0 4.1.1)', 'ISO 27001 (A.10.1.1)']
-              },
-              {
-                  id: 'network-security',
-                  name: 'VM Inbound Port Security',
-                  description: 'Verifies that virtual machines do not expose administration ports (SSH 22, RDP 3389) to the public internet.',
-                  rootCause: 'Temporary firewall rule changes left open after remote manual administrative troubleshooting.',
-                  whyImportant: 'Eliminates brute-force port scanners and unauthorized intrusion vectors, which cause 80%+ of VM compromises.',
-                  impactOfFix: 'Rewrites NSG inbound rules, restricting administrative SSH/RDP ports strictly to the corporate VPN gateway.',
-                  standards: ['CIS Benchmark (v3.0 5.1)', 'SOC 2 (CC6.7)']
-              },
-              {
-                  id: 'https-only',
-                  name: 'HTTPS-Only Ingress Enforcement',
-                  description: 'Ensures all Container Apps disable insecure HTTP access and require secure HTTPS connections.',
-                  rootCause: 'Ingress routing configuration defaults that permit cleartext HTTP traffic on port 80.',
-                  whyImportant: 'Encrypts session identifiers and private request payloads. Crucial for web traffic privacy and search ranking (SEO) benefits.',
-                  impactOfFix: 'Forces HTTP-to-HTTPS redirect at the routing gateway layer, securing web traffic with zero app code modifications.',
-                  standards: ['PCI-DSS (v4.0 4.1)', 'SOC 2 (CC6.7)']
-              },
-              {
-                  id: 'containment',
-                  name: 'Branch-to-Network Isolation',
-                  description: 'Enforces environmental boundaries: prevents staging/development branches from deploying to production networks, and vice-versa.',
-                  rootCause: 'Typographical errors in deployment pipeline scripts routing development branches to production subnets.',
-                  whyImportant: 'Protects production resources from untested changes and prevents staging code from exposing prod database endpoints.',
-                  impactOfFix: 'Instantly aborts pipeline runs attempting invalid cross-network deployments, blocking unauthorized access.',
-                  standards: ['ISO 27001 (A.12.4.1)', 'SOC 2 (CC8.1)']
-              },
-              {
-                  id: 'registry-auth',
-                  name: 'Container Registry Security',
-                  description: 'Validates that containerized resources pull images only from trusted, authenticated container registries.',
-                  rootCause: 'Deployment scripts pulling public images directly from unverified registries, exposing supply chain vectors.',
-                  whyImportant: 'Blocks supply chain attacks and container image spoofing. Ensures only vetted, scanned images run in production.',
-                  impactOfFix: 'Rejects unauthorized registry domains, enforcing deployment failure and protecting container orchestrators.',
-                  standards: ['CIS Benchmark (v3.0 4.3)', 'ISO 27001 (A.14.2.1)']
-              },
-              {
-                  id: 'secrets-expiry',
-                  name: 'Key Vault Secrets Expiry Check',
-                  description: 'Monitors Azure Key Vault secrets for expiration dates, ensuring credentials do not expire and interrupt continuous deployments.',
-                  rootCause: 'Manual creation of keys, certificates, or tokens without configuring automated rotation or alerts.',
-                  whyImportant: 'Prevents sudden service downtime due to expired connection strings and minimizes window of threat for leaked keys.',
-                  impactOfFix: 'Alerts administration channels and triggers an automated secrets rotation worker to renew keys.',
-                  standards: ['ISO 27001 (A.10.1.1)', 'SOC 2 (CC6.1)']
-              },
-              {
-                  id: 'shadow-it',
-                  name: 'Orphaned Resource Scan (Shadow IT)',
-                  description: 'Identifies untracked resources running in the subscription that are not registered in the DevOps catalog to prevent shadow IT costs.',
-                  rootCause: 'Ad-hoc sandbox testing by developers who forget to clean up resources after evaluation.',
-                  whyImportant: 'Saves 15-30% of unnecessary cloud spend by identifying idle/orphaned infrastructure resources.',
-                  impactOfFix: 'Registers found resources to their owner scope or schedules automated power sleep states to cut costs.',
-                  standards: ['SOC 2 (CC6.1)', 'CIS Benchmark (v3.0 1.1)']
-              }
-          ];
+            // 9 Rules Definitions Map
+            const rulesDef = [
+                {
+                    id: 'tagging',
+                    name: 'Required Resource Tagging',
+                    description: 'Enforces presence of enterprise tagging standards: Environment, Owner, and CostCenter.',
+                    rootCause: 'Lack of strict resource group template constraints or manual provisioning bypassing setup scripts.',
+                    whyImportant: 'Crucial for cost allocation, resource categorization, and compliance auditing. Yields up to 25% cost tracking efficiency.',
+                    impactOfFix: 'Applies missing tags to resource groups via ARM APIs, ensuring 100% accurate attribution without downtime.',
+                    standards: ['ISO 27001 (A.12.1.1)', 'SOC 2 (CC7.1)']
+                },
+                {
+                    id: 'residency',
+                    name: 'Data Region Residency Lock',
+                    description: 'Verifies all hosted assets reside within approved sovereign geo boundaries (US-only).',
+                    rootCause: 'Developers selecting incorrect deployment regions in cloud config templates.',
+                    whyImportant: 'Avoids regulatory legal penalties (e.g. GDPR, CCPA) by guaranteeing sensitive customer data does not cross international borders.',
+                    impactOfFix: 'Restricts non-compliant traffic routes and flags the deployment to prevent data residency leaks.',
+                    standards: ['GDPR (Article 45)', 'SOC 2 (CC6.6)']
+                },
+                {
+                    id: 'tls',
+                    name: 'MySQL SSL/TLS Enforcement',
+                    description: 'Checks if databases enforce secure transport (SSL/TLS v1.2+) settings.',
+                    rootCause: 'Default database server configurations allowing unencrypted connections for legacy compatibility.',
+                    whyImportant: 'Prevents man-in-the-middle attacks and packet sniffing of database credentials, satisfying PCI-DSS requirements.',
+                    impactOfFix: 'Executes server configuration patches to require TLS 1.2+, rejecting non-SSL database traffic instantly.',
+                    standards: ['PCI-DSS (v4.0 4.1.1)', 'ISO 27001 (A.10.1.1)']
+                },
+                {
+                    id: 'network-security',
+                    name: 'VM Inbound Port Security',
+                    description: 'Verifies that virtual machines do not expose administration ports (SSH 22, RDP 3389) to the public internet.',
+                    rootCause: 'Temporary firewall rule changes left open after remote manual administrative troubleshooting.',
+                    whyImportant: 'Eliminates brute-force port scanners and unauthorized intrusion vectors, which cause 80%+ of VM compromises.',
+                    impactOfFix: 'Rewrites NSG inbound rules, restricting administrative SSH/RDP ports strictly to the corporate VPN gateway.',
+                    standards: ['CIS Benchmark (v3.0 5.1)', 'SOC 2 (CC6.7)']
+                },
+                {
+                    id: 'https-only',
+                    name: 'HTTPS-Only Ingress Enforcement',
+                    description: 'Ensures all Container Apps disable insecure HTTP access and require secure HTTPS connections.',
+                    rootCause: 'Ingress routing configuration defaults that permit cleartext HTTP traffic on port 80.',
+                    whyImportant: 'Encrypts session identifiers and private request payloads. Crucial for web traffic privacy and search ranking (SEO) benefits.',
+                    impactOfFix: 'Forces HTTP-to-HTTPS redirect at the routing gateway layer, securing web traffic with zero app code modifications.',
+                    standards: ['PCI-DSS (v4.0 4.1)', 'SOC 2 (CC6.7)']
+                },
+                {
+                    id: 'containment',
+                    name: 'Branch-to-Network Isolation',
+                    description: 'Enforces environmental boundaries: prevents staging/development branches from deploying to production networks, and vice-versa.',
+                    rootCause: 'Typographical errors in deployment pipeline scripts routing development branches to production subnets.',
+                    whyImportant: 'Protects production resources from untested changes and prevents staging code from exposing prod database endpoints.',
+                    impactOfFix: 'Instantly aborts pipeline runs attempting invalid cross-network deployments, blocking unauthorized access.',
+                    standards: ['ISO 27001 (A.12.4.1)', 'SOC 2 (CC8.1)']
+                },
+                {
+                    id: 'registry-auth',
+                    name: 'Container Registry Security',
+                    description: 'Validates that containerized resources pull images only from trusted, authenticated container registries.',
+                    rootCause: 'Deployment scripts pulling public images directly from unverified registries, exposing supply chain vectors.',
+                    whyImportant: 'Blocks supply chain attacks and container image spoofing. Ensures only vetted, scanned images run in production.',
+                    impactOfFix: 'Rejects unauthorized registry domains, enforcing deployment failure and protecting container orchestrators.',
+                    standards: ['CIS Benchmark (v3.0 4.3)', 'ISO 27001 (A.14.2.1)']
+                },
+                {
+                    id: 'secrets-expiry',
+                    name: 'Key Vault Secrets Expiry Check',
+                    description: 'Monitors Azure Key Vault secrets for expiration dates, ensuring credentials do not expire and interrupt continuous deployments.',
+                    rootCause: 'Manual creation of keys, certificates, or tokens without configuring automated rotation or alerts.',
+                    whyImportant: 'Prevents sudden service downtime due to expired connection strings and minimizes window of threat for leaked keys.',
+                    impactOfFix: 'Alerts administration channels and triggers an automated secrets rotation worker to renew keys.',
+                    standards: ['ISO 27001 (A.10.1.1)', 'SOC 2 (CC6.1)']
+                },
+                {
+                    id: 'shadow-it',
+                    name: 'Orphaned Resource Scan (Shadow IT)',
+                    description: 'Identifies untracked resources running in the subscription that are not registered in the DevOps catalog to prevent shadow IT costs.',
+                    rootCause: 'Ad-hoc sandbox testing by developers who forget to clean up resources after evaluation.',
+                    whyImportant: 'Saves 15-30% of unnecessary cloud spend by identifying idle/orphaned infrastructure resources.',
+                    impactOfFix: 'Registers found resources to their owner scope or schedules automated power sleep states to cut costs.',
+                    standards: ['SOC 2 (CC6.1)', 'CIS Benchmark (v3.0 1.1)']
+                }
+            ];
 
-          // Run compliance checks across resources
-          for (const r of resources) {
-              const rType = r.type || '';
-              const rName = r.name || '';
-              const rLocation = (r.location || '').toLowerCase().replace(/\s+/g, '');
-              
-              if (rType === 'Microsoft.Compute/disks' || rType === 'Microsoft.Network/publicIPAddresses' || rType === 'Microsoft.OperationalInsights/workspaces') {
-                  continue;
-              }
+            // Run compliance checks across resources
+            for (const r of resources) {
+                const rType = r.type || '';
+                const rName = r.name || '';
+                const rLocation = (r.location || '').toLowerCase().replace(/\s+/g, '');
 
-              const matchedApp = appMap.get(rName.toLowerCase());
-              const details = matchedApp 
-                  ? (typeof matchedApp.azure_resource_details === 'string'
-                      ? JSON.parse(matchedApp.azure_resource_details || '{}')
-                      : (matchedApp.azure_resource_details || {}))
-                  : (r.details || {});
-              const branch = details.branch || (matchedApp ? matchedApp.branch : null) || 'dev';
+                if (rType === 'Microsoft.Compute/disks' || rType === 'Microsoft.Network/publicIPAddresses' || rType === 'Microsoft.OperationalInsights/workspaces') {
+                    continue;
+                }
 
-              // 1. Tagging Compliance
-              if (!disabledRules.has('tagging')) {
-                  totalChecks++;
-                  const hasAppliedTags = appliedSet.has(`compliance-tagging-${rName}`);
-                  const hasEnv = r.tags && (r.tags.Environment || r.tags.environment || r.tags.ENVIRONMENT || r.tags.Env || r.tags.env || details.tags?.Environment);
-                  const hasOwner = r.tags && (r.tags.Owner || r.tags.owner || r.tags.OWNER || details.tags?.Owner);
-                  const hasCostCenter = r.tags && (r.tags.CostCenter || r.tags.costcenter || r.tags.COSTCENTER || details.tags?.CostCenter);
-                  
-                  if (hasAppliedTags || (hasEnv && hasOwner && hasCostCenter)) {
-                      passedChecks++;
-                  } else {
-                      violations.push({
-                          resourceName: rName,
-                          resourceType: rType,
-                          ruleId: 'tagging',
-                          ruleName: 'Required Resource Tagging',
-                          message: 'Resource is missing one or more required enterprise tags: Environment, Owner, or CostCenter.',
-                          remediable: true,
-                          remediationType: 'patch_tags',
-                          suggestionId: `compliance-tagging-${rName}`,
-                          severity: severities.tagging || 'low',
-                          standards: ['ISO 27001 (A.12.1.1)', 'SOC 2 (CC7.1)']
-                      });
-                  }
-              }
+                const matchedApp = appMap.get(rName.toLowerCase());
+                const details = matchedApp
+                    ? (typeof matchedApp.azure_resource_details === 'string'
+                        ? JSON.parse(matchedApp.azure_resource_details || '{}')
+                        : (matchedApp.azure_resource_details || {}))
+                    : (r.details || {});
+                const branch = details.branch || (matchedApp ? matchedApp.branch : null) || 'dev';
 
-              // 2. Data Residency Compliance
-              if (!disabledRules.has('residency')) {
-                  totalChecks++;
-                  const isApprovedRegion = rLocation.includes('us') || rLocation.includes('unitedstates') || rLocation.includes('central') || rLocation.includes('east') || rLocation.includes('west');
-                  if (isApprovedRegion) {
-                      passedChecks++;
-                  } else {
-                      violations.push({
-                          resourceName: rName,
-                          resourceType: rType,
-                          ruleId: 'residency',
-                          ruleName: 'Data Region Residency Lock',
-                          message: `Resource is running in non-approved region: '${r.location}'. Approved regions are US-only.`,
-                          remediable: false,
-                          remediationType: null,
-                          suggestionId: null,
-                          severity: severities.residency || 'high',
-                          standards: ['GDPR (Article 45)', 'SOC 2 (CC6.6)']
-                      });
-                  }
-              }
+                // 1. Tagging Compliance
+                if (!disabledRules.has('tagging')) {
+                    totalChecks++;
+                    const hasAppliedTags = appliedSet.has(`compliance-tagging-${rName}`);
+                    const hasEnv = r.tags && (r.tags.Environment || r.tags.environment || r.tags.ENVIRONMENT || r.tags.Env || r.tags.env || details.tags?.Environment);
+                    const hasOwner = r.tags && (r.tags.Owner || r.tags.owner || r.tags.OWNER || details.tags?.Owner);
+                    const hasCostCenter = r.tags && (r.tags.CostCenter || r.tags.costcenter || r.tags.COSTCENTER || details.tags?.CostCenter);
 
-              // 3. TLS Enforcement Audit
-              if (rType === 'Microsoft.DBforMySQL/flexibleServers') {
-                  if (!disabledRules.has('tls')) {
-                      totalChecks++;
-                      const hasAppliedTls = appliedSet.has(`compliance-tls-${rName}`);
-                      
-                      let sslEnabled = false;
-                      if (hasAppliedTls || details.sslEnabled === true) {
-                          sslEnabled = true;
-                      } else {
-                          try {
-                              const configUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.DBforMySQL/flexibleServers/${rName}/configurations/require_secure_transport?api-version=2021-05-01`;
-                              const configRes = await axios.get(configUrl, {
-                                  headers: { 'Authorization': `Bearer ${token}` },
-                                  timeout: 2500
-                              });
-                              const val = configRes.data?.properties?.value;
-                              sslEnabled = (val === 'ON');
-                          } catch (err) {
-                              sslEnabled = rName.toLowerCase().includes('prod') || rName.toLowerCase().includes('flex') || rName.toLowerCase().includes('db');
-                          }
-                      }
+                    if (hasAppliedTags || (hasEnv && hasOwner && hasCostCenter)) {
+                        passedChecks++;
+                    } else {
+                        violations.push({
+                            resourceName: rName,
+                            resourceType: rType,
+                            ruleId: 'tagging',
+                            ruleName: 'Required Resource Tagging',
+                            message: 'Resource is missing one or more required enterprise tags: Environment, Owner, or CostCenter.',
+                            remediable: true,
+                            remediationType: 'patch_tags',
+                            suggestionId: `compliance-tagging-${rName}`,
+                            severity: severities.tagging || 'low',
+                            standards: ['ISO 27001 (A.12.1.1)', 'SOC 2 (CC7.1)']
+                        });
+                    }
+                }
 
-                      if (sslEnabled) {
-                          passedChecks++;
-                      } else {
-                          violations.push({
-                              resourceName: rName,
-                              resourceType: rType,
-                              ruleId: 'tls',
-                              ruleName: 'MySQL SSL/TLS Enforcement',
-                              message: 'Database server does not enforce SSL/TLS secure transport settings.',
-                              remediable: true,
-                              remediationType: 'enable_tls',
-                              suggestionId: `compliance-tls-${rName}`,
-                              severity: severities.tls || 'critical',
-                              standards: ['PCI-DSS (v4.0 4.1.1)', 'ISO 27001 (A.10.1.1)']
-                          });
-                      }
-                  }
-              }
+                // 2. Data Residency Compliance
+                if (!disabledRules.has('residency')) {
+                    totalChecks++;
+                    const isApprovedRegion = rLocation.includes('us') || rLocation.includes('unitedstates') || rLocation.includes('central') || rLocation.includes('east') || rLocation.includes('west');
+                    if (isApprovedRegion) {
+                        passedChecks++;
+                    } else {
+                        violations.push({
+                            resourceName: rName,
+                            resourceType: rType,
+                            ruleId: 'residency',
+                            ruleName: 'Data Region Residency Lock',
+                            message: `Resource is running in non-approved region: '${r.location}'. Approved regions are US-only.`,
+                            remediable: false,
+                            remediationType: null,
+                            suggestionId: null,
+                            severity: severities.residency || 'high',
+                            standards: ['GDPR (Article 45)', 'SOC 2 (CC6.6)']
+                        });
+                    }
+                }
 
-              // 4. VM Inbound Port Security Check
-              if (rType === 'Microsoft.Compute/virtualMachines') {
-                  if (!disabledRules.has('network-security')) {
-                      totalChecks++;
-                      const hasAppliedNetsec = appliedSet.has(`compliance-netsec-${rName}`);
-                      const ports = Array.isArray(details.portsOpen) 
-                          ? details.portsOpen.map(String) 
-                          : (typeof details.portsOpen === 'string' ? details.portsOpen.split(',').map(p => p.trim()) : []);
-                      const exposesPublicAdmin = (ports.includes('22') || ports.includes('3389'));
+                // 3. TLS Enforcement Audit
+                if (rType === 'Microsoft.DBforMySQL/flexibleServers') {
+                    if (!disabledRules.has('tls')) {
+                        totalChecks++;
+                        const hasAppliedTls = appliedSet.has(`compliance-tls-${rName}`);
 
-                      if (hasAppliedNetsec || !exposesPublicAdmin) {
-                          passedChecks++;
-                      } else {
-                          violations.push({
-                              resourceName: rName,
-                              resourceType: rType,
-                              ruleId: 'network-security',
-                              ruleName: 'VM Inbound Port Security',
-                              message: 'Virtual Machine exposes administrative ports (SSH 22 or RDP 3389) directly to the public internet.',
-                              remediable: true,
-                              remediationType: 'restrict_ports',
-                              suggestionId: `compliance-netsec-${rName}`,
-                              severity: severities['network-security'] || 'critical',
-                              standards: ['CIS Benchmark (v3.0 5.1)', 'SOC 2 (CC6.7)']
-                          });
-                      }
-                  }
-              }
+                        let sslEnabled = false;
+                        if (hasAppliedTls || details.sslEnabled === true) {
+                            sslEnabled = true;
+                        } else {
+                            try {
+                                const configUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.DBforMySQL/flexibleServers/${rName}/configurations/require_secure_transport?api-version=2021-05-01`;
+                                const configRes = await axios.get(configUrl, {
+                                    headers: { 'Authorization': `Bearer ${token}` },
+                                    timeout: 2500
+                                });
+                                const val = configRes.data?.properties?.value;
+                                sslEnabled = (val === 'ON');
+                            } catch (err) {
+                                sslEnabled = rName.toLowerCase().includes('prod') || rName.toLowerCase().includes('flex') || rName.toLowerCase().includes('db');
+                            }
+                        }
 
-              // 5. Container App HTTPS-Only Ingress Check
-              if (rType === 'Microsoft.App/containerApps') {
-                  if (!disabledRules.has('https-only')) {
-                      totalChecks++;
-                      const hasAppliedHttps = appliedSet.has(`compliance-https-${rName}`);
-                      const insecureAllowed = details.ingress && details.ingress.allowInsecure === true;
+                        if (sslEnabled) {
+                            passedChecks++;
+                        } else {
+                            violations.push({
+                                resourceName: rName,
+                                resourceType: rType,
+                                ruleId: 'tls',
+                                ruleName: 'MySQL SSL/TLS Enforcement',
+                                message: 'Database server does not enforce SSL/TLS secure transport settings.',
+                                remediable: true,
+                                remediationType: 'enable_tls',
+                                suggestionId: `compliance-tls-${rName}`,
+                                severity: severities.tls || 'critical',
+                                standards: ['PCI-DSS (v4.0 4.1.1)', 'ISO 27001 (A.10.1.1)']
+                            });
+                        }
+                    }
+                }
 
-                      if (hasAppliedHttps || !insecureAllowed) {
-                          passedChecks++;
-                      } else {
-                          violations.push({
-                              resourceName: rName,
-                              resourceType: rType,
-                              ruleId: 'https-only',
-                              ruleName: 'HTTPS-Only Ingress Enforcement',
-                              message: 'Container App ingress is configured to allow insecure HTTP traffic.',
-                              remediable: true,
-                              remediationType: 'enforce_https',
-                              suggestionId: `compliance-https-${rName}`,
-                              severity: severities['https-only'] || 'medium',
-                              standards: ['PCI-DSS (v4.0 4.1)', 'SOC 2 (CC6.7)']
-                          });
-                      }
-                  }
-              }
+                // 4. VM Inbound Port Security Check
+                if (rType === 'Microsoft.Compute/virtualMachines') {
+                    if (!disabledRules.has('network-security')) {
+                        totalChecks++;
+                        const hasAppliedNetsec = appliedSet.has(`compliance-netsec-${rName}`);
+                        const ports = Array.isArray(details.portsOpen)
+                            ? details.portsOpen.map(String)
+                            : (typeof details.portsOpen === 'string' ? details.portsOpen.split(',').map(p => p.trim()) : []);
+                        const exposesPublicAdmin = (ports.includes('22') || ports.includes('3389'));
 
-              // 6. Branch-to-Network Isolation Containment Check
-              if (!disabledRules.has('containment')) {
-                  totalChecks++;
-                  const hasAppliedContainment = appliedSet.has(`compliance-containment-${rName}`);
-                  
-                  const isProdVNet = details.vnetName && (details.vnetName.toLowerCase().includes('prod') || details.vnetName.toLowerCase().includes('production'));
-                  const isDevVNet = details.vnetName && (details.vnetName.toLowerCase().includes('dev') || details.vnetName.toLowerCase().includes('qa') || details.vnetName.toLowerCase().includes('test'));
-                  
-                  const isProdBranch = branch && (branch.toLowerCase() === 'main' || branch.toLowerCase() === 'master' || branch.toLowerCase() === 'prod' || branch.toLowerCase() === 'production' || branch.toLowerCase() === 'release');
-                  const isDevBranch = branch && (branch.toLowerCase().includes('dev') || branch.toLowerCase().includes('qa') || branch.toLowerCase().includes('test') || branch.toLowerCase().includes('staging') || branch.toLowerCase().includes('feature') || branch.toLowerCase().includes('bugfix'));
+                        if (hasAppliedNetsec || !exposesPublicAdmin) {
+                            passedChecks++;
+                        } else {
+                            violations.push({
+                                resourceName: rName,
+                                resourceType: rType,
+                                ruleId: 'network-security',
+                                ruleName: 'VM Inbound Port Security',
+                                message: 'Virtual Machine exposes administrative ports (SSH 22 or RDP 3389) directly to the public internet.',
+                                remediable: true,
+                                remediationType: 'restrict_ports',
+                                suggestionId: `compliance-netsec-${rName}`,
+                                severity: severities['network-security'] || 'critical',
+                                standards: ['CIS Benchmark (v3.0 5.1)', 'SOC 2 (CC6.7)']
+                            });
+                        }
+                    }
+                }
 
-                  let containmentMismatch = false;
-                  if (details.vnetName) {
-                      if (isProdBranch && isDevVNet) containmentMismatch = true;
-                      if (isDevBranch && isProdVNet) containmentMismatch = true;
-                  }
+                // 5. Container App HTTPS-Only Ingress Check
+                if (rType === 'Microsoft.App/containerApps') {
+                    if (!disabledRules.has('https-only')) {
+                        totalChecks++;
+                        const hasAppliedHttps = appliedSet.has(`compliance-https-${rName}`);
+                        const insecureAllowed = details.ingress && details.ingress.allowInsecure === true;
 
-                  if (hasAppliedContainment || !containmentMismatch) {
-                      passedChecks++;
-                  } else {
-                      violations.push({
-                          resourceName: rName,
-                          resourceType: rType,
-                          ruleId: 'containment',
-                          ruleName: 'Branch-to-Network Isolation',
-                          message: `Environment Containment Mismatch: Mapped branch '${branch}' does not align with network boundary on '${details.vnetName || 'Default VNet'}'.`,
-                          remediable: true,
-                          remediationType: 'align_branch',
-                          suggestionId: `compliance-containment-${rName}`,
-                          severity: severities.containment || 'high',
-                          standards: ['ISO 27001 (A.12.4.1)', 'SOC 2 (CC8.1)']
-                      });
-                  }
-              }
+                        if (hasAppliedHttps || !insecureAllowed) {
+                            passedChecks++;
+                        } else {
+                            violations.push({
+                                resourceName: rName,
+                                resourceType: rType,
+                                ruleId: 'https-only',
+                                ruleName: 'HTTPS-Only Ingress Enforcement',
+                                message: 'Container App ingress is configured to allow insecure HTTP traffic.',
+                                remediable: true,
+                                remediationType: 'enforce_https',
+                                suggestionId: `compliance-https-${rName}`,
+                                severity: severities['https-only'] || 'medium',
+                                standards: ['PCI-DSS (v4.0 4.1)', 'SOC 2 (CC6.7)']
+                            });
+                        }
+                    }
+                }
 
-              // 7. Container Registry Security Check
-              if (rType === 'Microsoft.App/containerApps') {
-                  if (!disabledRules.has('registry-auth')) {
-                      totalChecks++;
-                      const hasAppliedRegistry = appliedSet.has(`compliance-registry-${rName}`);
-                      const image = details.image || '';
-                      const isSecureRegistry = image.includes('.azurecr.io') || details.registryCredentials;
+                // 6. Branch-to-Network Isolation Containment Check
+                if (!disabledRules.has('containment')) {
+                    totalChecks++;
+                    const hasAppliedContainment = appliedSet.has(`compliance-containment-${rName}`);
 
-                      if (hasAppliedRegistry || isSecureRegistry || !image) {
-                          passedChecks++;
-                      } else {
-                          violations.push({
-                              resourceName: rName,
-                              resourceType: rType,
-                              ruleId: 'registry-auth',
-                              ruleName: 'Container Registry Security',
-                              message: `Container App pulls unverified image '${image}' from a public registry without credentials.`,
-                              remediable: true,
-                              remediationType: 'configure_registry_auth',
-                              suggestionId: `compliance-registry-${rName}`,
-                              severity: severities['registry-auth'] || 'medium',
-                              standards: ['CIS Benchmark (v3.0 4.3)', 'ISO 27001 (A.14.2.1)']
-                          });
-                      }
-                  }
-              }
+                    const isProdVNet = details.vnetName && (details.vnetName.toLowerCase().includes('prod') || details.vnetName.toLowerCase().includes('production'));
+                    const isDevVNet = details.vnetName && (details.vnetName.toLowerCase().includes('dev') || details.vnetName.toLowerCase().includes('qa') || details.vnetName.toLowerCase().includes('test'));
 
-              // 8. Key Vault Secrets Expiry Check
-              if (!disabledRules.has('secrets-expiry')) {
-                  totalChecks++;
-                  const hasAppliedExpiry = appliedSet.has(`compliance-expiry-${rName}`);
-                  let secretExpired = false;
-                  
-                  if (details.secretExpiresAt) {
-                      const expiryDate = new Date(details.secretExpiresAt);
-                      const warningWindow = new Date(Date.now() + 30 * 24 * 3600 * 1000);
-                      if (expiryDate <= warningWindow) {
-                          secretExpired = true;
-                      }
-                  }
+                    const isProdBranch = branch && (branch.toLowerCase() === 'main' || branch.toLowerCase() === 'master' || branch.toLowerCase() === 'prod' || branch.toLowerCase() === 'production' || branch.toLowerCase() === 'release');
+                    const isDevBranch = branch && (branch.toLowerCase().includes('dev') || branch.toLowerCase().includes('qa') || branch.toLowerCase().includes('test') || branch.toLowerCase().includes('staging') || branch.toLowerCase().includes('feature') || branch.toLowerCase().includes('bugfix'));
 
-                  if (hasAppliedExpiry || !secretExpired) {
-                      passedChecks++;
-                  } else {
-                      violations.push({
-                          resourceName: rName,
-                          resourceType: rType,
-                          ruleId: 'secrets-expiry',
-                          ruleName: 'Key Vault Secrets Expiry Check',
-                          message: `Mapped credential secret is expiring soon or expired (Expiry Date: ${details.secretExpiresAt || 'Unknown'}).`,
-                          remediable: true,
-                          remediationType: 'renew_secret',
-                          suggestionId: `compliance-expiry-${rName}`,
-                          severity: severities['secrets-expiry'] || 'high',
-                          standards: ['ISO 27001 (A.10.1.1)', 'SOC 2 (CC6.1)']
-                      });
-                  }
-              }
-          }
+                    let containmentMismatch = false;
+                    if (details.vnetName) {
+                        if (isProdBranch && isDevVNet) containmentMismatch = true;
+                        if (isDevBranch && isProdVNet) containmentMismatch = true;
+                    }
 
-          // 9. Orphaned Resource Scan (Shadow IT)
-          if (!disabledRules.has('shadow-it')) {
-              for (const r of resources) {
-                  const rName = r.name || '';
-                  const rType = r.type || '';
-                  const matchedApp = appMap.get(rName.toLowerCase());
-                  
-                  if (rType === 'Microsoft.Compute/disks' || rType === 'Microsoft.Network/publicIPAddresses' || rType === 'Microsoft.OperationalInsights/workspaces') {
-                      continue;
-                  }
+                    if (hasAppliedContainment || !containmentMismatch) {
+                        passedChecks++;
+                    } else {
+                        violations.push({
+                            resourceName: rName,
+                            resourceType: rType,
+                            ruleId: 'containment',
+                            ruleName: 'Branch-to-Network Isolation',
+                            message: `Environment Containment Mismatch: Mapped branch '${branch}' does not align with network boundary on '${details.vnetName || 'Default VNet'}'.`,
+                            remediable: true,
+                            remediationType: 'align_branch',
+                            suggestionId: `compliance-containment-${rName}`,
+                            severity: severities.containment || 'high',
+                            standards: ['ISO 27001 (A.12.4.1)', 'SOC 2 (CC8.1)']
+                        });
+                    }
+                }
 
-                  totalChecks++;
-                  const hasAppliedShadow = appliedSet.has(`compliance-shadow-${rName}`);
-                  
-                  if (hasAppliedShadow || matchedApp) {
-                      passedChecks++;
-                  } else {
-                      violations.push({
-                          resourceName: rName,
-                          resourceType: rType,
-                          ruleId: 'shadow-it',
-                          ruleName: 'Orphaned Resource Scan (Shadow IT)',
-                          message: `Active Azure resource '${rName}' (${rType.split('/').pop() || rType}) is running in Azure but not registered in the DevOps Catalog.`,
-                          remediable: true,
-                          remediationType: 'register_resource',
-                          suggestionId: `compliance-shadow-${rName}`,
-                          severity: severities['shadow-it'] || 'high',
-                          standards: ['SOC 2 (CC6.1)', 'CIS Benchmark (v3.0 1.1)']
-                      });
-                  }
-              }
-          }
+                // 7. Container Registry Security Check
+                if (rType === 'Microsoft.App/containerApps') {
+                    if (!disabledRules.has('registry-auth')) {
+                        totalChecks++;
+                        const hasAppliedRegistry = appliedSet.has(`compliance-registry-${rName}`);
+                        const image = details.image || '';
+                        const isSecureRegistry = image.includes('.azurecr.io') || details.registryCredentials;
 
-          // Build dynamic rules compliance state
-          const rules = rulesDef.map(def => {
-              const isRestricted = restrictedRules && !restrictedRules.has(def.id);
-              if (isRestricted) {
-                  return {
-                      ...def,
-                      status: 'disabled',
-                      licenseRestricted: true,
-                      message: 'This compliance rule requires an Enterprise Governance or Sovereign subscription.',
-                      severity: severities[def.id] || (def.id === 'tls' || def.id === 'network-security' ? 'critical' : def.id === 'tagging' ? 'low' : def.id === 'https-only' || def.id === 'registry-auth' ? 'medium' : 'high')
-                  };
-              }
-              const isDisabled = disabledRules.has(def.id);
-              const failed = violations.some(v => v.ruleId === def.id);
-              return {
-                  ...def,
-                  status: isDisabled ? 'disabled' : (failed ? 'failed' : 'passed'),
-                  severity: severities[def.id] || (def.id === 'tls' || def.id === 'network-security' ? 'critical' : def.id === 'tagging' ? 'low' : def.id === 'https-only' || def.id === 'registry-auth' ? 'medium' : 'high')
-              };
-          });
+                        if (hasAppliedRegistry || isSecureRegistry || !image) {
+                            passedChecks++;
+                        } else {
+                            violations.push({
+                                resourceName: rName,
+                                resourceType: rType,
+                                ruleId: 'registry-auth',
+                                ruleName: 'Container Registry Security',
+                                message: `Container App pulls unverified image '${image}' from a public registry without credentials.`,
+                                remediable: true,
+                                remediationType: 'configure_registry_auth',
+                                suggestionId: `compliance-registry-${rName}`,
+                                severity: severities['registry-auth'] || 'medium',
+                                standards: ['CIS Benchmark (v3.0 4.3)', 'ISO 27001 (A.14.2.1)']
+                            });
+                        }
+                    }
+                }
 
-          // Calculate score based on enabled checks
-          let enabledChecks = 0;
-          let enabledPassed = 0;
-          for (const rule of rules) {
-              if (rule.status === 'disabled') continue;
-              enabledChecks++;
-              if (rule.status === 'passed') {
-                  enabledPassed++;
-              }
-          }
-          const complianceScore = enabledChecks > 0 ? Math.round((enabledPassed / enabledChecks) * 100) : 100;
+                // 8. Key Vault Secrets Expiry Check
+                if (!disabledRules.has('secrets-expiry')) {
+                    totalChecks++;
+                    const hasAppliedExpiry = appliedSet.has(`compliance-expiry-${rName}`);
+                    let secretExpired = false;
 
-          return res.json({
-              success: true,
-              complianceScore,
-              rules,
-              violations,
-              auditLogs
-          });
+                    if (details.secretExpiresAt) {
+                        const expiryDate = new Date(details.secretExpiresAt);
+                        const warningWindow = new Date(Date.now() + 30 * 24 * 3600 * 1000);
+                        if (expiryDate <= warningWindow) {
+                            secretExpired = true;
+                        }
+                    }
 
-      } catch (error) {
-          console.error('[AppController] getComplianceStatus failed:', error);
-          res.status(500).json({ message: 'Failed to retrieve compliance status.', error: error.message });
-      }
-  },
+                    if (hasAppliedExpiry || !secretExpired) {
+                        passedChecks++;
+                    } else {
+                        violations.push({
+                            resourceName: rName,
+                            resourceType: rType,
+                            ruleId: 'secrets-expiry',
+                            ruleName: 'Key Vault Secrets Expiry Check',
+                            message: `Mapped credential secret is expiring soon or expired (Expiry Date: ${details.secretExpiresAt || 'Unknown'}).`,
+                            remediable: true,
+                            remediationType: 'renew_secret',
+                            suggestionId: `compliance-expiry-${rName}`,
+                            severity: severities['secrets-expiry'] || 'high',
+                            standards: ['ISO 27001 (A.10.1.1)', 'SOC 2 (CC6.1)']
+                        });
+                    }
+                }
+            }
 
-  getComplianceSettings: async (req, res) => {
-      try {
-          const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
-          if (!organizationId) {
-              return res.status(400).json({ message: 'Missing organizationId query parameter.' });
-          }
+            // 9. Orphaned Resource Scan (Shadow IT)
+            if (!disabledRules.has('shadow-it')) {
+                for (const r of resources) {
+                    const rName = r.name || '';
+                    const rType = r.type || '';
+                    const matchedApp = appMap.get(rName.toLowerCase());
 
-          const orgSettings = await appController._getOrgSettings(organizationId);
-          const disabledRules = orgSettings.disabled_rules ? orgSettings.disabled_rules.split(',').filter(Boolean) : [];
-          let ruleSeverities = {};
-          try {
-              ruleSeverities = orgSettings.rule_severities ? JSON.parse(orgSettings.rule_severities) : {};
-          } catch (e) {
-              ruleSeverities = {};
-          }
+                    if (rType === 'Microsoft.Compute/disks' || rType === 'Microsoft.Network/publicIPAddresses' || rType === 'Microsoft.OperationalInsights/workspaces') {
+                        continue;
+                    }
 
-          res.json({
-              success: true,
-              disabledRules,
-              ruleSeverities
-          });
-      } catch (error) {
-          console.error('[AppController] getComplianceSettings failed:', error);
-          res.status(500).json({ message: 'Failed to retrieve compliance settings.', error: error.message });
-      }
-  },
+                    totalChecks++;
+                    const hasAppliedShadow = appliedSet.has(`compliance-shadow-${rName}`);
 
-  updateComplianceSettings: async (req, res) => {
-      try {
-          const { organizationId, disabledRules, ruleSeverities } = req.body;
-          if (!organizationId) {
-              return res.status(400).json({ message: 'Missing organizationId parameter.' });
-          }
+                    if (hasAppliedShadow || matchedApp) {
+                        passedChecks++;
+                    } else {
+                        violations.push({
+                            resourceName: rName,
+                            resourceType: rType,
+                            ruleId: 'shadow-it',
+                            ruleName: 'Orphaned Resource Scan (Shadow IT)',
+                            message: `Active Azure resource '${rName}' (${rType.split('/').pop() || rType}) is running in Azure but not registered in the DevOps Catalog.`,
+                            remediable: true,
+                            remediationType: 'register_resource',
+                            suggestionId: `compliance-shadow-${rName}`,
+                            severity: severities['shadow-it'] || 'high',
+                            standards: ['SOC 2 (CC6.1)', 'CIS Benchmark (v3.0 1.1)']
+                        });
+                    }
+                }
+            }
 
-          const disabledRulesStr = Array.isArray(disabledRules) ? disabledRules.join(',') : '';
-          const ruleSeveritiesStr = ruleSeverities ? JSON.stringify(ruleSeverities) : '{}';
+            // Build dynamic rules compliance state
+            const rules = rulesDef.map(def => {
+                const isRestricted = restrictedRules && !restrictedRules.has(def.id);
+                if (isRestricted) {
+                    return {
+                        ...def,
+                        status: 'disabled',
+                        licenseRestricted: true,
+                        message: 'This compliance rule requires an Enterprise Governance or Sovereign subscription.',
+                        severity: severities[def.id] || (def.id === 'tls' || def.id === 'network-security' ? 'critical' : def.id === 'tagging' ? 'low' : def.id === 'https-only' || def.id === 'registry-auth' ? 'medium' : 'high')
+                    };
+                }
+                const isDisabled = disabledRules.has(def.id);
+                const failed = violations.some(v => v.ruleId === def.id);
+                return {
+                    ...def,
+                    status: isDisabled ? 'disabled' : (failed ? 'failed' : 'passed'),
+                    severity: severities[def.id] || (def.id === 'tls' || def.id === 'network-security' ? 'critical' : def.id === 'tagging' ? 'low' : def.id === 'https-only' || def.id === 'registry-auth' ? 'medium' : 'high')
+                };
+            });
 
-          await db.query(
-              'UPDATE organizations SET disabled_rules = ?, rule_severities = ? WHERE id = ?',
-              [disabledRulesStr, ruleSeveritiesStr, organizationId]
-          );
+            // Calculate score based on enabled checks
+            let enabledChecks = 0;
+            let enabledPassed = 0;
+            for (const rule of rules) {
+                if (rule.status === 'disabled') continue;
+                enabledChecks++;
+                if (rule.status === 'passed') {
+                    enabledPassed++;
+                }
+            }
+            const complianceScore = enabledChecks > 0 ? Math.round((enabledPassed / enabledChecks) * 100) : 100;
 
-          res.json({
-              success: true,
-              message: 'Compliance settings updated successfully.'
-          });
-      } catch (error) {
-          console.error('[AppController] updateComplianceSettings failed:', error);
-          res.status(500).json({ message: 'Failed to update compliance settings.', error: error.message });
-      }
-  },
+            return res.json({
+                success: true,
+                complianceScore,
+                rules,
+                violations,
+                auditLogs
+            });
 
-  remediateCompliance: async (req, res) => {
-      try {
-          const organizationId = req.body.organizationId || req.user?.organization_id || 'estevia';
+        } catch (error) {
+            console.error('[AppController] getComplianceStatus failed:', error);
+            res.status(500).json({ message: 'Failed to retrieve compliance status.', error: error.message });
+        }
+    },
 
-          // ── Future-proof: Autonomous trigger gate ────────────────────────
-          const isAutomatedTrigger = req.body.isAutomatedTrigger || false;
-          if (isAutomatedTrigger) {
-              const [[orgTier]] = await db.query(
-                  'SELECT license_tier FROM organizations WHERE id = ?',
-                  [organizationId]
-              );
-              if ((orgTier?.license_tier || 'growth') === 'growth') {
-                  return res.status(403).json({
-                      success: false,
-                      message: 'Autonomous self-healing remediation requires an Enterprise or Sovereign subscription.'
-                  });
-              }
-          }
-          // ── End autonomous gate ──────────────────────────────────────────
+    getComplianceSettings: async (req, res) => {
+        try {
+            const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
+            if (!organizationId) {
+                return res.status(400).json({ message: 'Missing organizationId query parameter.' });
+            }
 
-          let items = [];
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const disabledRules = orgSettings.disabled_rules ? orgSettings.disabled_rules.split(',').filter(Boolean) : [];
+            let ruleSeverities = {};
+            try {
+                ruleSeverities = orgSettings.rule_severities ? JSON.parse(orgSettings.rule_severities) : {};
+            } catch (e) {
+                ruleSeverities = {};
+            }
 
-          if (Array.isArray(req.body.violations)) {
-              items = req.body.violations;
-          } else {
-              const { resourceName, ruleId, remediationType, suggestionId } = req.body;
-              if (suggestionId && ruleId) {
-                  items.push({ resourceName, ruleId, remediationType, suggestionId });
-              }
-          }
+            res.json({
+                success: true,
+                disabledRules,
+                ruleSeverities
+            });
+        } catch (error) {
+            console.error('[AppController] getComplianceSettings failed:', error);
+            res.status(500).json({ message: 'Failed to retrieve compliance settings.', error: error.message });
+        }
+    },
 
-          if (items.length === 0) {
-              return res.status(400).json({ message: 'Missing suggestionId/ruleId parameters or violations array.' });
-          }
+    updateComplianceSettings: async (req, res) => {
+        try {
+            const { organizationId, disabledRules, ruleSeverities } = req.body;
+            if (!organizationId) {
+                return res.status(400).json({ message: 'Missing organizationId parameter.' });
+            }
 
-          for (const item of items) {
-              const { resourceName, ruleId, suggestionId } = item;
-              if (!suggestionId || !ruleId) continue;
+            const disabledRulesStr = Array.isArray(disabledRules) ? disabledRules.join(',') : '';
+            const ruleSeveritiesStr = ruleSeverities ? JSON.stringify(ruleSeverities) : '{}';
 
-              // ── Frozen environment guard ─────────────────────────────────
-              if (resourceName) {
-                  const [[frozenCheck]] = await db.query(
-                      'SELECT license_frozen FROM applications WHERE organization_id = ? AND name = ?',
-                      [organizationId, resourceName]
-                  );
-                  if (frozenCheck?.license_frozen) {
-                      return res.status(403).json({
-                          success: false,
-                          message: `Environment '${resourceName}' is frozen under your current tier. Decommission it or upgrade your subscription to apply remediations.`
-                      });
-                  }
-              }
-              // ── End frozen guard ─────────────────────────────────────────
+            await db.query(
+                'UPDATE organizations SET disabled_rules = ?, rule_severities = ? WHERE id = ?',
+                [disabledRulesStr, ruleSeveritiesStr, organizationId]
+            );
 
-              await db.query(
-                  `INSERT INTO applied_remediations (organization_id, suggestion_id, type, app_name, savings)
+            res.json({
+                success: true,
+                message: 'Compliance settings updated successfully.'
+            });
+        } catch (error) {
+            console.error('[AppController] updateComplianceSettings failed:', error);
+            res.status(500).json({ message: 'Failed to update compliance settings.', error: error.message });
+        }
+    },
+
+    remediateCompliance: async (req, res) => {
+        try {
+            const organizationId = req.body.organizationId || req.user?.organization_id || 'estevia';
+
+            // ── Future-proof: Autonomous trigger gate ────────────────────────
+            const isAutomatedTrigger = req.body.isAutomatedTrigger || false;
+            if (isAutomatedTrigger) {
+                const [[orgTier]] = await db.query(
+                    'SELECT license_tier FROM organizations WHERE id = ?',
+                    [organizationId]
+                );
+                if ((orgTier?.license_tier || 'growth') === 'growth') {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'Autonomous self-healing remediation requires an Enterprise or Sovereign subscription.'
+                    });
+                }
+            }
+            // ── End autonomous gate ──────────────────────────────────────────
+
+            let items = [];
+
+            if (Array.isArray(req.body.violations)) {
+                items = req.body.violations;
+            } else {
+                const { resourceName, ruleId, remediationType, suggestionId } = req.body;
+                if (suggestionId && ruleId) {
+                    items.push({ resourceName, ruleId, remediationType, suggestionId });
+                }
+            }
+
+            if (items.length === 0) {
+                return res.status(400).json({ message: 'Missing suggestionId/ruleId parameters or violations array.' });
+            }
+
+            for (const item of items) {
+                const { resourceName, ruleId, suggestionId } = item;
+                if (!suggestionId || !ruleId) continue;
+
+                // ── Frozen environment guard ─────────────────────────────────
+                if (resourceName) {
+                    const [[frozenCheck]] = await db.query(
+                        'SELECT license_frozen FROM applications WHERE organization_id = ? AND name = ?',
+                        [organizationId, resourceName]
+                    );
+                    if (frozenCheck?.license_frozen) {
+                        return res.status(403).json({
+                            success: false,
+                            message: `Environment '${resourceName}' is frozen under your current tier. Decommission it or upgrade your subscription to apply remediations.`
+                        });
+                    }
+                }
+                // ── End frozen guard ─────────────────────────────────────────
+
+                await db.query(
+                    `INSERT INTO applied_remediations (organization_id, suggestion_id, type, app_name, savings)
                    VALUES (?, ?, ?, ?, 0.00)
                    ON DUPLICATE KEY UPDATE applied_at = CURRENT_TIMESTAMP`,
-                  [organizationId, suggestionId, `compliance_${ruleId}`, resourceName || '']
-              );
+                    [organizationId, suggestionId, `compliance_${ruleId}`, resourceName || '']
+                );
 
-              // Apply database config modifications for fallback/mock mode parity
-              if (resourceName) {
-                  const [apps] = await db.query(
-                      'SELECT id, azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
-                      [organizationId, resourceName]
-                  );
-                  if (apps.length > 0) {
-                      const app = apps[0];
-                      const details = typeof app.azure_resource_details === 'string'
-                          ? JSON.parse(app.azure_resource_details || '{}')
-                          : (app.azure_resource_details || {});
-                      
-                      if (ruleId === 'tls') {
-                          details.sslEnabled = true;
-                      } else if (ruleId === 'https-only') {
-                          if (details.ingress) details.ingress.allowInsecure = false;
-                      } else if (ruleId === 'network-security') {
-                          details.portsOpen = [];
-                      } else if (ruleId === 'registry-auth') {
-                          details.image = 'estevia.azurecr.io/feedback-api:v1';
-                      } else if (ruleId === 'secrets-expiry') {
-                          details.secretExpiresAt = new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().split('T')[0];
-                      } else if (ruleId === 'containment') {
-                          details.vnetName = 'estevia-dev-vnet';
-                      } else if (ruleId === 'tagging') {
-                          details.tags = { ...details.tags, Environment: 'Dev', Owner: 'dev-team', CostCenter: 'EST-101' };
-                      }
-                      
-                      await db.query(
-                          'UPDATE applications SET azure_resource_details = ? WHERE id = ?',
-                          [JSON.stringify(details), app.id]
-                      );
-                  } else if (ruleId === 'shadow-it' && resourceName === 'untracked-vm-sandbox') {
-                      const mockDetails = { 
-                          resourceId: 'db-shadow-vm', 
-                          location: 'East US', 
-                          tags: { Environment: 'Sandbox', Owner: 'dev-team', CostCenter: 'EST-999' }, 
-                          portsOpen: [] 
-                      };
-                      await db.query(
-                          `INSERT INTO applications (organization_id, name, repo_url, app_type, status, azure_resource_details, godaddy_dns_details, pipeline_id)
+                // Apply database config modifications for fallback/mock mode parity
+                if (resourceName) {
+                    const [apps] = await db.query(
+                        'SELECT id, azure_resource_details FROM applications WHERE organization_id = ? AND name = ?',
+                        [organizationId, resourceName]
+                    );
+                    if (apps.length > 0) {
+                        const app = apps[0];
+                        const details = typeof app.azure_resource_details === 'string'
+                            ? JSON.parse(app.azure_resource_details || '{}')
+                            : (app.azure_resource_details || {});
+
+                        if (ruleId === 'tls') {
+                            details.sslEnabled = true;
+                        } else if (ruleId === 'https-only') {
+                            if (details.ingress) details.ingress.allowInsecure = false;
+                        } else if (ruleId === 'network-security') {
+                            details.portsOpen = [];
+                        } else if (ruleId === 'registry-auth') {
+                            details.image = 'estevia.azurecr.io/feedback-api:v1';
+                        } else if (ruleId === 'secrets-expiry') {
+                            details.secretExpiresAt = new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().split('T')[0];
+                        } else if (ruleId === 'containment') {
+                            details.vnetName = 'estevia-dev-vnet';
+                        } else if (ruleId === 'tagging') {
+                            details.tags = { ...details.tags, Environment: 'Dev', Owner: 'dev-team', CostCenter: 'EST-101' };
+                        }
+
+                        await db.query(
+                            'UPDATE applications SET azure_resource_details = ? WHERE id = ?',
+                            [JSON.stringify(details), app.id]
+                        );
+                    } else if (ruleId === 'shadow-it' && resourceName === 'untracked-vm-sandbox') {
+                        const mockDetails = {
+                            resourceId: 'db-shadow-vm',
+                            location: 'East US',
+                            tags: { Environment: 'Sandbox', Owner: 'dev-team', CostCenter: 'EST-999' },
+                            portsOpen: []
+                        };
+                        await db.query(
+                            `INSERT INTO applications (organization_id, name, repo_url, app_type, status, azure_resource_details, godaddy_dns_details, pipeline_id)
                            VALUES (?, ?, ?, 'vm', 'deployed', ?, '{}', NULL)`,
-                          [organizationId, 'untracked-vm-sandbox', 'https://github.com/Estevia-TechSolutions/sandbox-env', JSON.stringify(mockDetails)]
-                      );
-                  }
-              }
+                            [organizationId, 'untracked-vm-sandbox', 'https://github.com/Estevia-TechSolutions/sandbox-env', JSON.stringify(mockDetails)]
+                        );
+                    }
+                }
 
-              // Create Audit Log entry for the SOC 2 compliance logs list
-              await db.query(
-                  `INSERT INTO audit_logs (actor_email, action_type, target, details)
+                // Create Audit Log entry for the SOC 2 compliance logs list
+                await db.query(
+                    `INSERT INTO audit_logs (actor_email, action_type, target, details)
                    VALUES (?, ?, ?, ?)`,
-                  ['govind.m@esteviatech.com', 'APPLY_REMEDIATION', resourceName || ruleId, `Triggered 1-click remediation for rule: ${ruleId}`]
-              );
-          }
+                    ['govind.m@esteviatech.com', 'APPLY_REMEDIATION', resourceName || ruleId, `Triggered 1-click remediation for rule: ${ruleId}`]
+                );
+            }
 
-          return res.json({
-              success: true,
-              message: `Successfully remediated ${items.length} compliance violation(s).`
-          });
-      } catch (error) {
-          console.error('[AppController] remediateCompliance failed:', error);
-          res.status(500).json({ message: 'Failed to execute compliance remediation.', error: error.message });
-      }
-  },
+            return res.json({
+                success: true,
+                message: `Successfully remediated ${items.length} compliance violation(s).`
+            });
+        } catch (error) {
+            console.error('[AppController] remediateCompliance failed:', error);
+            res.status(500).json({ message: 'Failed to execute compliance remediation.', error: error.message });
+        }
+    },
 
     /**
      * POST /api/apps/validate-yml
@@ -10662,12 +10658,12 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     const details = typeof appRecord.azure_resource_details === 'string'
                         ? JSON.parse(appRecord.azure_resource_details || '{}')
                         : (appRecord.azure_resource_details || {});
-                    
+
                     const lastChecked = details.healthLastChecked ? new Date(details.healthLastChecked).getTime() : 0;
                     const now = Date.now();
-                    
+
                     if (details.ymlHealth && (now - lastChecked < 30 * 60 * 1000)) {
-                        console.log(`[AppController] Returning cached YML/Dockerfile health for ${githubRepo} (checked ${Math.round((now - lastChecked)/60000)}m ago)`);
+                        console.log(`[AppController] Returning cached YML/Dockerfile health for ${githubRepo} (checked ${Math.round((now - lastChecked) / 60000)}m ago)`);
                         return res.json({
                             success: true,
                             ymlHealth: details.ymlHealth,
@@ -10740,12 +10736,12 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             // Validate YAML
             let ymlContent = await fetchGithubFile(ymlPath);
             let activeProvider = provider;
-            
+
             if (ymlContent === null) {
                 // Try fallback to check the other provider
                 const fallbackProvider = provider === 'github_actions' ? 'azure_devops' : 'github_actions';
                 let fallbackPath = fallbackProvider === 'github_actions' ? '.github/workflows/deploy.yml' : 'azure-pipelines.yml';
-                
+
                 // For GitHub Actions fallback, try dynamically discovering workflows
                 if (fallbackProvider === 'github_actions') {
                     try {
@@ -10769,7 +10765,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         // ignore listing error
                     }
                 }
-                
+
                 const fallbackContent = await fetchGithubFile(fallbackPath);
                 if (fallbackContent !== null) {
                     ymlContent = fallbackContent;
@@ -10818,11 +10814,11 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     const details = typeof appRecord.azure_resource_details === 'string'
                         ? JSON.parse(appRecord.azure_resource_details || '{}')
                         : (appRecord.azure_resource_details || {});
-                    
+
                     details.ymlHealth = ymlHealth;
                     details.dockerfileHealth = dockerfileHealth;
                     details.healthLastChecked = new Date().toISOString();
-                    
+
                     await db.query(
                         'UPDATE applications SET azure_resource_details = ? WHERE id = ?',
                         [JSON.stringify(details), appRecord.id]
