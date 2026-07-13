@@ -23,9 +23,27 @@ function parseBackendUrlFromEnvContent(content) {
 }
 
 function parseBackendUrlFromPipelineContent(content, envType) {
-    const matches = content.match(/https?:\/\/[a-zA-Z0-9.-]+\/api[^\s'"]*/g) || [];
-    for (const m of matches) {
-        const url = m.replace(/\\n$/, '').replace(/['"]$/, '').trim();
+    // 1. Try variable assignment patterns (e.g. VITE_API_URL=https://api-dev.esteviatech.com)
+    const varMatches = content.match(/(?:VITE_API_URL|REACT_APP_API_URL|API_URL|API_BASE_URL|VITE_API_BASE)\s*=\s*['"]?(https?:\/\/[a-zA-Z0-9.-]+[^\s'"]*)['"]?/g) || [];
+    const urls = [];
+    for (const m of varMatches) {
+        const valMatch = m.match(/=\s*['"]?(https?:\/\/[^\s'"]+)/);
+        if (valMatch) {
+            const cleanUrl = valMatch[1]
+                .replace(/\\n$/, '')
+                .replace(/\n$/, '')
+                .replace(/['"]$/, '')
+                .trim();
+            urls.push(cleanUrl);
+        }
+    }
+    // 2. Fall back to general API path patterns
+    const genMatches = content.match(/https?:\/\/[a-zA-Z0-9.-]+\/api[^\s'"]*/g) || [];
+    for (const m of genMatches) {
+        urls.push(m.replace(/\\n$/, '').replace(/['"]$/, '').trim());
+    }
+
+    for (const url of urls) {
         if (envType === 'dev' && url.includes('dev')) return url;
         if (envType === 'qa' && url.includes('qa')) return url;
         if (envType === 'prod' && !url.includes('dev') && !url.includes('qa')) return url;
