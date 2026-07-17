@@ -5,6 +5,8 @@ const https = require('https');
 const { DefaultAzureCredential, ClientSecretCredential } = require('@azure/identity');
 const credentialController = require('./credentialController');
 const { sendTeamsNotification } = require('../utils/teamsNotifier');
+const crypto = require('crypto');
+const emailService = require('../utils/emailService');
 
 async function getAzureCredential(organizationId) {
     try {
@@ -69,6 +71,93 @@ async function checkSeatCapacity(organizationId) {
     }
 }
 // ── End Seat Helper ────────────────────────────────────────────────────────────
+
+async function completeLoginSession(user, loginMethod, req, res) {
+    try {
+        let manualMfaRequired = 0;
+        let ssoMfaRequired = 0;
+        let finalOrg = null;
+        let requiresOnboarding = true;
+
+        if (user.organization_id) {
+            const [matchedOrgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [user.organization_id]);
+            if (matchedOrgs.length > 0) {
+                finalOrg = matchedOrgs[0];
+                manualMfaRequired = finalOrg.manual_mfa_required || 0;
+                ssoMfaRequired = finalOrg.sso_mfa_required || 0;
+                requiresOnboarding = !finalOrg.onboarding_complete;
+            }
+        }
+
+        // Fetch user's latest MFA status
+        const [users] = await db.query('SELECT mfa_enabled, mfa_secret FROM users WHERE id = ?', [user.id]);
+        const dbUser = users[0] || {};
+        const mfaEnabled = dbUser.mfa_enabled || 0;
+
+        // Determine if MFA is enforced for this login method (bypass is always exempt)
+        let mfaRequired = false;
+        if (loginMethod === 'sso' && ssoMfaRequired === 1) {
+            mfaRequired = true;
+        } else if (loginMethod === 'manual' && manualMfaRequired === 1) {
+            mfaRequired = true;
+        }
+
+        if (mfaRequired) {
+            if (mfaEnabled === 0) {
+                const tempToken = jwt.sign(
+                    { id: user.id, purpose: 'mfa_setup', loginMethod },
+                    JWT_SECRET,
+                    { expiresIn: '5m' }
+                );
+                return res.json({
+                    code: 'MFA_SETUP_REQUIRED',
+                    message: 'Multi-Factor Authentication setup is required.',
+                    tempToken
+                });
+            } else {
+                const tempToken = jwt.sign(
+                    { id: user.id, purpose: 'mfa_validate', loginMethod },
+                    JWT_SECRET,
+                    { expiresIn: '5m' }
+                );
+                return res.json({
+                    code: 'MFA_REQUIRED',
+                    message: 'Multi-Factor Authentication verification is required.',
+                    tempToken
+                });
+            }
+        }
+
+        // Generate JWT token
+        let expiresIn = '24h';
+        if (loginMethod === 'bypass') expiresIn = '30d';
+        else if (loginMethod === 'manual') expiresIn = '8h';
+
+        const token = jwt.sign(
+            {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                organization_id: user.organization_id,
+                role: user.role,
+                tenant_id: user.tenant_id
+            },
+            JWT_SECRET,
+            { expiresIn }
+        );
+
+        req.user = user;
+        return res.json({
+            token,
+            user,
+            requiresOnboarding,
+            organization: finalOrg
+        });
+    } catch (err) {
+        console.error('[authController] completeLoginSession failed:', err.message);
+        return res.status(500).json({ error: 'Authentication processing failed.' });
+    }
+}
 
 // Exchanges code for Microsoft OAuth access token and user claims
 const microsoftLogin = async (req, res) => {
@@ -237,37 +326,7 @@ const microsoftLogin = async (req, res) => {
             user.role = finalRole;
         }
 
-        // Generate local JWT token
-        const token = jwt.sign(
-            { 
-                id: user.id, 
-                email: user.email, 
-                name: user.name, 
-                organization_id: user.organization_id, 
-                role: user.role,
-                tenant_id: user.tenant_id 
-            },
-            JWT_SECRET,
-            { expiresIn: '24h' }
-        );
-
-        let requiresOnboarding = true;
-        let finalOrg = null;
-        if (user.organization_id) {
-            const [matchedOrgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [user.organization_id]);
-            if (matchedOrgs.length > 0) {
-                finalOrg = matchedOrgs[0];
-                requiresOnboarding = !finalOrg.onboarding_complete;
-            }
-        }
-
-        req.user = user;
-        return res.json({ 
-            token, 
-            user, 
-            requiresOnboarding, 
-            organization: finalOrg 
-        });
+        return await completeLoginSession(user, 'sso', req, res);
     } catch (err) {
         const errorDetails = err.response?.data || err.message;
         console.error('[authController] Microsoft OAuth exchange failed:', errorDetails);
@@ -343,31 +402,7 @@ const bypassLogin = async (req, res) => {
             }
         }
 
-        const token = jwt.sign(
-            {
-                id: user.id,
-                email: user.email,
-                name: user.name,
-                organization_id: user.organization_id,
-                role: user.role,
-                tenant_id: user.tenant_id
-            },
-            JWT_SECRET,
-            { expiresIn: '30d' }
-        );
-
-        let requiresOnboarding = true;
-        let finalOrg = null;
-        if (user.organization_id) {
-            const [matchedOrgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [user.organization_id]);
-            if (matchedOrgs.length > 0) {
-                finalOrg = matchedOrgs[0];
-                requiresOnboarding = !finalOrg.onboarding_complete;
-            }
-        }
-
-        req.user = user;
-        return res.json({ token, user, requiresOnboarding, organization: finalOrg });
+        return await completeLoginSession(user, 'bypass', req, res);
     } catch (err) {
         console.error('[authController] Developer Override failed:', err.message);
         return res.status(500).json({ error: 'Developer Override login failed', details: err.message });
@@ -421,27 +456,7 @@ const adminOverrideLogin = async (req, res) => {
             }
         }
 
-        const token = jwt.sign(
-            {
-                id: user.id,
-                email: user.email,
-                name: user.name,
-                organization_id: user.organization_id,
-                role: user.role,
-                tenant_id: user.tenant_id
-            },
-            JWT_SECRET,
-            { expiresIn: '8h' } // Shorter expiry for admin override sessions
-        );
-
-        console.log(`[authController] Admin Override: successful login for org '${org.id}'`);
-        req.user = user;
-        return res.json({
-            token,
-            user,
-            requiresOnboarding: !org.onboarding_complete,
-            organization: org
-        });
+        return await completeLoginSession(user, 'manual', req, res);
     } catch (err) {
         console.error('[authController] Admin Override failed:', err.message);
         return res.status(500).json({ error: 'Admin Override login failed', details: err.message });
@@ -837,6 +852,318 @@ const syncUsers = async (req, res) => {
     }
 };
 
+// --- TOTP MFA Helper Functions ---
+function base32Decode(base32Str) {
+    const charTable = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    const cleanStr = base32Str.toUpperCase().replace(/=+$/, "");
+    let bits = 0;
+    let val = 0;
+    const bytes = [];
+    for (let i = 0; i < cleanStr.length; i++) {
+        const char = cleanStr[i];
+        const idx = charTable.indexOf(char);
+        if (idx === -1) throw new Error("Invalid base32 character: " + char);
+        val = (val << 5) | idx;
+        bits += 5;
+        if (bits >= 8) {
+            bytes.push((val >>> (bits - 8)) & 255);
+            bits -= 8;
+        }
+    }
+    return Buffer.from(bytes);
+}
+
+function generateBase32Secret(length = 16) {
+    const charTable = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    const randomBytes = crypto.randomBytes(length);
+    let secret = "";
+    for (let i = 0; i < randomBytes.length; i++) {
+        secret += charTable[randomBytes[i] % 32];
+    }
+    return secret;
+}
+
+function verifyTOTP(secret, code, window = 1) {
+    try {
+        const key = base32Decode(secret);
+        const epoch = Math.floor(Date.now() / 1000);
+        const counter = Math.floor(epoch / 30);
+        
+        for (let i = -window; i <= window; i++) {
+            const checkCounter = counter + i;
+            const buf = Buffer.alloc(8);
+            buf.writeUInt32BE(0, 0); 
+            buf.writeUInt32BE(checkCounter, 4);
+            
+            const hmac = crypto.createHmac('sha1', key).update(buf).digest();
+            const offset = hmac[hmac.length - 1] & 0xf;
+            const binary = ((hmac[offset] & 0x7f) << 24) |
+                           ((hmac[offset + 1] & 0xff) << 16) |
+                           ((hmac[offset + 2] & 0xff) << 8) |
+                           (hmac[offset + 3] & 0xff);
+                           
+            const otp = (binary % 1000000).toString().padStart(6, '0');
+            if (otp === code) {
+                return true;
+            }
+        }
+    } catch (err) {
+        console.error('[TOTP Verification Error]', err);
+    }
+    return false;
+}
+
+// --- TOTP MFA Authenticated Endpoints (for logged-in users) ---
+exports.setupMfaAuthenticated = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const [users] = await db.query('SELECT email FROM users WHERE id = ?', [userId]);
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const secret = generateBase32Secret(16);
+        const issuer = 'EvaOps';
+        const otpauthUrl = `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(users[0].email)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}`;
+
+        res.json({ secret, otpauthUrl });
+    } catch (error) {
+        res.status(500).json({ error: 'MFA setup request failed', details: error.message });
+    }
+};
+
+exports.verifyMfaAuthenticated = async (req, res) => {
+    const { secret, code } = req.body;
+    if (!secret || !code) {
+        return res.status(400).json({ error: 'Secret and validation code are required' });
+    }
+
+    try {
+        const userId = req.user.id;
+        const isValid = verifyTOTP(secret, code);
+        if (!isValid) {
+            return res.status(400).json({ error: 'Invalid 6-digit authenticator code' });
+        }
+
+        // Save secret and set mfa_enabled = 1
+        await db.query('UPDATE users SET mfa_secret = ?, mfa_enabled = 1 WHERE id = ?', [secret, userId]);
+
+        res.json({ success: true, message: 'MFA configured successfully.' });
+    } catch (error) {
+        res.status(500).json({ error: 'Verification failed', details: error.message });
+    }
+};
+
+// --- TOTP MFA Endpoints ---
+exports.setupMfa = async (req, res) => {
+    const { tempToken } = req.body;
+    if (!tempToken) {
+        return res.status(400).json({ error: 'Temporary verification token required' });
+    }
+
+    try {
+        const payload = jwt.verify(tempToken, JWT_SECRET);
+        if (payload.purpose !== 'mfa_setup') {
+            return res.status(400).json({ error: 'Invalid MFA state token' });
+        }
+
+        const [users] = await db.query('SELECT email FROM users WHERE id = ?', [payload.id]);
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const secret = generateBase32Secret(16);
+        const issuer = 'EvaOps';
+        const otpauthUrl = `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(users[0].email)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}`;
+
+        res.json({ secret, otpauthUrl });
+    } catch (error) {
+        res.status(400).json({ error: 'MFA setup request expired or invalid', details: error.message });
+    }
+};
+
+exports.verifyMfa = async (req, res) => {
+    const { tempToken, secret, code } = req.body;
+    if (!tempToken || !secret || !code) {
+        return res.status(400).json({ error: 'Token, secret, and validation code are required' });
+    }
+
+    try {
+        const payload = jwt.verify(tempToken, JWT_SECRET);
+        if (payload.purpose !== 'mfa_setup') {
+            return res.status(400).json({ error: 'Invalid MFA state token' });
+        }
+
+        const isValid = verifyTOTP(secret, code);
+        if (!isValid) {
+            return res.status(400).json({ error: 'Invalid 6-digit authenticator code' });
+        }
+
+        // Save secret and set mfa_enabled = 1
+        await db.query('UPDATE users SET mfa_secret = ?, mfa_enabled = 1 WHERE id = ?', [secret, payload.id]);
+
+        // Load complete user row
+        const [users] = await db.query('SELECT * FROM users WHERE id = ?', [payload.id]);
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User record missing' });
+        }
+
+        return await completeLoginSession(users[0], payload.loginMethod, req, res);
+    } catch (error) {
+        res.status(400).json({ error: 'Verification transaction failed or expired', details: error.message });
+    }
+};
+
+exports.validateMfa = async (req, res) => {
+    const { tempToken, code } = req.body;
+    if (!tempToken || !code) {
+        return res.status(400).json({ error: 'Verification token and verification code are required' });
+    }
+
+    try {
+        const payload = jwt.verify(tempToken, JWT_SECRET);
+        if (payload.purpose !== 'mfa_validate') {
+            return res.status(400).json({ error: 'Invalid MFA validation state' });
+        }
+
+        // Load complete user row
+        const [users] = await db.query('SELECT * FROM users WHERE id = ?', [payload.id]);
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User record missing' });
+        }
+
+        const user = users[0];
+        const isValid = verifyTOTP(user.mfa_secret, code);
+        if (!isValid) {
+            return res.status(400).json({ error: 'Invalid 6-digit authenticator code' });
+        }
+
+        return await completeLoginSession(user, payload.loginMethod, req, res);
+    } catch (error) {
+        res.status(400).json({ error: 'Authentication validation failed or expired', details: error.message });
+    }
+};
+
+exports.requestMfaReset = async (req, res) => {
+    const { tempToken } = req.body;
+    if (!tempToken) {
+        return res.status(400).json({ error: 'Temporary validation token required' });
+    }
+
+    try {
+        const payload = jwt.verify(tempToken, JWT_SECRET);
+        const [users] = await db.query('SELECT id, name, email, organization_id FROM users WHERE id = ?', [payload.id]);
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        const user = users[0];
+
+        // 1. Generate a secure, one-time MFA reset token valid for 15 minutes
+        const mfaResetToken = jwt.sign(
+            { id: user.id, purpose: 'mfa_reset' },
+            JWT_SECRET,
+            { expiresIn: '15m' }
+        );
+
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const resetLink = `${frontendUrl}/login?mfa_reset_token=${mfaResetToken}`;
+
+        // 2. Send the confirmation email to the requesting user
+        await emailService.sendMail({
+            to: user.email,
+            subject: '[EvaOps Security] Confirm Multi-Factor Authentication (MFA) Reset',
+            html: `
+                <div style="font-family: sans-serif; padding: 20px; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h2 style="color: #7c3aed; margin: 0; font-family: sans-serif; font-size: 1.5rem;">EvaOps</h2>
+                        <span style="font-size: 0.75rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em;">Security & Cloud Identity</span>
+                    </div>
+                    <hr style="border: none; border-top: 1px solid #e2e8f0; margin-bottom: 20px;" />
+                    <p>Hello ${user.name},</p>
+                    <p>We received a request to reset the Multi-Factor Authentication (MFA) configuration linked to your account because you lost access to your authenticator app.</p>
+                    <p>To confirm this reset and link a new authenticator device, click the button below:</p>
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="${resetLink}" style="background-color: #7c3aed; color: white; padding: 12px 24px; text-decoration: none; font-weight: bold; border-radius: 8px; display: inline-block; box-shadow: 0 4px 12px rgba(124, 58, 237, 0.25);">Confirm MFA Reset</a>
+                    </div>
+                    <p style="font-size: 0.85rem; color: #64748b;">Or copy and paste this URL into your browser:</p>
+                    <p style="font-size: 0.8rem; word-break: break-all; color: #6366f1; background: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">${resetLink}</p>
+                    <p style="font-size: 0.85rem; color: #ef4444; font-weight: 600; margin-top: 20px;">This link is valid for 15 minutes. If you did not make this request, please change your password immediately to secure your account.</p>
+                    <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 25px 0 15px 0;" />
+                    <p style="font-size: 0.75rem; color: #94a3b8; text-align: center; margin: 0;">This is an automated security email. Please do not reply directly to this message.</p>
+                </div>
+            `
+        });
+
+        res.json({ success: true, message: 'An MFA reset confirmation link has been sent to your registered email address. Please check your inbox to proceed.' });
+    } catch (error) {
+        res.status(400).json({ error: 'Request verification failed or has expired', details: error.message });
+    }
+};
+
+exports.confirmMfaReset = async (req, res) => {
+    const { token } = req.body;
+    if (!token) {
+        return res.status(400).json({ error: 'MFA reset token required' });
+    }
+
+    try {
+        const payload = jwt.verify(token, JWT_SECRET);
+        if (!payload.id || payload.purpose !== 'mfa_reset') {
+            return res.status(400).json({ error: 'Invalid or expired reset token' });
+        }
+
+        // Reset user MFA settings in database
+        const [result] = await db.query(
+            'UPDATE users SET mfa_secret = NULL, mfa_enabled = 0 WHERE id = ?',
+            [payload.id]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        res.json({ success: true, message: 'Your Multi-Factor Authentication has been reset successfully. Please log in with your credentials to register a new authenticator.' });
+    } catch (error) {
+        console.error('[confirmMfaReset] Error:', error);
+        res.status(400).json({ error: 'MFA reset link has expired or is invalid. Please request a new reset link.', details: error.message });
+    }
+};
+
+exports.resetUserMfa = async (req, res) => {
+    const { userId } = req.params;
+    try {
+        // Reset target user MFA settings in database (organization isolation is enforced by the caller session org ID)
+        await db.query(
+            'UPDATE users SET mfa_secret = NULL, mfa_enabled = 0 WHERE id = ? AND organization_id = ?',
+            [userId, req.user.organization_id]
+        );
+        res.json({ success: true, message: 'MFA configuration successfully reset for the user.' });
+    } catch (error) {
+        console.error('[resetUserMfa] Error:', error);
+        res.status(500).json({ error: 'Server error during MFA reset', details: error.message });
+    }
+};
+
+exports.updateMfaSettings = async (req, res) => {
+    const { manualMfaRequired, ssoMfaRequired } = req.body;
+    const orgId = req.user.organization_id;
+
+    if (!orgId) {
+        return res.status(400).json({ error: 'Organization context not found in user session.' });
+    }
+
+    try {
+        await db.query(
+            'UPDATE organizations SET manual_mfa_required = ?, sso_mfa_required = ? WHERE id = ?',
+            [manualMfaRequired ? 1 : 0, ssoMfaRequired ? 1 : 0, orgId]
+        );
+        res.json({ success: true, message: 'Organization MFA policies updated successfully.' });
+    } catch (error) {
+        console.error('[updateMfaSettings] Error:', error);
+        res.status(500).json({ error: 'Failed to update organization MFA settings', details: error.message });
+    }
+};
+
 module.exports = {
     microsoftLogin,
     getMe,
@@ -846,5 +1173,14 @@ module.exports = {
     runDiagnostic,
     listUsers,
     updateUserRole,
-    syncUsers
+    syncUsers,
+    setupMfa: exports.setupMfa,
+    verifyMfa: exports.verifyMfa,
+    validateMfa: exports.validateMfa,
+    requestMfaReset: exports.requestMfaReset,
+    confirmMfaReset: exports.confirmMfaReset,
+    resetUserMfa: exports.resetUserMfa,
+    updateMfaSettings: exports.updateMfaSettings,
+    setupMfaAuthenticated: exports.setupMfaAuthenticated,
+    verifyMfaAuthenticated: exports.verifyMfaAuthenticated
 };

@@ -141,6 +141,14 @@ async function main() {
             console.log('Adding column prod_managed_env_id to organizations...');
             await connection.query('ALTER TABLE organizations ADD COLUMN prod_managed_env_id VARCHAR(500) DEFAULT NULL');
         }
+        if (!orgColNames.includes('manual_mfa_required')) {
+            console.log('Adding column manual_mfa_required to organizations...');
+            await connection.query('ALTER TABLE organizations ADD COLUMN manual_mfa_required TINYINT(1) DEFAULT 0');
+        }
+        if (!orgColNames.includes('sso_mfa_required')) {
+            console.log('Adding column sso_mfa_required to organizations...');
+            await connection.query('ALTER TABLE organizations ADD COLUMN sso_mfa_required TINYINT(1) DEFAULT 0');
+        }
 
         // Generate unique teams_webhook_token for organizations currently lacking one
         const crypto = require('crypto');
@@ -166,6 +174,23 @@ async function main() {
                 FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE SET NULL
             )
         `);
+
+        // Alter users table dynamically if columns are missing
+        const [userCols] = await connection.query(`
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+              AND TABLE_NAME = 'users'
+        `);
+        const userColNames = userCols.map(c => c.COLUMN_NAME.toLowerCase());
+        if (!userColNames.includes('mfa_secret')) {
+            console.log('Adding column mfa_secret to users...');
+            await connection.query('ALTER TABLE users ADD COLUMN mfa_secret VARCHAR(255) DEFAULT NULL');
+        }
+        if (!userColNames.includes('mfa_enabled')) {
+            console.log('Adding column mfa_enabled to users...');
+            await connection.query('ALTER TABLE users ADD COLUMN mfa_enabled TINYINT(1) DEFAULT 0');
+        }
 
         // 3. Create integration_credentials table
         console.log('Creating integration_credentials table...');
