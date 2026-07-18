@@ -259,6 +259,20 @@ async function runAutoMigration() {
             console.log('[DevOps DB] Adding column status to users...');
             await pool.query(`ALTER TABLE users ADD COLUMN status VARCHAR(50) NOT NULL DEFAULT 'active'`);
         }
+        if (!userColNames.includes('mfa_registered_name')) {
+            console.log('[DevOps DB] Adding column mfa_registered_name to users...');
+            await pool.query(`ALTER TABLE users ADD COLUMN mfa_registered_name VARCHAR(255) DEFAULT NULL`);
+        }
+        if (!userColNames.includes('mfa_registered_issuer')) {
+            console.log('[DevOps DB] Adding column mfa_registered_issuer to users...');
+            await pool.query(`ALTER TABLE users ADD COLUMN mfa_registered_issuer VARCHAR(255) DEFAULT NULL`);
+        }
+        // Auto-backfill active MFA accounts
+        await pool.query(`
+            UPDATE users 
+            SET mfa_registered_name = email, mfa_registered_issuer = 'EvaOps' 
+            WHERE mfa_enabled = 1 AND mfa_registered_name IS NULL
+        `);
 
         // Seed initial directory users and roles
         console.log('[DevOps DB] Seeding initial directory users...');

@@ -90,7 +90,7 @@ async function completeLoginSession(user, loginMethod, req, res, mfaVerified = f
         }
 
         // Fetch user's latest MFA status
-        const [users] = await db.query('SELECT mfa_enabled, mfa_secret FROM users WHERE id = ?', [user.id]);
+        const [users] = await db.query('SELECT mfa_enabled, mfa_secret, mfa_registered_name, mfa_registered_issuer FROM users WHERE id = ?', [user.id]);
         const dbUser = users[0] || {};
         const mfaEnabled = dbUser.mfa_enabled || 0;
 
@@ -125,7 +125,9 @@ async function completeLoginSession(user, loginMethod, req, res, mfaVerified = f
                 return res.json({
                     code: 'MFA_REQUIRED',
                     message: 'Multi-Factor Authentication verification is required.',
-                    tempToken
+                    tempToken,
+                    mfa_registered_name: dbUser.mfa_registered_name || user.email,
+                    mfa_registered_issuer: dbUser.mfa_registered_issuer || 'EvaOps'
                 });
             }
         }
@@ -930,7 +932,16 @@ exports.setupMfaAuthenticated = async (req, res) => {
         }
 
         const secret = generateBase32Secret(16);
-        const issuer = 'EvaOps';
+        const env = (process.env.APP_ENV || process.env.NODE_ENV || 'local').toLowerCase();
+        let envSuffix = '';
+        if (env === 'local') {
+            envSuffix = ' (Local)';
+        } else if (env === 'dev' || env === 'development') {
+            envSuffix = ' (Dev)';
+        } else if (env === 'qa') {
+            envSuffix = ' (QA)';
+        }
+        const issuer = `EvaOps${envSuffix}`;
         const otpauthUrl = `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(users[0].email)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}`;
 
         res.json({ secret, otpauthUrl });
@@ -947,13 +958,29 @@ exports.verifyMfaAuthenticated = async (req, res) => {
 
     try {
         const userId = req.user.id;
+        const [users] = await db.query('SELECT email FROM users WHERE id = ?', [userId]);
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
         const isValid = verifyTOTP(secret, code);
         if (!isValid) {
             return res.status(400).json({ error: 'Invalid 6-digit authenticator code' });
         }
 
-        // Save secret and set mfa_enabled = 1
-        await db.query('UPDATE users SET mfa_secret = ?, mfa_enabled = 1 WHERE id = ?', [secret, userId]);
+        const env = (process.env.APP_ENV || process.env.NODE_ENV || 'local').toLowerCase();
+        let envSuffix = '';
+        if (env === 'local') {
+            envSuffix = ' (Local)';
+        } else if (env === 'dev' || env === 'development') {
+            envSuffix = ' (Dev)';
+        } else if (env === 'qa') {
+            envSuffix = ' (QA)';
+        }
+        const issuer = `EvaOps${envSuffix}`;
+
+        // Save secret and set mfa_enabled = 1, metadata
+        await db.query('UPDATE users SET mfa_secret = ?, mfa_enabled = 1, mfa_registered_name = ?, mfa_registered_issuer = ? WHERE id = ?', [secret, users[0].email, issuer, userId]);
 
         res.json({ success: true, message: 'MFA configured successfully.' });
     } catch (error) {
@@ -980,7 +1007,16 @@ exports.setupMfa = async (req, res) => {
         }
 
         const secret = generateBase32Secret(16);
-        const issuer = 'EvaOps';
+        const env = (process.env.APP_ENV || process.env.NODE_ENV || 'local').toLowerCase();
+        let envSuffix = '';
+        if (env === 'local') {
+            envSuffix = ' (Local)';
+        } else if (env === 'dev' || env === 'development') {
+            envSuffix = ' (Dev)';
+        } else if (env === 'qa') {
+            envSuffix = ' (QA)';
+        }
+        const issuer = `EvaOps${envSuffix}`;
         const otpauthUrl = `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(users[0].email)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}`;
 
         res.json({ secret, otpauthUrl });
@@ -1006,14 +1042,25 @@ exports.verifyMfa = async (req, res) => {
             return res.status(400).json({ error: 'Invalid 6-digit authenticator code' });
         }
 
-        // Save secret and set mfa_enabled = 1
-        await db.query('UPDATE users SET mfa_secret = ?, mfa_enabled = 1 WHERE id = ?', [secret, payload.id]);
+        const env = (process.env.APP_ENV || process.env.NODE_ENV || 'local').toLowerCase();
+        let envSuffix = '';
+        if (env === 'local') {
+            envSuffix = ' (Local)';
+        } else if (env === 'dev' || env === 'development') {
+            envSuffix = ' (Dev)';
+        } else if (env === 'qa') {
+            envSuffix = ' (QA)';
+        }
+        const issuer = `EvaOps${envSuffix}`;
 
         // Load complete user row
         const [users] = await db.query('SELECT * FROM users WHERE id = ?', [payload.id]);
         if (users.length === 0) {
             return res.status(404).json({ error: 'User record missing' });
         }
+
+        // Save secret and set mfa_enabled = 1, metadata
+        await db.query('UPDATE users SET mfa_secret = ?, mfa_enabled = 1, mfa_registered_name = ?, mfa_registered_issuer = ? WHERE id = ?', [secret, users[0].email, issuer, payload.id]);
 
         return await completeLoginSession(users[0], payload.loginMethod, req, res, true);
     } catch (error) {
