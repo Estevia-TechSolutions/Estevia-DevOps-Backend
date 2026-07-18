@@ -72,7 +72,7 @@ async function checkSeatCapacity(organizationId) {
 }
 // ── End Seat Helper ────────────────────────────────────────────────────────────
 
-async function completeLoginSession(user, loginMethod, req, res) {
+async function completeLoginSession(user, loginMethod, req, res, mfaVerified = false) {
     try {
         let manualMfaRequired = 0;
         let ssoMfaRequired = 0;
@@ -96,10 +96,12 @@ async function completeLoginSession(user, loginMethod, req, res) {
 
         // Determine if MFA is enforced for this login method (bypass is always exempt)
         let mfaRequired = false;
-        if (loginMethod === 'sso' && ssoMfaRequired === 1) {
-            mfaRequired = true;
-        } else if (loginMethod === 'manual' && manualMfaRequired === 1) {
-            mfaRequired = true;
+        if (!mfaVerified) {
+            if (loginMethod === 'sso' && ssoMfaRequired === 1) {
+                mfaRequired = true;
+            } else if (loginMethod === 'manual' && manualMfaRequired === 1) {
+                mfaRequired = true;
+            }
         }
 
         if (mfaRequired) {
@@ -1013,7 +1015,7 @@ exports.verifyMfa = async (req, res) => {
             return res.status(404).json({ error: 'User record missing' });
         }
 
-        return await completeLoginSession(users[0], payload.loginMethod, req, res);
+        return await completeLoginSession(users[0], payload.loginMethod, req, res, true);
     } catch (error) {
         res.status(400).json({ error: 'Verification transaction failed or expired', details: error.message });
     }
@@ -1043,7 +1045,7 @@ exports.validateMfa = async (req, res) => {
             return res.status(400).json({ error: 'Invalid 6-digit authenticator code' });
         }
 
-        return await completeLoginSession(user, payload.loginMethod, req, res);
+        return await completeLoginSession(user, payload.loginMethod, req, res, true);
     } catch (error) {
         res.status(400).json({ error: 'Authentication validation failed or expired', details: error.message });
     }
