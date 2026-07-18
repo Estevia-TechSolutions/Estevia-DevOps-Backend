@@ -885,9 +885,12 @@ function generateBase32Secret(length = 16) {
 
 function verifyTOTP(secret, code, window = 30) {
     try {
+        console.log(`[TOTP Debug] verifyTOTP called with secret length: ${secret ? secret.length : 0}, code: ${code}`);
+        if (!secret) return false;
         const key = base32Decode(secret);
         const epoch = Math.floor(Date.now() / 1000);
         const counter = Math.floor(epoch / 30);
+        console.log(`[TOTP Debug] epoch: ${epoch}, counter: ${counter}`);
         
         for (let i = -window; i <= window; i++) {
             const checkCounter = counter + i;
@@ -904,9 +907,11 @@ function verifyTOTP(secret, code, window = 30) {
                            
             const otp = (binary % 1000000).toString().padStart(6, '0');
             if (otp === code) {
+                console.log(`[TOTP Debug] Found match at step: ${i}`);
                 return true;
             }
         }
+        console.log(`[TOTP Debug] No match found across window.`);
     } catch (err) {
         console.error('[TOTP Verification Error]', err);
     }
