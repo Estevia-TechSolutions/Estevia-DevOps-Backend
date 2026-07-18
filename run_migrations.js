@@ -797,6 +797,14 @@ async function main() {
             console.error('Failed to run invoice regeneration during migration:', invoiceErr.message);
         }
 
+        // Emergency recovery: Reset MFA for the administrator to allow clean re-setup
+        try {
+            console.log('[DevOps DB] [Emergency Recovery] Resetting MFA for govind.m@esteviatech.com...');
+            await connection.query("UPDATE users SET mfa_secret = NULL, mfa_enabled = 0 WHERE email = 'govind.m@esteviatech.com'");
+        } catch (mfaResetErr) {
+            console.error('Failed to reset administrator MFA during migration:', mfaResetErr.message);
+        }
+
         console.log('\n================================================================');
         console.log('SUCCESS: Database migration and seeding completed successfully!');
         console.log('================================================================');
