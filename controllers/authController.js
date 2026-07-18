@@ -883,7 +883,7 @@ function generateBase32Secret(length = 16) {
     return secret;
 }
 
-function verifyTOTP(secret, code, window = 3) {
+function verifyTOTP(secret, code, window = 30) {
     try {
         const key = base32Decode(secret);
         const epoch = Math.floor(Date.now() / 1000);
