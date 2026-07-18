@@ -2061,6 +2061,8 @@ const appController = {
                     app.repositoryUrl = `https://github.com/${githubOwner}/estevia-devops-backend`;
                 } else if (deducedName.includes('devops-frontend')) {
                     app.repositoryUrl = `https://github.com/${githubOwner}/estevia-devops-frontend`;
+                } else if (deducedName.includes('evanet')) {
+                    app.repositoryUrl = `https://github.com/${githubOwner}/evanet-frontend`;
                 } else {
                     app.repositoryUrl = `https://github.com/${githubOwner}/${deducedName}`;
                 }
