@@ -631,7 +631,7 @@ const getLoginUrl = (req, res) => {
 const listUsers = async (req, res) => {
     try {
         const [rows] = await db.query(
-            "SELECT id, email, name, role, created_at FROM users WHERE organization_id = ? AND id NOT LIKE 'dev-bypass-%' AND id NOT LIKE 'admin-override-%' AND id <> 'dev-bypass-user-id' ORDER BY name ASC",
+            "SELECT id, email, name, role, mfa_enabled, created_at FROM users WHERE organization_id = ? AND id NOT LIKE 'dev-bypass-%' AND id NOT LIKE 'admin-override-%' AND id <> 'dev-bypass-user-id' ORDER BY name ASC",
             [req.user.organization_id]
         );
         return res.json(rows);
