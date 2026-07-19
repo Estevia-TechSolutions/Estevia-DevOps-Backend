@@ -1,16 +1,30 @@
-const queryDbHelper = async (host, database, sql, params = [], organizationId = 'estevia') => {
+const connectToDb = async (host, database, timeoutMs = 8000) => {
     const mysql = require('mysql2/promise');
+    const connOpts = {
+        host,
+        user: process.env.DB_USER,
+        password: process.env.DB_PASSWORD,
+        port: process.env.DB_PORT || 3306,
+        connectTimeout: timeoutMs
+    };
+    if (database) connOpts.database = database;
     
+    try {
+        // Try with SSL first (Azure cloud requirement)
+        return await mysql.createConnection({
+            ...connOpts,
+            ssl: { require: true, rejectUnauthorized: false }
+        });
+    } catch (sslErr) {
+        console.warn(`[DBHub SSL Fallback] Direct SSL connection failed for host ${host}, retrying without SSL. Error: ${sslErr.message}`);
+        return await mysql.createConnection(connOpts);
+    }
+};
+
+const queryDbHelper = async (host, database, sql, params = [], organizationId = 'estevia') => {
     // First, try connecting directly
     try {
-        const conn = await mysql.createConnection({
-            host: host,
-            user: process.env.DB_USER,
-            password: process.env.DB_PASSWORD,
-            port: process.env.DB_PORT || 3306,
-            ssl: { require: true, rejectUnauthorized: false },
-            connectTimeout: 4000
-        });
+        const conn = await connectToDb(host, database, 4000);
         try {
             const [rows] = await conn.query(sql, params);
             return rows;
@@ -261,25 +275,17 @@ const dbHubController = {
             const orgSettings = await appController._getOrgSettings(organizationId);
             const mysql = require('mysql2/promise');
 
-            const sourceConn = await mysql.createConnection({
-                host: appController._resolveDbHost(sourceServerName, orgSettings),
-                user: process.env.DB_USER,
-                password: process.env.DB_PASSWORD,
-                database: sourceDb,
-                port: process.env.DB_PORT || 3306,
-                ssl: { require: true, rejectUnauthorized: false },
-                connectTimeout: 8000
-            });
+            const sourceConn = await connectToDb(
+                appController._resolveDbHost(sourceServerName, orgSettings),
+                sourceDb,
+                8000
+            );
 
-            const targetConn = await mysql.createConnection({
-                host: appController._resolveDbHost(targetServerName, orgSettings),
-                user: process.env.DB_USER,
-                password: process.env.DB_PASSWORD,
-                database: targetDb,
-                port: process.env.DB_PORT || 3306,
-                ssl: { require: true, rejectUnauthorized: false },
-                connectTimeout: 8000
-            });
+            const targetConn = await connectToDb(
+                appController._resolveDbHost(targetServerName, orgSettings),
+                targetDb,
+                8000
+            );
 
             const migrationLog = [];
             let totalRows = 0;
@@ -382,15 +388,7 @@ const dbHubController = {
             const orgSettings = await appController._getOrgSettings(organizationId);
             const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
-            const conn = await mysql.createConnection({
-                host: resolvedHost,
-                user: process.env.DB_USER,
-                password: process.env.DB_PASSWORD,
-                database: dbName,
-                port: process.env.DB_PORT || 3306,
-                ssl: { require: true, rejectUnauthorized: false },
-                connectTimeout: 8000
-            });
+            const conn = await connectToDb(resolvedHost, dbName, 8000);
 
             try {
                 // 1. Get all tables in database
@@ -480,15 +478,7 @@ const dbHubController = {
             const orgSettings = await appController._getOrgSettings(organizationId);
             const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
-            const conn = await mysql.createConnection({
-                host: resolvedHost,
-                user: process.env.DB_USER,
-                password: process.env.DB_PASSWORD,
-                database: dbName,
-                port: process.env.DB_PORT || 3306,
-                ssl: { require: true, rejectUnauthorized: false },
-                connectTimeout: 8000
-            });
+            const conn = await connectToDb(resolvedHost, dbName, 8000);
 
             try {
                 // 1. Fetch tables list
@@ -558,14 +548,7 @@ const dbHubController = {
             console.log(`[DBHub Proxy Gateway] Executing proxy query against host: ${host}, db: ${database}...`);
 
             const mysql = require('mysql2/promise');
-            const conn = await mysql.createConnection({
-                host: host,
-                user: process.env.DB_USER,
-                password: process.env.DB_PASSWORD,
-                port: process.env.DB_PORT || 3306,
-                ssl: { require: true, rejectUnauthorized: false },
-                connectTimeout: 8000
-            });
+            const conn = await connectToDb(host, database, 8000);
 
             try {
                 const [rows] = await conn.query(sql, params || []);
