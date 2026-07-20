@@ -76,6 +76,9 @@ app.use('/api/keyvault', keyVaultRoutes);
 const webhookRoutes = require('./routes/webhookRoutes');
 app.use('/api/webhooks', webhookRoutes);
 
+const emailTemplateRoutes = require('./routes/emailTemplateRoutes');
+app.use('/api/devops/email-templates', emailTemplateRoutes);
+
 app.get('/health', (req, res) => {
     res.json({ status: 'HEALTHY', timestamp: new Date() });
 });

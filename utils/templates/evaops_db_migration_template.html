@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EvaOps Database Migration Report</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; color: #e2e8f0; margin: 0; padding: 24px; }
+        .card { background-color: #111827; border: 1px solid #1f2937; border-radius: 16px; max-width: 600px; margin: 0 auto; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); }
+        .header { background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%); padding: 28px; text-align: center; }
+        .logo { font-size: 24px; font-weight: 900; letter-spacing: -0.03em; color: #ffffff; margin: 0; }
+        .badge { display: inline-block; background-color: rgba(99, 102, 241, 0.2); border: 1px solid #6366f1; color: #c7d2fe; font-size: 11px; font-weight: 800; text-transform: uppercase; padding: 4px 12px; border-radius: 20px; margin-top: 8px; }
+        .content { padding: 32px; }
+        .meta-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+        .meta-table td { padding: 10px 0; border-bottom: 1px solid #1f2937; font-size: 14px; }
+        .meta-label { color: #94a3b8; font-weight: 600; width: 140px; }
+        .meta-value { color: #f8fafc; font-weight: 700; }
+        .btn { display: inline-block; background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%); color: #ffffff; text-decoration: none; font-size: 14px; font-weight: 800; padding: 12px 24px; border-radius: 10px; margin-top: 12px; }
+        .footer { background-color: #080c14; border-top: 1px solid #1f2937; padding: 20px; text-align: center; font-size: 12px; color: #64748b; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="header">
+            <h1 class="logo">EVAOPS DATABASE ORCHESTRATOR</h1>
+            <div class="badge">Auto-Initialization & Migration</div>
+        </div>
+        <div class="content">
+            <h2 style="font-size: 18px; font-weight: 800; color: #818cf8; margin: 0 0 16px 0;">⚡ Database Boot Migration Complete</h2>
+            <p style="font-size: 14px; color: #cbd5e1; line-height: 1.6; margin-bottom: 24px;">
+                EvaOps container boot verifier executed database auto-initialization (<code>CREATE DATABASE IF NOT EXISTS</code>) and schema migrations for microservice <strong>{{serviceName}}</strong>.
+            </p>
+
+            <table class="meta-table">
+                <tr>
+                    <td class="meta-label">Microservice:</td>
+                    <td class="meta-value">{{serviceName}}</td>
+                </tr>
+                <tr>
+                    <td class="meta-label">Database Host:</td>
+                    <td class="meta-value"><code>{{dbHost}}</code></td>
+                </tr>
+                <tr>
+                    <td class="meta-label">Database Name:</td>
+                    <td class="meta-value"><code>{{dbName}}</code></td>
+                </tr>
+                <tr>
+                    <td class="meta-label">Applied Migrations:</td>
+                    <td class="meta-value" style="color: #10b981;">{{migrationCount}} migrations</td>
+                </tr>
+                <tr>
+                    <td class="meta-label">Execution Time:</td>
+                    <td class="meta-value">{{executionTime}}</td>
+                </tr>
+            </table>
+
+            <div style="background-color: #080c14; border: 1px solid #374151; border-radius: 10px; padding: 16px; font-family: monospace; font-size: 12px; color: #c7d2fe; overflow-x: auto; margin-bottom: 24px;">
+                {{migrationLogs}}
+            </div>
+
+            <div style="text-align: center;">
+                <a href="{{dbCatalogUrl}}" class="btn">Inspect Database Catalog</a>
+            </div>
+        </div>
+        <div class="footer">
+            © 2026 Estevia TechSolutions — Autonomous DevOps Core (EvaOps)
+        </div>
+    </div>
+</body>
+</html>
