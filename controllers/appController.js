@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const credentialController = require('./credentialController');
+const emailService = require('../utils/emailService');
 const { DefaultAzureCredential, ClientSecretCredential } = require('@azure/identity');
 const { WebSiteManagementClient } = require('@azure/arm-appservice');
 const { ContainerAppsAPIClient } = require('@azure/arm-appcontainers');
@@ -9709,6 +9710,16 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
 
             await db.query('UPDATE applications SET godaddy_dns_details = ? WHERE id = ?', [JSON.stringify(newDns1), app1.id]);
             await db.query('UPDATE applications SET godaddy_dns_details = ? WHERE id = ?', [JSON.stringify(newDns2), app2.id]);
+
+            // Dispatch automated EvaOps CNAME swap email notification
+            emailService.sendEvaOpsCnameSwapNotification({
+                domainName: dns1.fqdn || app1Name,
+                targetHost: details2.hostname || app2Name,
+                previousHost: details1.hostname || app1Name,
+                swapTime: new Date().toISOString(),
+                latencyMs: '120',
+                domainManagementUrl: 'https://devops.esteviatech.com/crm'
+            }).catch(err => console.error('[AppController] Automated CNAME swap email notification failed:', err.message));
 
             res.json({
                 success: true,

@@ -164,6 +164,22 @@ async function notifyScaleTransition(orgId, appName, newState, minReplicas, maxR
             { name: 'Triggered At', value: new Date().toISOString() }
         ]
     });
+
+    try {
+        const emailService = require('./emailService');
+        await emailService.sendEvaOpsDeploymentNotification({
+            serviceName: appName,
+            envName: appTypeLabel,
+            status: stateLabel.toUpperCase(),
+            commitHash: 'LIVE',
+            triggeredBy: 'EvaOps Sleep Scheduler',
+            buildDuration: '0s',
+            buildLogSummary: `[INFO] ${costNote}`,
+            dashboardUrl: 'https://devops.esteviatech.com/dashboard'
+        });
+    } catch (e) {
+        console.error('[SchedulerWorker] Automated email notification failed:', e.message);
+    }
 }
 
 // Single tick check runner
