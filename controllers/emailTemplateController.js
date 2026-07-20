@@ -11,6 +11,8 @@ const EVAOPS_TEMPLATES = [
         lifecycleStage: 'event',
         subject: '🚀 [EvaOps] Deployment Success: Estevia Core Service (Production)',
         description: 'Automated notification dispatched upon Azure Static Web App or Container App build pipeline completion.',
+        recipient: 'DevOps Team, Project Leads & System Admins',
+        trigger: 'Triggered automatically when a CI/CD build or deployment pipeline finishes.',
         sampleData: {
             serviceName: 'Estevia-Marketing-Web',
             envName: 'Production',
@@ -32,6 +34,8 @@ const EVAOPS_TEMPLATES = [
         lifecycleStage: 'event',
         subject: '🌐 [EvaOps] CNAME Subdomain Swap Executed: api.esteviatech.com',
         description: 'Sent when automated DNS cutover performs a zero-downtime subdomain CNAME swap.',
+        recipient: 'Infrastructure Owner & Lead Architect',
+        trigger: 'Triggered upon executing zero-downtime GoDaddy CNAME / Azure Static Web App domain swaps.',
         sampleData: {
             domainName: 'api.esteviatech.com',
             targetHost: 'estevia-prod-slot-b.azurecontainerapps.io',
@@ -51,6 +55,8 @@ const EVAOPS_TEMPLATES = [
         lifecycleStage: 'urgent',
         subject: '⚠️ [EvaOps Alert] Container Crash Loop Detected: Estevia-Backend-API',
         description: 'Urgent notification triggered when continuous container telemetry detects repeated crash loops.',
+        recipient: 'On-Call SRE & System Administrator',
+        trigger: 'Triggered when container telemetry detects crash loops or restart count exceeds threshold (>2).',
         sampleData: {
             appName: 'Estevia-Backend-API',
             containerId: 'cnt-89102-prod',
@@ -71,6 +77,8 @@ const EVAOPS_TEMPLATES = [
         lifecycleStage: 'daily',
         subject: '[EvaOps Audit] Environment File Drift Detected: Estevia-DevOps-Backend',
         description: 'Automated scan audit reporting missing or mismatched API URL keys across standard .env files.',
+        recipient: 'DevOps Security Lead & Platform Admin',
+        trigger: 'Triggered during repository audit scan when missing or mismatched keys are found in standard .env files.',
         sampleData: {
             repoName: 'Estevia-DevOps-Backend',
             driftStatus: 'Missing Key Discrepancy',
@@ -89,6 +97,8 @@ const EVAOPS_TEMPLATES = [
         lifecycleStage: 'event',
         subject: '⚡ [EvaOps DB] Migration Complete: Estevia-DevOps-Backend',
         description: 'Report sent on container boot after CREATE DATABASE IF NOT EXISTS and migrations execute.',
+        recipient: 'Database Administrator & Backend Lead',
+        trigger: 'Triggered on microservice container boot when CREATE DATABASE IF NOT EXISTS and migrations complete.',
         sampleData: {
             serviceName: 'Estevia-DevOps-Backend',
             dbHost: 'estevia-qa-db.mysql.database.azure.com',
@@ -109,6 +119,8 @@ const EVAOPS_TEMPLATES = [
         lifecycleStage: 'urgent',
         subject: '🛡️ [EvaOps Security] High Priority Risk Detected: Azure KeyVault Instance',
         description: 'High-priority alert sent when policy scanner detects uncontained ports or expiring SSL certificates.',
+        recipient: 'Chief Security Officer & Compliance Lead',
+        trigger: 'Triggered when cloud scanner detects uncontained management ports or SSL certificate expiration <7 days.',
         sampleData: {
             resourceName: 'kv-estevia-prod-keys',
             severity: 'CRITICAL',
