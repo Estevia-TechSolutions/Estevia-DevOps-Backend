@@ -1,12 +1,12 @@
 const db = require('../config/db');
 
 const DEFAULT_KNOWN_APPS = [
-    { key: 'connecthub', label: 'ConnectHub', icon: '🌐' },
-    { key: 'docai', label: 'DocuAI', icon: '📄' },
-    { key: 'protrack', label: 'ProTrack', icon: '📊' },
-    { key: 'talenthq', label: 'TalentHQ', icon: '🎯' },
-    { key: 'evafusion', label: 'EvaFusion', icon: '⚡' },
-    { key: 'evaops', label: 'EvaOps', icon: '🚀' }
+    { key: 'connecthub', label: 'ConnectHub', icon: '🌐', resourceTypes: ['swa', 'aca', 'vm'] },
+    { key: 'docai', label: 'DocuAI Portal', icon: '📄', resourceTypes: ['swa', 'aca'] },
+    { key: 'protrack', label: 'ProTrack ERP', icon: '📊', resourceTypes: ['aca', 'vm'] },
+    { key: 'talenthq', label: 'TalentHQ', icon: '🎯', resourceTypes: ['swa', 'aca'] },
+    { key: 'evafusion', label: 'EvaFusion Platform', icon: '⚡', resourceTypes: ['swa', 'aca', 'vm'] },
+    { key: 'evaops', label: 'EvaOps DevOps', icon: '🚀', resourceTypes: ['aca', 'vm'] }
 ];
 
 // Helper to extract clean app key by stripping env suffixes
