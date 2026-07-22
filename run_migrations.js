@@ -858,10 +858,16 @@ async function main() {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
 
-        console.log('Seeding default menu grants for existing users...');
+        console.log('Seeding role-based default menu grants for existing users...');
         await connection.query(`
             INSERT IGNORE INTO user_menu_permissions (user_id, organization_id, menu_key, is_granted)
-            SELECT u.id, u.organization_id, menu_list.menu_key, 1
+            SELECT u.id, u.organization_id, menu_list.menu_key,
+                   CASE 
+                       WHEN LOWER(u.role) IN ('owner', 'admin') THEN 1
+                       WHEN LOWER(u.role) IN ('contributor', 'member') AND menu_list.menu_key IN ('scan', 'provision', 'cost', 'optimization', 'guide', 'events') THEN 1
+                       WHEN LOWER(u.role) = 'viewer' AND menu_list.menu_key IN ('scan', 'optimization', 'guide') THEN 1
+                       ELSE 0
+                   END AS is_granted
             FROM users u
             CROSS JOIN (
                 SELECT 'scan' AS menu_key UNION SELECT 'provision' UNION SELECT 'credentials' UNION 

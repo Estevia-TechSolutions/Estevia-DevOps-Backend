@@ -252,6 +252,25 @@ exports.getUserMenuPermissions = async (req, res) => {
             permMap[r.menu_key] = Boolean(r.is_granted);
         });
 
+        // If no custom permission rows exist for this user, populate role-based defaults
+        if (Object.keys(permMap).length === 0) {
+            const [users] = await db.query('SELECT role FROM users WHERE id = ?', [userId]);
+            const role = users.length > 0 ? (users[0].role || 'member').toLowerCase() : 'member';
+
+            const allMenus = ['scan', 'provision', 'credentials', 'cost', 'optimization', 'databases', 'guide', 'users', 'events', 'emails', 'settings'];
+            allMenus.forEach(m => {
+                if (['owner', 'admin'].includes(role)) {
+                    permMap[m] = true;
+                } else if (['contributor', 'member'].includes(role)) {
+                    permMap[m] = ['scan', 'provision', 'cost', 'optimization', 'guide', 'events'].includes(m);
+                } else if (role === 'viewer') {
+                    permMap[m] = ['scan', 'optimization', 'guide'].includes(m);
+                } else {
+                    permMap[m] = false;
+                }
+            });
+        }
+
         return res.json({ success: true, menuPermissions: permMap });
     } catch (err) {
         console.error('[ObservabilityController] Error fetching user menu permissions:', err);
