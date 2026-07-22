@@ -1222,14 +1222,24 @@ exports.updateMfaSettings = async (req, res) => {
 const devopsPushMfaSessions = new Map();
 const devopsEmailMfaOtps = new Map();
 
+// Helper: Dual-table lookup for DevOps user resolution
+async function getDevopsUserById(userId) {
+    if (!userId) return null;
+    let [users] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
+    if (users.length === 0) {
+        [users] = await db.query('SELECT * FROM intranet_users WHERE id = ?', [userId]);
+    }
+    if (users.length === 0) return null;
+    return users[0];
+}
+
 exports.sendPushMfaPrompt = async (req, res) => {
     const { tempToken } = req.body;
     if (!tempToken) return res.status(400).json({ error: 'Temporary token required.' });
     try {
         const payload = jwt.verify(tempToken, JWT_SECRET);
-        const [users] = await db.query('SELECT * FROM users WHERE id = ?', [payload.id]);
-        if (users.length === 0) return res.status(404).json({ error: 'User not found.' });
-        const user = users[0];
+        const user = await getDevopsUserById(payload.id);
+        if (!user) return res.status(404).json({ error: 'User not found.' });
 
         const promptId = `devops-push-${crypto.randomUUID()}`;
         const numberMatch = Math.floor(10 + Math.random() * 89).toString();
@@ -1251,10 +1261,10 @@ exports.sendPushMfaPrompt = async (req, res) => {
 
 exports.pollPushMfaStatus = async (req, res) => {
     const { promptId } = req.body;
-    if (!promptId) return res.status(400).json({ error: 'Prompt ID required.' });
+    if (!promptId) return res.json({ approved: false, status: 'pending' });
     const session = devopsPushMfaSessions.get(promptId);
     if (!session || Date.now() > session.expiresAt) {
-        return res.status(400).json({ error: 'Push approval prompt expired or invalid.' });
+        return res.json({ approved: false, status: 'pending' });
     }
 
     if (session.status === 'approved') {
