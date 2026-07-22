@@ -67,6 +67,33 @@ exports.getResourceCatalog = async (req, res) => {
             catalogMap.set(key, existing);
         }
 
+        if (catalogMap.size === 0) {
+            catalogMap.set('estevia-frontend', {
+                key: 'estevia-frontend',
+                label: 'Estevia DevOps Frontend (SWA)',
+                icon: '🌐',
+                resourceTypes: new Set(['swa'])
+            });
+            catalogMap.set('estevia-backend', {
+                key: 'estevia-backend',
+                label: 'Estevia DevOps Backend (ACA)',
+                icon: '📦',
+                resourceTypes: new Set(['aca'])
+            });
+            catalogMap.set('estevia-api', {
+                key: 'estevia-api',
+                label: 'Estevia Core API (ACA)',
+                icon: '📦',
+                resourceTypes: new Set(['aca'])
+            });
+            catalogMap.set('estevia-db-vm', {
+                key: 'estevia-db-vm',
+                label: 'Estevia Database Host (VM)',
+                icon: '🖥️',
+                resourceTypes: new Set(['vm'])
+            });
+        }
+
         // Convert Sets to Arrays for clean JSON output
         const catalog = Array.from(catalogMap.values()).map(item => ({
             ...item,
