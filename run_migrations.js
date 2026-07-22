@@ -877,6 +877,18 @@ async function main() {
             ) menu_list;
         `);
 
+        console.log('Recalculating role-based menu grants for existing users...');
+        await connection.query(`
+            UPDATE user_menu_permissions ump
+            JOIN users u ON ump.user_id = u.id AND ump.organization_id = u.organization_id
+            SET ump.is_granted = CASE 
+                WHEN LOWER(u.role) IN ('owner', 'admin') THEN 1
+                WHEN LOWER(u.role) IN ('contributor', 'member') AND ump.menu_key IN ('scan', 'provision', 'cost', 'optimization', 'guide', 'events') THEN 1
+                WHEN LOWER(u.role) = 'viewer' AND ump.menu_key IN ('scan', 'optimization', 'guide') THEN 1
+                ELSE 0
+            END;
+        `);
+
         // 11. Add app_resource_owners table for Grouped Alert Configuration (SWA, ACA, VM)
         console.log('Verifying app_resource_owners table for Grouped Alert Management...');
         await connection.query(`
