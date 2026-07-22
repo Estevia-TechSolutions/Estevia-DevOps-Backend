@@ -81,6 +81,9 @@ app.use('/api/webhooks', webhookRoutes);
 const emailTemplateRoutes = require('./routes/emailTemplateRoutes');
 app.use('/api/devops/email-templates', emailTemplateRoutes);
 
+const observabilityRoutes = require('./routes/observabilityRoutes');
+app.use('/api/observability', observabilityRoutes);
+
 app.get('/health', (req, res) => {
     res.json({ status: 'HEALTHY', timestamp: new Date() });
 });
@@ -88,6 +91,7 @@ app.get('/health', (req, res) => {
 // Run database migrations automatically on startup
 const runMigrations = require('./run_migrations');
 const schedulerWorker = require('./utils/schedulerWorker');
+const incidentScanner = require('./utils/incidentScanner');
 
 console.log('[DevOps Backend] Running auto-migrations on server startup...');
 runMigrations()
@@ -106,6 +110,8 @@ runMigrations()
             console.log(`[DevOps Backend] Running on http://localhost:${PORT}`);
             // Start Weekly sleep scheduler background loops
             schedulerWorker.startSchedulerWorker();
+            // Start 24/7 background telemetry & incident evaluation daemon
+            incidentScanner.startIncidentScanner();
         });
     })
     .catch((err) => {

@@ -842,6 +842,106 @@ async function main() {
             CROSS JOIN (SELECT 'dev' AS environment UNION SELECT 'qa' UNION SELECT 'prod') env_list;
         `);
 
+        // 10. Add user_menu_permissions table for Top-Level Navigation Menu Item RBAC
+        console.log('Verifying user_menu_permissions table for Navigation Menu RBAC...');
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS user_menu_permissions (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id VARCHAR(255) NOT NULL,
+                organization_id VARCHAR(255) NOT NULL,
+                menu_key VARCHAR(100) NOT NULL,
+                is_granted TINYINT(1) DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_user_menu (user_id, organization_id, menu_key),
+                INDEX idx_user_org_menu (user_id, organization_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        `);
+
+        console.log('Seeding default menu grants for existing users...');
+        await connection.query(`
+            INSERT IGNORE INTO user_menu_permissions (user_id, organization_id, menu_key, is_granted)
+            SELECT u.id, u.organization_id, menu_list.menu_key, 1
+            FROM users u
+            CROSS JOIN (
+                SELECT 'scan' AS menu_key UNION SELECT 'provision' UNION SELECT 'credentials' UNION 
+                SELECT 'cost' UNION SELECT 'optimization' UNION SELECT 'databases' UNION 
+                SELECT 'guide' UNION SELECT 'users' UNION SELECT 'events' UNION 
+                SELECT 'emails' UNION SELECT 'settings'
+            ) menu_list;
+        `);
+
+        // 11. Add app_resource_owners table for Grouped Alert Configuration (SWA, ACA, VM)
+        console.log('Verifying app_resource_owners table for Grouped Alert Management...');
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS app_resource_owners (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                organization_id VARCHAR(255) NOT NULL,
+                app_key VARCHAR(255) NOT NULL,
+                resource_type ENUM('swa', 'aca', 'vm') NOT NULL DEFAULT 'aca',
+                environment ENUM('dev', 'qa', 'prod') NOT NULL,
+                primary_owner_user_id VARCHAR(255) NOT NULL,
+                secondary_owner_user_id VARCHAR(255) NULL,
+                notification_email VARCHAR(255) NOT NULL,
+                alert_categories JSON NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_app_env_org (organization_id, app_key, environment),
+                INDEX idx_org_type (organization_id, resource_type)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        `);
+
+        // 12. Add resource_incidents table for Multi-Category Incident Management
+        console.log('Verifying resource_incidents table...');
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS resource_incidents (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                organization_id VARCHAR(255) NOT NULL,
+                app_key VARCHAR(255) NOT NULL,
+                resource_type ENUM('swa', 'aca', 'vm') NOT NULL DEFAULT 'aca',
+                environment ENUM('dev', 'qa', 'prod') NOT NULL,
+                category ENUM('CRITICAL_OUTAGE', 'HIGH_RESOURCE_PRESSURE', 'LATENCY_DEGRADATION', 'SSL_CERT_EXPIRING', 'HEALTH_CHECK_FAILURE') NOT NULL,
+                severity ENUM('P1_CRITICAL', 'P2_HIGH', 'P3_MEDIUM', 'P4_LOW') NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                description TEXT NOT NULL,
+                telemetry_snapshot JSON NOT NULL,
+                status ENUM('triggered', 'acknowledged', 'resolved', 'auto_healed') NOT NULL DEFAULT 'triggered',
+                responsible_user_id VARCHAR(255) NULL,
+                acknowledged_at TIMESTAMP NULL,
+                resolved_at TIMESTAMP NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_org_app_status (organization_id, app_key, status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        `);
+
+        // 13. Add resource_metrics_history table for Prometheus Telemetry Charts
+        console.log('Verifying resource_metrics_history table...');
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS resource_metrics_history (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                organization_id VARCHAR(255) NOT NULL,
+                app_key VARCHAR(255) NOT NULL,
+                resource_type ENUM('swa', 'aca', 'vm') NOT NULL DEFAULT 'aca',
+                environment ENUM('dev', 'qa', 'prod') NOT NULL,
+                cpu_percent FLOAT NOT NULL DEFAULT 0,
+                memory_mb FLOAT NOT NULL DEFAULT 0,
+                request_rate FLOAT NOT NULL DEFAULT 0,
+                p95_latency_ms INT NOT NULL DEFAULT 0,
+                http_5xx_count INT NOT NULL DEFAULT 0,
+                replica_count INT NOT NULL DEFAULT 1,
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_app_env_time (app_key, environment, recorded_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        `);
+
+        // 14. Seed sample incidents & telemetry history for instant dashboard visualization
+        console.log('Seeding sample Prometheus metrics history...');
+        await connection.query(`
+            INSERT INTO resource_metrics_history (organization_id, app_key, resource_type, environment, cpu_percent, memory_mb, request_rate, p95_latency_ms, http_5xx_count, replica_count)
+            SELECT u.organization_id, 'connecthub', 'aca', 'dev', 42.5, 380, 145, 120, 0, 2
+            FROM users u LIMIT 1;
+        `);
+
         console.log('\n================================================================');
         console.log('SUCCESS: Database migration and seeding completed successfully!');
         console.log('================================================================');

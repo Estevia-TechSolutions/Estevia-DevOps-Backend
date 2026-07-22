@@ -219,9 +219,10 @@ const lazyBillPackage = (packageName) => {
                     const pricing = {
                         devops: { USD: 150.00, INR: 12500.00 },
                         developer: { USD: 99.00, INR: 8250.00 },
-                        security: { USD: 120.00, INR: 10000.00 }
+                        security: { USD: 120.00, INR: 10000.00 },
+                        observability: { USD: 180.00, INR: 15000.00 }
                     };
-                    const price = pricing[packageName.toLowerCase()][currency] || 100.00;
+                    const price = (pricing[packageName.toLowerCase()] || {})[currency] || 180.00;
                     
                     const now = new Date();
                     const invoiceNumber = `INV-EV-${orgId}-${packageName.toUpperCase()}-${Date.now()}`;
