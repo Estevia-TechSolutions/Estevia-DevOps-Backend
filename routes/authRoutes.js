@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
-const { protect, restrictTo } = require('../middlewares/authMiddleware');
+const { protect, protectOptional, restrictTo } = require('../middlewares/authMiddleware');
 
 const userPermissionController = require('../controllers/userPermissionController');
 
@@ -18,7 +18,7 @@ router.put('/users/:userId/role', protect, restrictTo('owner', 'admin'), authCon
 router.post('/users/sync', protect, restrictTo('owner', 'admin'), authController.syncUsers);
 
 // Dynamic Granular Resource & Environment Permissions
-router.get('/resource-catalog', protect, userPermissionController.getResourceCatalog);
+router.get('/resource-catalog', protectOptional, userPermissionController.getResourceCatalog);
 router.get('/users/:userId/resource-permissions', protect, userPermissionController.getUserPermissions);
 router.put('/users/:userId/resource-permissions', protect, restrictTo('owner', 'admin'), userPermissionController.updateUserPermissions);
 

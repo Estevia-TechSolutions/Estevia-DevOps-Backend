@@ -58,6 +58,7 @@ app.use('/api/org', orgRoutes);
 
 const observabilityRoutes = require('./routes/observabilityRoutes');
 app.use('/api/observability', observabilityRoutes);
+app.use('/api/auth/observability', observabilityRoutes);
 
 const schedulerRoutes = require('./routes/schedulerRoutes');
 app.use('/api/scheduler', schedulerRoutes);
