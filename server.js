@@ -41,6 +41,8 @@ const authRoutes = require('./routes/authRoutes');
 const { protect } = require('./middlewares/authMiddleware');
 
 app.use('/api/auth', authRoutes);
+app.use('/api/mfa', authRoutes);
+app.use('/api', authRoutes);
 
 const crmRoutes = require('./routes/crmRoutes');
 app.use('/api/crm', crmRoutes);
