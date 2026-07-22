@@ -432,6 +432,24 @@ async function main() {
             await connection.query("ALTER TABLE billing_invoices ADD COLUMN invoice_type VARCHAR(50) DEFAULT NULL");
         }
 
+        // Alter users table to add Multi-Mode MFA columns if missing
+        console.log('Altering users table to add preferred_mfa_method and mfa_backup_codes columns if missing...');
+        const [userColsList] = await connection.query(`
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+              AND TABLE_NAME = 'users'
+        `);
+        const userColNamesList = userColsList.map(c => c.COLUMN_NAME.toLowerCase());
+        if (!userColNamesList.includes('preferred_mfa_method')) {
+            console.log('Adding column preferred_mfa_method to users...');
+            await connection.query("ALTER TABLE users ADD COLUMN preferred_mfa_method VARCHAR(32) DEFAULT 'totp'");
+        }
+        if (!userColNamesList.includes('mfa_backup_codes')) {
+            console.log('Adding column mfa_backup_codes to users...');
+            await connection.query("ALTER TABLE users ADD COLUMN mfa_backup_codes TEXT NULL");
+        }
+
         const masterOrgId = process.env.MASTER_ORGANIZATION_ID || 'estevia';
         const masterOrgName = process.env.MASTER_ORGANIZATION_NAME || 'Estevia Tech Solutions';
         const defaultSubId = process.env.AZURE_SUBSCRIPTION_ID || 'a812e8e3-34f9-4773-82ee-6398869533b0';

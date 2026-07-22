@@ -1218,6 +1218,200 @@ exports.updateMfaSettings = async (req, res) => {
     }
 };
 
+// ─── DEVOPS MULTI-MODE MFA ENGINE ─────────────────────────────────────────
+const devopsPushMfaSessions = new Map();
+const devopsEmailMfaOtps = new Map();
+
+exports.sendPushMfaPrompt = async (req, res) => {
+    const { tempToken } = req.body;
+    if (!tempToken) return res.status(400).json({ error: 'Temporary token required.' });
+    try {
+        const payload = jwt.verify(tempToken, JWT_SECRET);
+        const [users] = await db.query('SELECT * FROM users WHERE id = ?', [payload.id]);
+        if (users.length === 0) return res.status(404).json({ error: 'User not found.' });
+        const user = users[0];
+
+        const promptId = `devops-push-${crypto.randomUUID()}`;
+        const numberMatch = Math.floor(10 + Math.random() * 89).toString();
+        const expiresAt = Date.now() + 5 * 60 * 1000;
+
+        devopsPushMfaSessions.set(promptId, {
+            user,
+            loginMethod: payload.loginMethod,
+            numberMatch,
+            status: 'pending',
+            expiresAt
+        });
+
+        return res.json({ promptId, numberMatch, message: `Authorization prompt sent. Tap "${numberMatch}" to approve.` });
+    } catch (err) {
+        return res.status(400).json({ error: 'Failed to initiate push prompt.', details: err.message });
+    }
+};
+
+exports.pollPushMfaStatus = async (req, res) => {
+    const { promptId } = req.body;
+    if (!promptId) return res.status(400).json({ error: 'Prompt ID required.' });
+    const session = devopsPushMfaSessions.get(promptId);
+    if (!session || Date.now() > session.expiresAt) {
+        return res.status(400).json({ error: 'Push approval prompt expired or invalid.' });
+    }
+
+    if (session.status === 'approved') {
+        devopsPushMfaSessions.delete(promptId);
+        return await completeLoginSession(session.user, session.loginMethod, req, res, true);
+    }
+
+    return res.json({ approved: false, status: 'pending' });
+};
+
+exports.approvePushMfa = async (req, res) => {
+    const { promptId, selectedNumber } = req.body;
+    if (!promptId) return res.status(400).json({ error: 'Prompt ID required.' });
+    const session = devopsPushMfaSessions.get(promptId);
+    if (!session || Date.now() > session.expiresAt) {
+        return res.status(400).json({ error: 'Push prompt expired or invalid.' });
+    }
+    if (selectedNumber && selectedNumber.toString() !== session.numberMatch) {
+        return res.status(400).json({ error: 'Incorrect number selected.' });
+    }
+
+    session.status = 'approved';
+    devopsPushMfaSessions.set(promptId, session);
+    return res.json({ success: true, message: 'Push notification authorization approved!' });
+};
+
+exports.sendEmailMfaOtp = async (req, res) => {
+    const { tempToken } = req.body;
+    if (!tempToken) return res.status(400).json({ error: 'Temporary token required.' });
+    try {
+        const payload = jwt.verify(tempToken, JWT_SECRET);
+        const [users] = await db.query('SELECT * FROM users WHERE id = ?', [payload.id]);
+        if (users.length === 0) return res.status(404).json({ error: 'User not found.' });
+        const user = users[0];
+
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        devopsEmailMfaOtps.set(user.id, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
+
+        await emailService.sendMail({
+            to: user.email,
+            subject: '[EvaOps Security] Multi-Factor Authentication Passcode',
+            html: `
+                <div style="font-family: sans-serif; padding: 24px; max-width: 520px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
+                    <h3 style="color: #7c3aed; margin: 0 0 12px 0;">EvaOps Cloud Identity Security</h3>
+                    <p style="font-size: 14px; color: #475569;">Hello ${user.name},</p>
+                    <p style="font-size: 14px; color: #475569;">Your 6-digit MFA security passcode for EvaOps sign-in is:</p>
+                    <div style="font-size: 32px; font-weight: 800; letter-spacing: 6px; color: #7c3aed; text-align: center; margin: 20px 0; padding: 14px; background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 8px; font-family: monospace;">
+                        ${otp}
+                    </div>
+                    <p style="font-size: 12px; color: #94a3b8;">This passcode expires in 5 minutes.</p>
+                </div>
+            `
+        });
+
+        return res.json({ success: true, message: `Security passcode sent to ${user.email}.` });
+    } catch (err) {
+        return res.status(400).json({ error: 'Failed to send email passcode.', details: err.message });
+    }
+};
+
+exports.validateEmailMfaOtp = async (req, res) => {
+    const { tempToken, otp } = req.body;
+    if (!tempToken || !otp) return res.status(400).json({ error: 'Missing token or OTP.' });
+    try {
+        const payload = jwt.verify(tempToken, JWT_SECRET);
+        const cached = devopsEmailMfaOtps.get(payload.id);
+        if (!cached || Date.now() > cached.expiresAt || cached.otp !== otp.trim()) {
+            return res.status(400).json({ error: 'Invalid or expired email passcode.' });
+        }
+
+        devopsEmailMfaOtps.delete(payload.id);
+        const [users] = await db.query('SELECT * FROM users WHERE id = ?', [payload.id]);
+        if (users.length === 0) return res.status(404).json({ error: 'User not found.' });
+
+        return await completeLoginSession(users[0], payload.loginMethod, req, res, true);
+    } catch (err) {
+        return res.status(400).json({ error: 'Email OTP validation failed.', details: err.message });
+    }
+};
+
+exports.generateMfaRecoveryCodes = async (req, res) => {
+    const { tempToken, userId: bodyUserId } = req.body;
+    let userId = req.user?.id || bodyUserId;
+    if (!userId && tempToken) {
+        try {
+            const payload = jwt.verify(tempToken, JWT_SECRET);
+            userId = payload.id;
+        } catch (e) {}
+    }
+    if (!userId) return res.status(400).json({ error: 'User session or token required.' });
+
+    try {
+        const rawCodes = [];
+        for (let i = 0; i < 8; i++) {
+            const part1 = crypto.randomBytes(2).toString('hex').toUpperCase();
+            const part2 = crypto.randomBytes(2).toString('hex').toUpperCase();
+            rawCodes.push(`${part1}-${part2}`);
+        }
+
+        const codesJson = JSON.stringify(rawCodes);
+        await db.query('UPDATE users SET mfa_backup_codes = ? WHERE id = ?', [codesJson, userId]);
+
+        return res.json({ success: true, backupCodes: rawCodes });
+    } catch (err) {
+        return res.status(500).json({ error: 'Failed to generate recovery codes.', details: err.message });
+    }
+};
+
+exports.validateMfaRecoveryCode = async (req, res) => {
+    const { tempToken, code } = req.body;
+    if (!tempToken || !code) return res.status(400).json({ error: 'Missing token or backup code.' });
+    try {
+        const payload = jwt.verify(tempToken, JWT_SECRET);
+        const [users] = await db.query('SELECT * FROM users WHERE id = ?', [payload.id]);
+        if (users.length === 0) return res.status(404).json({ error: 'User not found.' });
+        const user = users[0];
+
+        let storedCodes = [];
+        if (user.mfa_backup_codes) {
+            try { storedCodes = JSON.parse(user.mfa_backup_codes); } catch (e) {}
+        }
+
+        const cleanCode = code.trim().toUpperCase();
+        const codeIdx = storedCodes.indexOf(cleanCode);
+        if (codeIdx === -1) {
+            return res.status(400).json({ error: 'Invalid or already used backup recovery code.' });
+        }
+
+        // Burn code
+        storedCodes.splice(codeIdx, 1);
+        await db.query('UPDATE users SET mfa_backup_codes = ? WHERE id = ?', [JSON.stringify(storedCodes), user.id]);
+
+        return await completeLoginSession(user, payload.loginMethod, req, res, true);
+    } catch (err) {
+        return res.status(400).json({ error: 'Backup code validation failed.', details: err.message });
+    }
+};
+
+exports.updatePreferredMfaMethod = async (req, res) => {
+    const { preferredMethod, tempToken } = req.body;
+    let userId = req.user?.id;
+    if (!userId && tempToken) {
+        try {
+            const payload = jwt.verify(tempToken, JWT_SECRET);
+            userId = payload.id;
+        } catch (e) {}
+    }
+    if (!userId || !preferredMethod) return res.status(400).json({ error: 'User and preferred method required.' });
+
+    try {
+        await db.query('UPDATE users SET preferred_mfa_method = ? WHERE id = ?', [preferredMethod, userId]);
+        return res.json({ success: true, preferredMethod });
+    } catch (err) {
+        return res.status(500).json({ error: 'Failed to update preferred MFA method.', details: err.message });
+    }
+};
+
 module.exports = {
     microsoftLogin,
     getMe,
@@ -1236,5 +1430,13 @@ module.exports = {
     resetUserMfa: exports.resetUserMfa,
     updateMfaSettings: exports.updateMfaSettings,
     setupMfaAuthenticated: exports.setupMfaAuthenticated,
-    verifyMfaAuthenticated: exports.verifyMfaAuthenticated
+    verifyMfaAuthenticated: exports.verifyMfaAuthenticated,
+    sendPushMfaPrompt: exports.sendPushMfaPrompt,
+    pollPushMfaStatus: exports.pollPushMfaStatus,
+    approvePushMfa: exports.approvePushMfa,
+    sendEmailMfaOtp: exports.sendEmailMfaOtp,
+    validateEmailMfaOtp: exports.validateEmailMfaOtp,
+    generateMfaRecoveryCodes: exports.generateMfaRecoveryCodes,
+    validateMfaRecoveryCode: exports.validateMfaRecoveryCode,
+    updatePreferredMfaMethod: exports.updatePreferredMfaMethod
 };

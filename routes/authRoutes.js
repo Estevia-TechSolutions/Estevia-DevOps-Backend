@@ -25,5 +25,13 @@ router.put('/users/:userId/reset-mfa', protect, restrictTo('owner', 'admin'), au
 router.post('/mfa-settings', protect, restrictTo('owner', 'admin'), authController.updateMfaSettings);
 router.post('/mfa/setup-authenticated', protect, authController.setupMfaAuthenticated);
 router.post('/mfa/verify-authenticated', protect, authController.verifyMfaAuthenticated);
+router.post('/mfa/send-push-prompt', authController.sendPushMfaPrompt);
+router.post('/mfa/poll-push-status', authController.pollPushMfaStatus);
+router.post('/mfa/approve-push', authController.approvePushMfa);
+router.post('/mfa/send-email-otp', authController.sendEmailMfaOtp);
+router.post('/mfa/validate-email-otp', authController.validateEmailMfaOtp);
+router.post('/mfa/generate-recovery-codes', authController.generateMfaRecoveryCodes);
+router.post('/mfa/validate-recovery-code', authController.validateMfaRecoveryCode);
+router.post('/mfa/preferred-method', authController.updatePreferredMfaMethod);
 
 module.exports = router;
