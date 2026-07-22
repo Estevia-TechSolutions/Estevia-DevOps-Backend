@@ -2637,10 +2637,39 @@ const appController = {
                     };
                 });
 
+                // Apply granular resource & environment permission filtering for non-admin users
+                let filteredApps = apps;
+                if (req.user && !['owner', 'admin'].includes(req.user.role?.toLowerCase())) {
+                    const [permRows] = await db.query(
+                        'SELECT app_key, environment, actions FROM user_resource_permissions WHERE user_id = ? AND organization_id = ?',
+                        [req.user.id, organizationId]
+                    ).catch(() => [[]]);
+
+                    const permMap = {};
+                    for (const r of permRows) {
+                        if (!permMap[r.app_key]) permMap[r.app_key] = {};
+                        let acts = [];
+                        try { acts = typeof r.actions === 'string' ? JSON.parse(r.actions) : (r.actions || []); } catch (e) { acts = []; }
+                        permMap[r.app_key][r.environment] = acts;
+                    }
+
+                    filteredApps = apps.filter(app => {
+                        const cleanKey = (app.name || '').toLowerCase()
+                            .replace(/-(dev|qa|prod|production|staging|test)(-swa)?$/i, '')
+                            .replace(/(-swa)?$/i, '')
+                            .replace(/^estevia-/, '');
+                        const grants = permMap[cleanKey] || permMap['*'];
+                        if (!grants) return false;
+                        const env = (app.name || '').toLowerCase().includes('-qa') ? 'qa' : (app.name || '').toLowerCase().includes('-dev') ? 'dev' : 'prod';
+                        const actions = grants[env] || [];
+                        return actions.includes('view');
+                    });
+                }
+
                 return res.json({
                     success: true,
-                    count: apps.length,
-                    apps,
+                    count: filteredApps.length,
+                    apps: filteredApps,
                     integrity: {
                         github: { success: true, message: 'Cached data returned.' },
                         godaddy: { success: true, message: 'Cached data returned.' },

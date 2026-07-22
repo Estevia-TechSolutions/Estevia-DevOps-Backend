@@ -3,6 +3,8 @@ const router = express.Router();
 const authController = require('../controllers/authController');
 const { protect, restrictTo } = require('../middlewares/authMiddleware');
 
+const userPermissionController = require('../controllers/userPermissionController');
+
 router.post('/microsoft', authController.microsoftLogin);
 router.post('/bypass', authController.bypassLogin);
 router.post('/admin-override', authController.adminOverrideLogin);
@@ -14,6 +16,11 @@ router.get('/diagnostic', authController.runDiagnostic);
 router.get('/users', protect, restrictTo('owner', 'admin'), authController.listUsers);
 router.put('/users/:userId/role', protect, restrictTo('owner', 'admin'), authController.updateUserRole);
 router.post('/users/sync', protect, restrictTo('owner', 'admin'), authController.syncUsers);
+
+// Dynamic Granular Resource & Environment Permissions
+router.get('/resource-catalog', protect, userPermissionController.getResourceCatalog);
+router.get('/users/:userId/resource-permissions', protect, userPermissionController.getUserPermissions);
+router.put('/users/:userId/resource-permissions', protect, restrictTo('owner', 'admin'), userPermissionController.updateUserPermissions);
 
 // MFA Routes
 router.post(['/auth/mfa/setup', '/mfa/setup', '/setup'], authController.setupMfa);

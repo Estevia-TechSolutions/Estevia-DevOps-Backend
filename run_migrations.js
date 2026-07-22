@@ -815,6 +815,33 @@ async function main() {
             console.error('Failed to run invoice regeneration during migration:', invoiceErr.message);
         }
 
+        // 9. Add user_resource_permissions table for Dynamic Granular RBAC & Seed Default Access
+        console.log('Verifying user_resource_permissions table for Granular RBAC...');
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS user_resource_permissions (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id VARCHAR(255) NOT NULL,
+                organization_id VARCHAR(255) NOT NULL,
+                app_key VARCHAR(255) NOT NULL,
+                environment ENUM('dev', 'qa', 'prod') NOT NULL,
+                actions JSON NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_user_app_env (user_id, app_key, environment),
+                INDEX idx_user_org (user_id, organization_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        `);
+
+        console.log('Seeding default full-access grants for existing active users...');
+        await connection.query(`
+            INSERT IGNORE INTO user_resource_permissions (user_id, organization_id, app_key, environment, actions)
+            SELECT u.id, u.organization_id, app_list.app_key, env_list.environment, 
+                   '["view", "deploy", "provision", "cost_remediation", "db_manage"]'
+            FROM users u
+            CROSS JOIN (SELECT 'connecthub' AS app_key UNION SELECT 'docai' UNION SELECT 'protrack' UNION SELECT 'talenthq' UNION SELECT 'evafusion' UNION SELECT 'evaops') app_list
+            CROSS JOIN (SELECT 'dev' AS environment UNION SELECT 'qa' UNION SELECT 'prod') env_list;
+        `);
+
         console.log('\n================================================================');
         console.log('SUCCESS: Database migration and seeding completed successfully!');
         console.log('================================================================');

@@ -250,4 +250,54 @@ const lazyBillPackage = (packageName) => {
     };
 };
 
-module.exports = { protect, restrictTo, protectCrm, lazyBillPackage };
+const checkActionPermission = (actionType) => {
+    return async (req, res, next) => {
+        try {
+            // Owner and Admin bypass granular action checks automatically
+            if (!req.user || ['owner', 'admin'].includes(req.user.role?.toLowerCase())) {
+                return next();
+            }
+
+            const userId = req.user.id;
+            const orgId = req.user.organization_id;
+            const appKey = req.body?.appKey || req.query?.appKey || req.body?.appName || req.query?.appName || '*';
+            const environment = req.body?.environment || req.query?.environment || req.body?.env || req.query?.env || 'dev';
+
+            // Clean app key if a full name was passed (e.g. estevia-connecthub-dev -> connecthub)
+            const cleanAppKey = typeof appKey === 'string' 
+                ? appKey.toLowerCase().replace(/-(dev|qa|prod|production|staging|test)(-swa)?$/i, '').replace(/^estevia-/, '')
+                : appKey;
+
+            const [rows] = await db.query(
+                'SELECT actions FROM user_resource_permissions WHERE user_id = ? AND organization_id = ? AND (app_key = ? OR app_key = "*") AND environment = ?',
+                [userId, orgId, cleanAppKey, environment]
+            );
+
+            if (rows.length === 0) {
+                return res.status(403).json({
+                    error: `Access Denied: You do not have access to ${cleanAppKey} in ${environment.toUpperCase()} environment.`
+                });
+            }
+
+            let actions = [];
+            try {
+                actions = typeof rows[0].actions === 'string' ? JSON.parse(rows[0].actions) : (rows[0].actions || []);
+            } catch (e) {
+                actions = [];
+            }
+
+            if (!actions.includes(actionType)) {
+                return res.status(403).json({
+                    error: `Access Denied: You do not have '${actionType}' action permission for ${cleanAppKey} (${environment.toUpperCase()}). Contact your administrator.`
+                });
+            }
+
+            next();
+        } catch (err) {
+            console.error('[checkActionPermission] Error verifying granular action permission:', err.message);
+            next(); // Graceful fallback
+        }
+    };
+};
+
+module.exports = { protect, restrictTo, protectCrm, lazyBillPackage, checkActionPermission };
