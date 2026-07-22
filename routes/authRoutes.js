@@ -16,22 +16,22 @@ router.put('/users/:userId/role', protect, restrictTo('owner', 'admin'), authCon
 router.post('/users/sync', protect, restrictTo('owner', 'admin'), authController.syncUsers);
 
 // MFA Routes
-router.post('/mfa/setup', authController.setupMfa);
-router.post('/mfa/verify', authController.verifyMfa);
-router.post('/mfa/validate', authController.validateMfa);
-router.post('/mfa/request-reset', authController.requestMfaReset);
-router.post('/mfa/reset-confirm', authController.confirmMfaReset);
+router.post(['/auth/mfa/setup', '/mfa/setup', '/setup'], authController.setupMfa);
+router.post(['/auth/mfa/verify', '/mfa/verify', '/verify'], authController.verifyMfa);
+router.post(['/auth/mfa/validate', '/mfa/validate', '/validate'], authController.validateMfa);
+router.post(['/auth/mfa/request-reset', '/mfa/request-reset', '/request-reset'], authController.requestMfaReset);
+router.post(['/auth/mfa/reset-confirm', '/mfa/reset-confirm', '/reset-confirm'], authController.confirmMfaReset);
 router.put('/users/:userId/reset-mfa', protect, restrictTo('owner', 'admin'), authController.resetUserMfa);
 router.post('/mfa-settings', protect, restrictTo('owner', 'admin'), authController.updateMfaSettings);
-router.post('/mfa/setup-authenticated', protect, authController.setupMfaAuthenticated);
-router.post('/mfa/verify-authenticated', protect, authController.verifyMfaAuthenticated);
-router.post('/mfa/send-push-prompt', authController.sendPushMfaPrompt);
-router.post('/mfa/poll-push-status', authController.pollPushMfaStatus);
-router.post('/mfa/approve-push', authController.approvePushMfa);
-router.post('/mfa/send-email-otp', authController.sendEmailMfaOtp);
-router.post('/mfa/validate-email-otp', authController.validateEmailMfaOtp);
-router.post('/mfa/generate-recovery-codes', authController.generateMfaRecoveryCodes);
-router.post('/mfa/validate-recovery-code', authController.validateMfaRecoveryCode);
-router.post('/mfa/preferred-method', authController.updatePreferredMfaMethod);
+router.post(['/auth/mfa/setup-authenticated', '/mfa/setup-authenticated', '/setup-authenticated'], protect, authController.setupMfaAuthenticated);
+router.post(['/auth/mfa/verify-authenticated', '/mfa/verify-authenticated', '/verify-authenticated'], protect, authController.verifyMfaAuthenticated);
+router.post(['/auth/mfa/send-push-prompt', '/mfa/send-push-prompt', '/send-push-prompt'], authController.sendPushMfaPrompt);
+router.post(['/auth/mfa/poll-push-status', '/mfa/poll-push-status', '/poll-push-status'], authController.pollPushMfaStatus);
+router.post(['/auth/mfa/approve-push', '/mfa/approve-push', '/approve-push'], authController.approvePushMfa);
+router.post(['/auth/mfa/send-email-otp', '/mfa/send-email-otp', '/send-email-otp'], authController.sendEmailMfaOtp);
+router.post(['/auth/mfa/validate-email-otp', '/mfa/validate-email-otp', '/validate-email-otp'], authController.validateEmailMfaOtp);
+router.post(['/auth/mfa/generate-recovery-codes', '/mfa/generate-recovery-codes', '/generate-recovery-codes'], authController.generateMfaRecoveryCodes);
+router.post(['/auth/mfa/validate-recovery-code', '/mfa/validate-recovery-code', '/validate-recovery-code'], authController.validateMfaRecoveryCode);
+router.post(['/auth/mfa/preferred-method', '/mfa/preferred-method', '/preferred-method'], authController.updatePreferredMfaMethod);
 
 module.exports = router;
