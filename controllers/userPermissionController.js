@@ -1,14 +1,5 @@
 const db = require('../config/db');
 
-const DEFAULT_KNOWN_APPS = [
-    { key: 'connecthub', label: 'ConnectHub', icon: '🌐', resourceTypes: ['swa', 'aca', 'vm'] },
-    { key: 'docai', label: 'DocuAI Portal', icon: '📄', resourceTypes: ['swa', 'aca'] },
-    { key: 'protrack', label: 'ProTrack ERP', icon: '📊', resourceTypes: ['aca', 'vm'] },
-    { key: 'talenthq', label: 'TalentHQ', icon: '🎯', resourceTypes: ['swa', 'aca'] },
-    { key: 'evafusion', label: 'EvaFusion Platform', icon: '⚡', resourceTypes: ['swa', 'aca', 'vm'] },
-    { key: 'evaops', label: 'EvaOps DevOps', icon: '🚀', resourceTypes: ['aca', 'vm'] }
-];
-
 // Helper to extract clean app key by stripping env suffixes
 function extractAppKey(resourceName) {
     if (!resourceName) return 'unknown';
@@ -21,33 +12,67 @@ function extractAppKey(resourceName) {
 
 /**
  * GET /api/auth/resource-catalog
- * Dynamically parses unique application keys from Azure cloud scan results & DB records
+ * Dynamically parses unique application keys & resource types from Azure cloud scan results & DB records
  */
 exports.getResourceCatalog = async (req, res) => {
     try {
         const orgId = req.user.organization_id;
         const catalogMap = new Map();
 
-        // 1. Seed known default apps
-        for (const app of DEFAULT_KNOWN_APPS) {
-            catalogMap.set(app.key, app);
-        }
-
-        // 2. Dynamically scan active database apps for org to find newly deployed products
+        // 1. Query active scanned apps for org from MySQL
         const [scannedDbApps] = await db.query(
-            'SELECT DISTINCT name FROM scanned_apps WHERE organization_id = ?',
+            'SELECT name, type, azure_resource_id FROM scanned_apps WHERE organization_id = ?',
             [orgId]
         ).catch(() => [[]]);
 
-        for (const appRow of scannedDbApps) {
-            const key = extractAppKey(appRow.name);
-            if (!catalogMap.has(key)) {
-                const formattedLabel = key.charAt(0).toUpperCase() + key.slice(1).replace(/-/g, ' ');
-                catalogMap.set(key, { key, label: formattedLabel, icon: '📦' });
+        // 2. Query manually registered or provisioned apps for org from MySQL
+        const [registeredApps] = await db.query(
+            'SELECT name, app_type FROM applications WHERE organization_id = ?',
+            [orgId]
+        ).catch(() => [[]]);
+
+        const allRows = [...(scannedDbApps || []), ...(registeredApps || [])];
+
+        for (const appRow of allRows) {
+            const rawName = appRow.name || '';
+            const key = extractAppKey(rawName);
+            if (!key) continue;
+
+            const existing = catalogMap.get(key) || {
+                key,
+                label: key.charAt(0).toUpperCase() + key.slice(1).replace(/-/g, ' '),
+                icon: '📦',
+                resourceTypes: new Set()
+            };
+
+            const typeStr = ((appRow.type || appRow.app_type || '') + ' ' + rawName).toLowerCase();
+            if (typeStr.includes('swa') || typeStr.includes('staticweb') || typeStr.includes('static')) {
+                existing.resourceTypes.add('swa');
+                existing.icon = '🌐';
             }
+            if (typeStr.includes('aca') || typeStr.includes('containerapp') || typeStr.includes('container')) {
+                existing.resourceTypes.add('aca');
+                existing.icon = '📦';
+            }
+            if (typeStr.includes('vm') || typeStr.includes('virtualmachine') || typeStr.includes('virtual')) {
+                existing.resourceTypes.add('vm');
+                existing.icon = '🖥️';
+            }
+
+            // Fallback default type if none detected
+            if (existing.resourceTypes.size === 0) {
+                existing.resourceTypes.add('swa');
+            }
+
+            catalogMap.set(key, existing);
         }
 
-        const catalog = Array.from(catalogMap.values());
+        // Convert Sets to Arrays for clean JSON output
+        const catalog = Array.from(catalogMap.values()).map(item => ({
+            ...item,
+            resourceTypes: Array.from(item.resourceTypes)
+        }));
+
         res.json({ catalog });
     } catch (err) {
         console.error('Failed to fetch resource catalog:', err.message);
