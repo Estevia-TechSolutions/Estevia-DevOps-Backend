@@ -8589,7 +8589,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         status, currency, 
                         total_amount, aca_compute_amount, mysql_db_amount, swa_cdn_amount, storage_vm_amount, network_egress_amount 
                  FROM azure_consumption_bills 
-                 WHERE organization_id = ? 
+                 WHERE organization_id = ? AND billing_period >= '2026-06'
                  ORDER BY due_date DESC`,
                 [organizationId]
             ).catch(() => [[]]);
@@ -8609,7 +8609,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         try {
             const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
             const [bills] = await db.query(
-                'SELECT total_amount FROM azure_consumption_bills WHERE organization_id = ? ORDER BY due_date DESC LIMIT 6',
+                "SELECT total_amount FROM azure_consumption_bills WHERE organization_id = ? AND billing_period >= '2026-06' ORDER BY due_date DESC LIMIT 6",
                 [organizationId]
             ).catch(() => [[]]);
 
