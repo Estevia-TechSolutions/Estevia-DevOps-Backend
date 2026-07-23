@@ -906,31 +906,20 @@ const appController = {
      * Shared helper to retrieve organization settings from database
      */
     async _getOrgSettings(organizationId, requireAzure = false) {
-        const [rows] = await db.query('SELECT * FROM organizations WHERE id = ?', [organizationId]);
-        if (rows.length === 0) {
-            throw new Error(`Organization ${organizationId} not found.`);
+        const [rows] = await db.query('SELECT * FROM organizations WHERE id = ?', [organizationId]).catch(() => [[]]);
+        const settings = (rows && rows.length > 0) ? rows[0] : {};
+        
+        if (!settings.azure_subscription_id || settings.azure_subscription_id.trim() === '' || settings.azure_subscription_id === 'unconfigured') {
+            if (requireAzure) {
+                throw new Error(`Azure Integration (Subscription ID) is not configured for organization: ${organizationId}`);
+            }
+            settings.azure_subscription_id = SUBSCRIPTION_ID;
         }
-        const settings = rows[0];
-        if (organizationId !== MASTER_ORGANIZATION_ID) {
-            if (!settings.azure_subscription_id || settings.azure_subscription_id.trim() === '') {
-                if (requireAzure) {
-                    throw new Error(`Azure Integration (Subscription ID) is not configured for organization: ${organizationId}`);
-                }
-                settings.azure_subscription_id = 'unconfigured';
+        if (!settings.azure_resource_group || settings.azure_resource_group.trim() === '' || settings.azure_resource_group === 'unconfigured') {
+            if (requireAzure) {
+                throw new Error(`Azure Integration (Resource Group) is not configured for organization: ${organizationId}`);
             }
-            if (!settings.azure_resource_group || settings.azure_resource_group.trim() === '') {
-                if (requireAzure) {
-                    throw new Error(`Azure Integration (Resource Group) is not configured for organization: ${organizationId}`);
-                }
-                settings.azure_resource_group = 'unconfigured';
-            }
-        } else {
-            if (!settings.azure_subscription_id) {
-                settings.azure_subscription_id = SUBSCRIPTION_ID;
-            }
-            if (!settings.azure_resource_group) {
-                settings.azure_resource_group = RESOURCE_GROUP;
-            }
+            settings.azure_resource_group = RESOURCE_GROUP;
         }
         return settings;
     },
@@ -8557,26 +8546,35 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
 
                     // Write to DB for caching and persistence
                     const parsedBills = Object.values(monthlyGroup);
-                    console.log(`[CostAPI] Parsed ${parsedBills.length} consolidated monthly bills. Caching in database...`);
-                    for (const bill of parsedBills) {
-                        console.log(`  -> Bill Period: ${bill.billing_period} | Total Amount: ${bill.currency} ${bill.total_amount.toFixed(2)} (ACA: ${bill.aca_compute_amount.toFixed(2)}, DB: ${bill.mysql_db_amount.toFixed(2)}, SWA: ${bill.swa_cdn_amount.toFixed(2)}, VM: ${bill.storage_vm_amount.toFixed(2)})`);
-                        await db.query(`
-                            INSERT INTO azure_consumption_bills 
-                            (organization_id, azure_subscription_id, invoice_number, billing_period, issue_date, due_date, payment_date, status, currency, total_amount, aca_compute_amount, mysql_db_amount, swa_cdn_amount, storage_vm_amount, network_egress_amount)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ON DUPLICATE KEY UPDATE 
-                                total_amount = VALUES(total_amount),
-                                aca_compute_amount = VALUES(aca_compute_amount),
-                                mysql_db_amount = VALUES(mysql_db_amount),
-                                swa_cdn_amount = VALUES(swa_cdn_amount),
-                                storage_vm_amount = VALUES(storage_vm_amount),
-                                network_egress_amount = VALUES(network_egress_amount)
-                        `, [
-                            bill.organization_id, bill.azure_subscription_id, bill.invoice_number, bill.billing_period,
-                            bill.issue_date, bill.due_date, bill.payment_date, bill.status, bill.currency,
-                            bill.total_amount, bill.aca_compute_amount, bill.mysql_db_amount, bill.swa_cdn_amount,
-                            bill.storage_vm_amount, bill.network_egress_amount
-                        ]).catch(err => console.error('[CostAPI] DB Cache write failed:', err.message));
+                    console.log(`[CostAPI] Parsed ${parsedBills.length} consolidated monthly bills directly from Azure REST API.`);
+                    
+                    // Background cache save to DB
+                    (async () => {
+                        for (const bill of parsedBills) {
+                            console.log(`  -> Bill Period: ${bill.billing_period} | Total Amount: ${bill.currency} ${bill.total_amount.toFixed(2)} (ACA: ${bill.aca_compute_amount.toFixed(2)}, DB: ${bill.mysql_db_amount.toFixed(2)}, SWA: ${bill.swa_cdn_amount.toFixed(2)}, VM: ${bill.storage_vm_amount.toFixed(2)})`);
+                            await db.query(`
+                                INSERT INTO azure_consumption_bills 
+                                (organization_id, azure_subscription_id, invoice_number, billing_period, issue_date, due_date, payment_date, status, currency, total_amount, aca_compute_amount, mysql_db_amount, swa_cdn_amount, storage_vm_amount, network_egress_amount)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                ON DUPLICATE KEY UPDATE 
+                                    total_amount = VALUES(total_amount),
+                                    aca_compute_amount = VALUES(aca_compute_amount),
+                                    mysql_db_amount = VALUES(mysql_db_amount),
+                                    swa_cdn_amount = VALUES(swa_cdn_amount),
+                                    storage_vm_amount = VALUES(storage_vm_amount),
+                                    network_egress_amount = VALUES(network_egress_amount)
+                            `, [
+                                bill.organization_id, bill.azure_subscription_id, bill.invoice_number, bill.billing_period,
+                                bill.issue_date, bill.due_date, bill.payment_date, bill.status, bill.currency,
+                                bill.total_amount, bill.aca_compute_amount, bill.mysql_db_amount, bill.swa_cdn_amount,
+                                bill.storage_vm_amount, bill.network_egress_amount
+                            ]).catch(err => console.error('[CostAPI] DB Cache write failed:', err.message));
+                        }
+                    })();
+
+                    if (parsedBills.length > 0) {
+                        console.log(`[CostAPI] Sending ${parsedBills.length} live Azure bills directly to client.`);
+                        return res.json({ success: true, azureBills: parsedBills });
                     }
                 } else {
                     console.log('[CostAPI] Azure returned empty properties.rows dataset.');
@@ -8589,7 +8587,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             await db.query("DELETE FROM azure_consumption_bills WHERE billing_period LIKE '%--%'").catch(() => {});
 
             // Load from DB (which is populated strictly via actual Azure API query)
-            console.log(`[CostAPI] Loading resolved bills from database (billing_period >= '2026-05')...`);
+            console.log(`[CostAPI] Loading resolved bills from database fallback (billing_period >= '2026-05')...`);
             let [rows] = await db.query(
                 `SELECT id, organization_id, azure_subscription_id, invoice_number, billing_period, 
                         DATE_FORMAT(issue_date, "%Y-%m-%d") as issue_date, 
