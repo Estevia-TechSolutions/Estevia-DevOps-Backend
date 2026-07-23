@@ -630,21 +630,32 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
 async function getAzureCredential(organizationId) {
     const creds = [];
     try {
-        const azureSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure');
-        if (azureSecrets) {
-            if (azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
-                console.log(`[AzureAuth] Using ClientSecretCredential for organization: ${organizationId}`);
-                creds.push(new ClientSecretCredential(
-                    azureSecrets.tenantId,
-                    azureSecrets.clientId,
-                    azureSecrets.clientSecret
-                ));
-            }
+        let azureSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure').catch(() => null);
+        if (!azureSecrets && organizationId !== MASTER_ORGANIZATION_ID) {
+            azureSecrets = await credentialController.getDecryptedCredentialsInternal(MASTER_ORGANIZATION_ID, 'azure').catch(() => null);
+        }
+        if (azureSecrets && azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
+            console.log(`[AzureAuth] Using ClientSecretCredential for organization: ${organizationId}`);
+            creds.push(new ClientSecretCredential(
+                azureSecrets.tenantId,
+                azureSecrets.clientId,
+                azureSecrets.clientSecret
+            ));
         }
     } catch (err) {
         console.warn(`[AzureAuth] Failed to retrieve Azure credentials for organization ${organizationId}:`, err.message);
     }
     
+    // Check process environment variables for Service Principal
+    const envTenant = process.env.AZURE_TENANT_ID || (process.env.MICROSOFT_TENANT_ID !== 'common' ? process.env.MICROSOFT_TENANT_ID : null);
+    const envClient = process.env.AZURE_CLIENT_ID || process.env.MICROSOFT_CLIENT_ID;
+    const envSecret = process.env.AZURE_CLIENT_SECRET || process.env.MICROSOFT_CLIENT_SECRET;
+    if (envTenant && envClient && envSecret) {
+        try {
+            creds.push(new ClientSecretCredential(envTenant, envClient, envSecret));
+        } catch (e) {}
+    }
+
     try { creds.push(new AzureCliCredential()); } catch (e) {}
     try { creds.push(new DefaultAzureCredential()); } catch (e) {}
 
