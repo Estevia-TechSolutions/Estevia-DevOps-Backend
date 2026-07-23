@@ -373,12 +373,8 @@ async function runAutoMigration() {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
 
-        console.log('[DevOps DB] Seeding historical Azure Cloud Infrastructure bills...');
-        const targetOrgId = 'estevia';
-        const subId = 'sub-estevia-devops-prod-01';
-        const historicalAzureBills = [
-            [targetOrgId, subId, 'AZ-2026-06-8812', '2026-06', '2026-06-01', '2026-06-15', '2026-06-10', 'Paid', 'USD', 482.50, 185.20, 142.00, 65.30, 52.00, 38.00]
-        ];
+        console.log('[DevOps DB] Seeding historical Azure Cloud Infrastructure bills (Empty - No Mocks)...');
+        const historicalAzureBills = [];
 
         for (const bill of historicalAzureBills) {
             await pool.query(`
@@ -395,8 +391,8 @@ async function runAutoMigration() {
             `, bill);
         }
 
-        console.log('[DevOps DB] Purging any pre-onboarding Azure Cloud bills (period < 2026-06)...');
-        await pool.query(`DELETE FROM azure_consumption_bills WHERE billing_period < '2026-06'`);
+        console.log('[DevOps DB] Purging any legacy mock Azure Cloud bills...');
+        await pool.query(`DELETE FROM azure_consumption_bills WHERE invoice_number LIKE 'AZ-2026-%'`);
 
         console.log('[DevOps DB] Database migrations check completed successfully.');
         
