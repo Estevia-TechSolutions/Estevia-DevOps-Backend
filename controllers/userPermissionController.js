@@ -100,7 +100,7 @@ exports.getResourceCatalog = async (req, res) => {
             resourceTypes: Array.from(item.resourceTypes)
         }));
 
-        res.json({ catalog });
+        res.json({ success: true, count: catalog.length, catalog });
     } catch (err) {
         console.error('Failed to fetch resource catalog:', err.message);
         res.status(500).json({ error: 'Failed to retrieve dynamic resource catalog' });

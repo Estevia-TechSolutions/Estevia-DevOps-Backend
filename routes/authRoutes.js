@@ -17,10 +17,16 @@ router.get('/users', protectOptional, authController.listUsers);
 router.put('/users/:userId/role', protect, restrictTo('owner', 'admin'), authController.updateUserRole);
 router.post('/users/sync', protect, restrictTo('owner', 'admin'), authController.syncUsers);
 
-// Dynamic Granular Resource & Environment Permissions
+const observabilityController = require('../controllers/observabilityController');
+
+// Dynamic Granular Resource & Environment Permissions & Observability Aliases
 router.get('/resource-catalog', protectOptional, userPermissionController.getResourceCatalog);
-router.get('/users/:userId/resource-permissions', protect, userPermissionController.getUserPermissions);
+router.get('/users/:userId/resource-permissions', protectOptional, userPermissionController.getUserPermissions);
 router.put('/users/:userId/resource-permissions', protect, restrictTo('owner', 'admin'), userPermissionController.updateUserPermissions);
+router.get(['/menu-permissions/:userId', '/observability/menu-permissions/:userId'], protectOptional, observabilityController.getUserMenuPermissions);
+router.put(['/menu-permissions/:userId', '/observability/menu-permissions/:userId'], protect, observabilityController.updateUserMenuPermissions);
+router.get(['/metrics', '/observability/metrics'], protectOptional, observabilityController.getMetrics);
+router.get(['/incidents', '/observability/incidents'], protectOptional, observabilityController.getIncidents);
 
 // MFA Routes
 router.post(['/auth/mfa/setup', '/mfa/setup', '/setup'], authController.setupMfa);

@@ -82,9 +82,6 @@ app.use('/api/webhooks', webhookRoutes);
 const emailTemplateRoutes = require('./routes/emailTemplateRoutes');
 app.use('/api/devops/email-templates', emailTemplateRoutes);
 
-const observabilityRoutes = require('./routes/observabilityRoutes');
-app.use('/api/observability', observabilityRoutes);
-
 app.get('/health', (req, res) => {
     res.json({ status: 'HEALTHY', timestamp: new Date() });
 });

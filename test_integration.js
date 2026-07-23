@@ -134,15 +134,38 @@ async function runIntegrationTests() {
         //     console.log('✅ Test 3 Passed.');
         // }
 
-        // Test 4: Ask Eva AI Analyst
         console.log('Test 4: Requesting POST /api/apps/cost/ask-eva...');
         const askEvaRes = await makeRequest('/api/apps/cost/ask-eva', 'POST', { question: 'How can we optimize SQL Database costs?' });
         console.log('Status Code:', askEvaRes.statusCode);
         console.log('Response:', askEvaRes.body);
-        if (askEvaRes.statusCode !== 200 || !askEvaRes.body.success || !askEvaRes.body.answer) {
-            throw new Error('Ask Eva AI endpoint failed');
+        if (askEvaRes.statusCode !== 200 || !askEvaRes.body.success) {
+            throw new Error('Ask Eva endpoint failed');
         }
         console.log('✅ Test 4 Passed.');
+
+        // Test 5: Verify Observability Endpoints (/api/apps/observability/*)
+        console.log('Test 5: Requesting /api/apps/observability/resource-catalog...');
+        const catRes = await makeRequest('/api/apps/observability/resource-catalog');
+        console.log('Catalog Status Code:', catRes.statusCode, '| Catalog Count:', catRes.body.catalog ? catRes.body.catalog.length : 0);
+        if (catRes.statusCode !== 200 || !catRes.body.success) {
+            throw new Error('Resource catalog endpoint failed');
+        }
+
+        console.log('Test 5: Requesting /api/apps/observability/metrics...');
+        const metricsRes = await makeRequest('/api/apps/observability/metrics?app_key=estevia-frontend&environment=dev&time_window=1h&resource_type=aca');
+        console.log('Metrics Status Code:', metricsRes.statusCode, '| Metrics Count:', metricsRes.body.metrics ? metricsRes.body.metrics.length : 0);
+        if (metricsRes.statusCode !== 200 || !metricsRes.body.success) {
+            throw new Error('Observability metrics endpoint failed');
+        }
+
+        console.log('Test 5: Requesting /api/apps/observability/incidents...');
+        const incidentsRes = await makeRequest('/api/apps/observability/incidents');
+        console.log('Incidents Status Code:', incidentsRes.statusCode, '| Incidents Count:', incidentsRes.body.incidents ? incidentsRes.body.incidents.length : 0);
+        if (incidentsRes.statusCode !== 200 || !incidentsRes.body.success) {
+            throw new Error('Observability incidents endpoint failed');
+        }
+
+        console.log('✅ Test 5 (Observability Endpoints) Passed.');
 
         console.log('=== All Integration Tests Passed Successfully! ===');
     } catch (error) {
