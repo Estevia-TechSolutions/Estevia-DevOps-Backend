@@ -8520,20 +8520,34 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         }
 
                         if (!monthlyGroup[billingPeriod]) {
-                            const currentMonthPeriod = new Date().toISOString().substring(0, 7);
-                            const isPastSettledPeriod = (billingPeriod < '2026-06');
-                            const isCurrentPeriod = (billingPeriod === currentMonthPeriod);
+                            const now = new Date();
+                            const currentMonthPeriod = now.toISOString().substring(0, 7); // e.g. "2026-07"
+                            const todayStr = now.toISOString().substring(0, 10); // e.g. "2026-07-24"
                             
-                            const billStatus = isPastSettledPeriod ? 'Paid' : (isCurrentPeriod ? 'Pending' : 'Overdue');
-                            const paymentDateVal = isPastSettledPeriod ? `${billingPeriod}-10` : null;
+                            const issueDate = `${billingPeriod}-01`;
+                            const dueDate = `${billingPeriod}-15`;
+                            
+                            let billStatus = 'Pending';
+                            let paymentDateVal = null;
+
+                            if (billingPeriod < currentMonthPeriod) {
+                                billStatus = 'Paid';
+                                paymentDateVal = `${billingPeriod}-10`;
+                            } else if (billingPeriod === currentMonthPeriod) {
+                                billStatus = todayStr > dueDate ? 'Overdue' : 'Pending';
+                                paymentDateVal = null;
+                            } else {
+                                billStatus = 'Pending';
+                                paymentDateVal = null;
+                            }
 
                             monthlyGroup[billingPeriod] = {
                                 organization_id: organizationId,
                                 azure_subscription_id: subscriptionId,
                                 invoice_number: `INV-AZ-${billingPeriod}-LIVE`,
                                 billing_period: billingPeriod,
-                                issue_date: `${billingPeriod}-01`,
-                                due_date: `${billingPeriod}-15`,
+                                issue_date: issueDate,
+                                due_date: dueDate,
                                 payment_date: paymentDateVal,
                                 status: billStatus,
                                 currency: currencyVal,
