@@ -8521,9 +8521,11 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
 
                         if (!monthlyGroup[billingPeriod]) {
                             const currentMonthPeriod = new Date().toISOString().substring(0, 7);
-                            const isCurrentOrFuture = (billingPeriod >= currentMonthPeriod);
-                            const billStatus = isCurrentOrFuture ? 'Pending' : 'Paid';
-                            const paymentDateVal = isCurrentOrFuture ? null : `${billingPeriod}-10`;
+                            const isPastSettledPeriod = (billingPeriod < '2026-06');
+                            const isCurrentPeriod = (billingPeriod === currentMonthPeriod);
+                            
+                            const billStatus = isPastSettledPeriod ? 'Paid' : (isCurrentPeriod ? 'Pending' : 'Overdue');
+                            const paymentDateVal = isPastSettledPeriod ? `${billingPeriod}-10` : null;
 
                             monthlyGroup[billingPeriod] = {
                                 organization_id: organizationId,
