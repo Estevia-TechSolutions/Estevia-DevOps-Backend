@@ -149,10 +149,6 @@ router.post('/validate-dockerfile', lazyBillPackage('Developer'), appController.
 // Check YAML and Dockerfile health for a GitHub repo (for cloud scan indicators)
 router.get('/yml-health', lazyBillPackage('Developer'), appController.checkYmlHealth);
 
-// Observability endpoints routed under /api/apps/observability/* to match Nginx proxy location rules
-const observabilityRoutes = require('./observabilityRoutes');
-router.use('/observability', observabilityRoutes);
-
 // Delete SWA/ACA app from Azure and database
 router.delete('/:name', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.deleteApp);
 
