@@ -8520,6 +8520,11 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         }
 
                         if (!monthlyGroup[billingPeriod]) {
+                            const currentMonthPeriod = new Date().toISOString().substring(0, 7);
+                            const isCurrentOrFuture = (billingPeriod >= currentMonthPeriod);
+                            const billStatus = isCurrentOrFuture ? 'Pending' : 'Paid';
+                            const paymentDateVal = isCurrentOrFuture ? null : `${billingPeriod}-10`;
+
                             monthlyGroup[billingPeriod] = {
                                 organization_id: organizationId,
                                 azure_subscription_id: subscriptionId,
@@ -8527,8 +8532,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                                 billing_period: billingPeriod,
                                 issue_date: `${billingPeriod}-01`,
                                 due_date: `${billingPeriod}-15`,
-                                payment_date: `${billingPeriod}-10`,
-                                status: 'Paid',
+                                payment_date: paymentDateVal,
+                                status: billStatus,
                                 currency: currencyVal,
                                 total_amount: 0,
                                 aca_compute_amount: 0,
