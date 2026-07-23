@@ -57,6 +57,8 @@ router.get('/organization-settings', appController.getOrgSettings);
 
 // Fetch Azure resource costs and optimizations
 router.get('/cost', lazyBillPackage('Security'), appController.getCostData);
+router.get('/cost/azure-bills', lazyBillPackage('Security'), appController.getAzureCloudBills);
+router.get('/cost/azure-forecast', lazyBillPackage('Security'), appController.getAzureCloudForecast);
 
 // Apply cost optimization remediation suggestion
 router.post('/cost/apply-remediation', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('Security'), appController.applyRemediation);
