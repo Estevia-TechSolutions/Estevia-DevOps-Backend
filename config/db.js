@@ -377,12 +377,7 @@ async function runAutoMigration() {
         const targetOrgId = 'estevia';
         const subId = 'sub-estevia-devops-prod-01';
         const historicalAzureBills = [
-            [targetOrgId, subId, 'AZ-2026-06-8812', '2026-06', '2026-06-01', '2026-06-15', '2026-06-10', 'Paid', 'USD', 482.50, 185.20, 142.00, 65.30, 52.00, 38.00],
-            [targetOrgId, subId, 'AZ-2026-05-7741', '2026-05', '2026-05-01', '2026-05-15', '2026-05-12', 'Paid', 'USD', 465.10, 178.50, 138.00, 62.10, 49.50, 37.00],
-            [targetOrgId, subId, 'AZ-2026-04-6632', '2026-04', '2026-04-01', '2026-04-15', '2026-04-14', 'Paid', 'USD', 440.00, 168.00, 132.00, 58.00, 47.00, 35.00],
-            [targetOrgId, subId, 'AZ-2026-03-5521', '2026-03', '2026-03-01', '2026-03-15', '2026-03-11', 'Paid', 'USD', 425.80, 162.30, 128.00, 56.50, 45.00, 34.00],
-            [targetOrgId, subId, 'AZ-2026-02-4410', '2026-02', '2026-02-01', '2026-02-15', '2026-02-13', 'Paid', 'USD', 410.20, 156.00, 124.00, 54.20, 43.00, 33.00],
-            [targetOrgId, subId, 'AZ-2026-01-3309', '2026-01', '2026-01-01', '2026-01-15', '2026-01-12', 'Paid', 'USD', 395.00, 150.00, 120.00, 52.00, 41.00, 32.00]
+            [targetOrgId, subId, 'AZ-2026-06-8812', '2026-06', '2026-06-01', '2026-06-15', '2026-06-10', 'Paid', 'USD', 482.50, 185.20, 142.00, 65.30, 52.00, 38.00]
         ];
 
         for (const bill of historicalAzureBills) {
@@ -399,6 +394,9 @@ async function runAutoMigration() {
                     network_egress_amount = VALUES(network_egress_amount);
             `, bill);
         }
+
+        console.log('[DevOps DB] Purging any pre-onboarding Azure Cloud bills (period < 2026-06)...');
+        await pool.query(`DELETE FROM azure_consumption_bills WHERE billing_period < '2026-06'`);
 
         console.log('[DevOps DB] Database migrations check completed successfully.');
         
