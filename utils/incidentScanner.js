@@ -67,7 +67,7 @@ const runIncidentScanCycle = async () => {
                     });
                 }
 
-                // Rule 2: CRITICAL_OUTAGE (5xx Errors > 5)
+                // Rule 2: CRITICAL_OUTAGE (5xx Errors >= 5)
                 if (m.http_5xx_count >= 5 && categories.includes("CRITICAL_OUTAGE")) {
                     await triggerIncident({
                         organization_id: orgId,
@@ -94,6 +94,38 @@ const runIncidentScanCycle = async () => {
                         severity: 'P3_MEDIUM',
                         title: `Latency Degradation on ${m.app_key.toUpperCase()} (${m.environment})`,
                         description: `p95 API response latency increased to ${m.p95_latency_ms}ms.`,
+                        telemetry_snapshot: m,
+                        notification_email: ownerConfig ? ownerConfig.notification_email : null
+                    });
+                }
+
+                // Rule 4: HEALTH_CHECK_FAILURE (Replicas = 0 or liveness probe failure)
+                if (m.replica_count === 0 && categories.includes("HEALTH_CHECK_FAILURE")) {
+                    await triggerIncident({
+                        organization_id: orgId,
+                        app_key: m.app_key,
+                        resource_type: m.resource_type || 'aca',
+                        environment: m.environment,
+                        category: 'HEALTH_CHECK_FAILURE',
+                        severity: 'P2_HIGH',
+                        title: `Container Health Check Failure on ${m.app_key.toUpperCase()} (${m.environment})`,
+                        description: `Active container replica count dropped to 0 instances. Health probe check failed.`,
+                        telemetry_snapshot: m,
+                        notification_email: ownerConfig ? ownerConfig.notification_email : null
+                    });
+                }
+
+                // Rule 5: STORAGE_VOLUME_FULL (Storage > 90%)
+                if (m.storage_percent > 90 && categories.includes("STORAGE_VOLUME_FULL")) {
+                    await triggerIncident({
+                        organization_id: orgId,
+                        app_key: m.app_key,
+                        resource_type: m.resource_type || 'vm',
+                        environment: m.environment,
+                        category: 'STORAGE_VOLUME_FULL',
+                        severity: 'P3_MEDIUM',
+                        title: `Storage Capacity Exhaustion on ${m.app_key.toUpperCase()} (${m.environment})`,
+                        description: `Storage volume utilization reached ${m.storage_percent.toFixed(1)}% exceeding safety capacity threshold.`,
                         telemetry_snapshot: m,
                         notification_email: ownerConfig ? ownerConfig.notification_email : null
                     });
