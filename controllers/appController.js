@@ -1,7 +1,7 @@
 const db = require('../config/db');
 const credentialController = require('./credentialController');
 const emailService = require('../utils/emailService');
-const { DefaultAzureCredential, ClientSecretCredential } = require('@azure/identity');
+const { DefaultAzureCredential, ClientSecretCredential, AzureCliCredential, ChainedTokenCredential } = require('@azure/identity');
 const { WebSiteManagementClient } = require('@azure/arm-appservice');
 const { ContainerAppsAPIClient } = require('@azure/arm-appcontainers');
 const { ResourceManagementClient } = require('@azure/arm-resources');
@@ -628,27 +628,30 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
 
 // Dynamic helper to fetch Azure credentials (Service Principal or Default CLI fallback)
 async function getAzureCredential(organizationId) {
+    const creds = [];
     try {
         const azureSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure');
         if (azureSecrets) {
-            if (azureSecrets.type === 'managed_identity') {
-                console.log(`[AzureAuth] Using DefaultAzureCredential (Managed Identity) for organization: ${organizationId}`);
-                return new DefaultAzureCredential();
-            }
             if (azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
                 console.log(`[AzureAuth] Using ClientSecretCredential for organization: ${organizationId}`);
-                return new ClientSecretCredential(
+                creds.push(new ClientSecretCredential(
                     azureSecrets.tenantId,
                     azureSecrets.clientId,
                     azureSecrets.clientSecret
-                );
+                ));
             }
         }
     } catch (err) {
         console.warn(`[AzureAuth] Failed to retrieve Azure credentials for organization ${organizationId}:`, err.message);
     }
-    console.log(`[AzureAuth] Using DefaultAzureCredential fallback for organization: ${organizationId}`);
-    return new DefaultAzureCredential();
+    
+    try { creds.push(new AzureCliCredential()); } catch (e) {}
+    try { creds.push(new DefaultAzureCredential()); } catch (e) {}
+
+    if (creds.length === 1) {
+        return creds[0];
+    }
+    return new ChainedTokenCredential(...creds);
 }
 
 // ─── YAML Validator ─────────────────────────────────────────────────────────
@@ -8585,7 +8588,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             // Purge bad formatted billing periods from legacy bugs
             await db.query("DELETE FROM azure_consumption_bills WHERE billing_period LIKE '%--%'").catch(() => {});
 
-            // Load from DB (which is populated strictly via actual API query or db seeder)
+            // Load from DB (which is populated strictly via actual Azure API query)
             console.log(`[CostAPI] Loading resolved bills from database (billing_period >= '2026-05')...`);
             let [rows] = await db.query(
                 `SELECT id, organization_id, azure_subscription_id, invoice_number, billing_period, 
@@ -8598,33 +8601,6 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                  WHERE billing_period >= '2026-05'
                  ORDER BY due_date DESC`
             ).catch(() => [[]]);
-
-            if (!rows || rows.length === 0) {
-                console.log(`[CostAPI] No cached bills found in DB. Seeding initial baseline bills...`);
-                const initialBills = [
-                    [organizationId, SUBSCRIPTION_ID, 'AZ-2026-07-0001', '2026-07', '2026-07-01', '2026-07-15', '2026-07-10', 'Paid', 'INR', 102424.15, 11607.58, 14519.01, 6910.40, 19104.81, 50282.35],
-                    [organizationId, SUBSCRIPTION_ID, 'AZ-2026-06-0001', '2026-06', '2026-06-01', '2026-06-15', '2026-06-10', 'Paid', 'INR', 165683.92, 4271.54, 30298.28, 11519.28, 25471.60, 94123.22],
-                    [organizationId, SUBSCRIPTION_ID, 'AZ-2026-05-0001', '2026-05', '2026-05-01', '2026-05-15', '2026-05-10', 'Paid', 'INR', 4166.78, 0.00, 2061.50, 59.45, 0.00, 2045.83]
-                ];
-                await db.query(`
-                    INSERT IGNORE INTO azure_consumption_bills 
-                    (organization_id, azure_subscription_id, invoice_number, billing_period, issue_date, due_date, payment_date, status, currency, total_amount, aca_compute_amount, mysql_db_amount, swa_cdn_amount, storage_vm_amount, network_egress_amount)
-                    VALUES ?
-                `, [initialBills]).catch(() => {});
-
-                const [seededRows] = await db.query(
-                    `SELECT id, organization_id, azure_subscription_id, invoice_number, billing_period, 
-                            DATE_FORMAT(issue_date, "%Y-%m-%d") as issue_date, 
-                            DATE_FORMAT(due_date, "%Y-%m-%d") as due_date, 
-                            DATE_FORMAT(payment_date, "%Y-%m-%d") as payment_date, 
-                            status, currency, 
-                            total_amount, aca_compute_amount, mysql_db_amount, swa_cdn_amount, storage_vm_amount, network_egress_amount 
-                     FROM azure_consumption_bills 
-                     WHERE billing_period >= '2026-05'
-                     ORDER BY due_date DESC`
-                ).catch(() => [[]]);
-                rows = seededRows || [];
-            }
 
             console.log(`[CostAPI] Query returned ${rows ? rows.length : 0} bills from database. Sending response.`);
             res.json({ success: true, azureBills: rows || [] });
