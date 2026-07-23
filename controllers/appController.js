@@ -8450,154 +8450,139 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
             console.log(`[CostAPI] === Fetching Azure Cloud Bills for Organization: ${organizationId} ===`);
             
-            // Try to query actual Azure Cost Management API if credentials exist
-            let hasLiveCredentials = false;
-            let azureSecrets = null;
+            // Query actual Azure Cost Management API
             try {
-                azureSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure');
-                if (azureSecrets && (azureSecrets.clientId || azureSecrets.type === 'managed_identity')) {
-                    hasLiveCredentials = true;
-                    console.log(`[CostAPI] Live Azure credentials found for organization: ${organizationId}. Type: ${azureSecrets.type || 'service_principal'}`);
-                }
-            } catch (err) {
-                console.log(`[CostAPI] No live Azure credentials found for organization: ${organizationId}. Error: ${err.message}`);
-            }
+                const orgSettings = await appController._getOrgSettings(organizationId);
+                const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+                console.log(`[CostAPI] Querying live Azure Cost Management API for Subscription ID: ${subscriptionId}...`);
+                
+                const credential = await getAzureCredential(organizationId);
+                const tokenRes = await credential.getToken("https://management.azure.com/.default");
+                const token = tokenRes.token;
 
-            if (hasLiveCredentials) {
-                try {
-                    const orgSettings = await appController._getOrgSettings(organizationId);
-                    const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-                    console.log(`[CostAPI] Querying live Cost API for Subscription ID: ${subscriptionId}`);
-                    
-                    const credential = await getAzureCredential(organizationId);
-                    const tokenRes = await credential.getToken("https://management.azure.com/.default");
-                    const token = tokenRes.token;
-
-                    // Query actual Azure Cost Management API
-                    const url = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.CostManagement/query?api-version=2021-10-01`;
-                    const payload = {
-                        type: "Usage",
-                        timeframe: "Custom",
-                        timePeriod: {
-                            from: "2026-01-01T00:00:00Z",
-                            to: "2026-12-31T23:59:59Z"
+                const url = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.CostManagement/query?api-version=2021-10-01`;
+                const payload = {
+                    type: "Usage",
+                    timeframe: "Custom",
+                    timePeriod: {
+                        from: "2026-01-01T00:00:00Z",
+                        to: "2026-12-31T23:59:59Z"
+                    },
+                    dataset: {
+                        granularity: "Monthly",
+                        aggregation: {
+                            totalCost: {
+                                name: "PreTaxCost",
+                                function: "Sum"
+                            }
                         },
-                        dataset: {
-                            granularity: "Monthly",
-                            aggregation: {
-                                totalCost: {
-                                    name: "PreTaxCost",
-                                    function: "Sum"
-                                }
-                            },
-                            grouping: [
-                                { type: "Dimension", name: "ResourceType" },
-                                { type: "Dimension", name: "BillingMonth" }
-                            ]
-                        }
-                    };
-
-                    console.log(`[CostAPI] Sending POST request to Azure Cost API URL: ${url}`);
-                    const response = await axios.post(url, payload, {
-                        headers: {
-                            'Authorization': `Bearer ${token}`,
-                            'Content-Type': 'application/json'
-                        }
-                    });
-
-                    if (response.data && response.data.properties && response.data.properties.rows) {
-                        const rows = response.data.properties.rows;
-                        console.log(`[CostAPI] Live Azure query succeeded. Received ${rows.length} raw cost groupings from Azure.`);
-                        
-                        // Format columns
-                        const cols = response.data.properties.columns.map(c => c.name.toLowerCase());
-                        const costIdx = cols.indexOf('pretaxcost');
-                        const typeIdx = cols.indexOf('resourcetype');
-                        const monthIdx = cols.indexOf('billingmonth');
-                        const currIdx = cols.indexOf('currency');
-
-                        const monthlyGroup = {};
-                        for (const row of rows) {
-                            const cost = Number(row[costIdx] || 0);
-                            const resourceTypeRaw = String(row[typeIdx] || '').toLowerCase();
-                            const rawMonth = String(row[monthIdx] || ''); // e.g. "2026-05-01T00:00:00" or "202605"
-                            const currencyVal = (currIdx !== -1 && row[currIdx]) ? String(row[currIdx]) : 'USD';
-                            if (!rawMonth) continue;
-
-                            let billingPeriod = '';
-                            if (rawMonth.includes('-')) {
-                                billingPeriod = rawMonth.substring(0, 7); // "2026-05"
-                            } else if (rawMonth.length >= 6) {
-                                billingPeriod = `${rawMonth.substring(0, 4)}-${rawMonth.substring(4, 6)}`;
-                            } else {
-                                continue;
-                            }
-
-                            if (!monthlyGroup[billingPeriod]) {
-                                monthlyGroup[billingPeriod] = {
-                                    organization_id: organizationId,
-                                    azure_subscription_id: subscriptionId,
-                                    invoice_number: `AZ-${billingPeriod}-${Math.floor(1000 + Math.random() * 9000)}`,
-                                    billing_period: billingPeriod,
-                                    issue_date: `${billingPeriod}-01`,
-                                    due_date: `${billingPeriod}-15`,
-                                    payment_date: `${billingPeriod}-10`,
-                                    status: 'Paid',
-                                    currency: currencyVal,
-                                    total_amount: 0,
-                                    aca_compute_amount: 0,
-                                    mysql_db_amount: 0,
-                                    swa_cdn_amount: 0,
-                                    storage_vm_amount: 0,
-                                    network_egress_amount: 0
-                                };
-                            }
-
-                            const group = monthlyGroup[billingPeriod];
-                            group.total_amount += cost;
-
-                            if (resourceTypeRaw.includes('containerapps')) {
-                                group.aca_compute_amount += cost;
-                            } else if (resourceTypeRaw.includes('flexibleservers') || resourceTypeRaw.includes('mysql')) {
-                                group.mysql_db_amount += cost;
-                            } else if (resourceTypeRaw.includes('staticsites') || resourceTypeRaw.includes('web')) {
-                                group.swa_cdn_amount += cost;
-                            } else if (resourceTypeRaw.includes('virtualmachines') || resourceTypeRaw.includes('compute')) {
-                                group.storage_vm_amount += cost;
-                            } else {
-                                group.network_egress_amount += cost;
-                            }
-                        }
-
-                        // Write to DB for caching and persistence
-                        const parsedBills = Object.values(monthlyGroup);
-                        console.log(`[CostAPI] Parsed ${parsedBills.length} consolidated monthly bills. Caching in database...`);
-                        for (const bill of parsedBills) {
-                            console.log(`  -> Bill Period: ${bill.billing_period} | Total Amount: ${bill.currency} ${bill.total_amount.toFixed(2)} (ACA: ${bill.aca_compute_amount.toFixed(2)}, DB: ${bill.mysql_db_amount.toFixed(2)}, SWA: ${bill.swa_cdn_amount.toFixed(2)}, VM: ${bill.storage_vm_amount.toFixed(2)})`);
-                            await db.query(`
-                                INSERT INTO azure_consumption_bills 
-                                (organization_id, azure_subscription_id, invoice_number, billing_period, issue_date, due_date, payment_date, status, currency, total_amount, aca_compute_amount, mysql_db_amount, swa_cdn_amount, storage_vm_amount, network_egress_amount)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                ON DUPLICATE KEY UPDATE 
-                                    total_amount = VALUES(total_amount),
-                                    aca_compute_amount = VALUES(aca_compute_amount),
-                                    mysql_db_amount = VALUES(mysql_db_amount),
-                                    swa_cdn_amount = VALUES(swa_cdn_amount),
-                                    storage_vm_amount = VALUES(storage_vm_amount),
-                                    network_egress_amount = VALUES(network_egress_amount)
-                            `, [
-                                bill.organization_id, bill.azure_subscription_id, bill.invoice_number, bill.billing_period,
-                                bill.issue_date, bill.due_date, bill.payment_date, bill.status, bill.currency,
-                                bill.total_amount, bill.aca_compute_amount, bill.mysql_db_amount, bill.swa_cdn_amount,
-                                bill.storage_vm_amount, bill.network_egress_amount
-                            ]).catch(err => console.error('[CostAPI] DB Cache write failed:', err.message));
-                        }
-                    } else {
-                        console.log('[CostAPI] Azure returned empty properties.rows dataset.');
+                        grouping: [
+                            { type: "Dimension", name: "ResourceType" },
+                            { type: "Dimension", name: "BillingMonth" }
+                        ]
                     }
-                } catch (liveErr) {
-                    console.error('[CostAPI] Live Azure query failed, falling back to cached DB bills:', liveErr.message);
+                };
+
+                console.log(`[CostAPI] Sending POST request to Azure Cost API URL: ${url}`);
+                const response = await axios.post(url, payload, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (response.data && response.data.properties && response.data.properties.rows) {
+                    const rows = response.data.properties.rows;
+                    console.log(`[CostAPI] Live Azure query succeeded. Received ${rows.length} raw cost groupings from Azure.`);
+                    
+                    // Format columns
+                    const cols = response.data.properties.columns.map(c => c.name.toLowerCase());
+                    const costIdx = cols.indexOf('pretaxcost');
+                    const typeIdx = cols.indexOf('resourcetype');
+                    const monthIdx = cols.indexOf('billingmonth');
+                    const currIdx = cols.indexOf('currency');
+
+                    const monthlyGroup = {};
+                    for (const row of rows) {
+                        const cost = Number(row[costIdx] || 0);
+                        const resourceTypeRaw = String(row[typeIdx] || '').toLowerCase();
+                        const rawMonth = String(row[monthIdx] || ''); // e.g. "2026-05-01T00:00:00" or "202605"
+                        const currencyVal = (currIdx !== -1 && row[currIdx]) ? String(row[currIdx]) : 'USD';
+                        if (!rawMonth) continue;
+
+                        let billingPeriod = '';
+                        if (rawMonth.includes('-')) {
+                            billingPeriod = rawMonth.substring(0, 7); // "2026-05"
+                        } else if (rawMonth.length >= 6) {
+                            billingPeriod = `${rawMonth.substring(0, 4)}-${rawMonth.substring(4, 6)}`;
+                        } else {
+                            continue;
+                        }
+
+                        if (!monthlyGroup[billingPeriod]) {
+                            monthlyGroup[billingPeriod] = {
+                                organization_id: organizationId,
+                                azure_subscription_id: subscriptionId,
+                                invoice_number: `AZ-${billingPeriod}-${Math.floor(1000 + Math.random() * 9000)}`,
+                                billing_period: billingPeriod,
+                                issue_date: `${billingPeriod}-01`,
+                                due_date: `${billingPeriod}-15`,
+                                payment_date: `${billingPeriod}-10`,
+                                status: 'Paid',
+                                currency: currencyVal,
+                                total_amount: 0,
+                                aca_compute_amount: 0,
+                                mysql_db_amount: 0,
+                                swa_cdn_amount: 0,
+                                storage_vm_amount: 0,
+                                network_egress_amount: 0
+                            };
+                        }
+
+                        const group = monthlyGroup[billingPeriod];
+                        group.total_amount += cost;
+
+                        if (resourceTypeRaw.includes('containerapps')) {
+                            group.aca_compute_amount += cost;
+                        } else if (resourceTypeRaw.includes('flexibleservers') || resourceTypeRaw.includes('mysql')) {
+                            group.mysql_db_amount += cost;
+                        } else if (resourceTypeRaw.includes('staticsites') || resourceTypeRaw.includes('web')) {
+                            group.swa_cdn_amount += cost;
+                        } else if (resourceTypeRaw.includes('virtualmachines') || resourceTypeRaw.includes('compute')) {
+                            group.storage_vm_amount += cost;
+                        } else {
+                            group.network_egress_amount += cost;
+                        }
+                    }
+
+                    // Write to DB for caching and persistence
+                    const parsedBills = Object.values(monthlyGroup);
+                    console.log(`[CostAPI] Parsed ${parsedBills.length} consolidated monthly bills. Caching in database...`);
+                    for (const bill of parsedBills) {
+                        console.log(`  -> Bill Period: ${bill.billing_period} | Total Amount: ${bill.currency} ${bill.total_amount.toFixed(2)} (ACA: ${bill.aca_compute_amount.toFixed(2)}, DB: ${bill.mysql_db_amount.toFixed(2)}, SWA: ${bill.swa_cdn_amount.toFixed(2)}, VM: ${bill.storage_vm_amount.toFixed(2)})`);
+                        await db.query(`
+                            INSERT INTO azure_consumption_bills 
+                            (organization_id, azure_subscription_id, invoice_number, billing_period, issue_date, due_date, payment_date, status, currency, total_amount, aca_compute_amount, mysql_db_amount, swa_cdn_amount, storage_vm_amount, network_egress_amount)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON DUPLICATE KEY UPDATE 
+                                total_amount = VALUES(total_amount),
+                                aca_compute_amount = VALUES(aca_compute_amount),
+                                mysql_db_amount = VALUES(mysql_db_amount),
+                                swa_cdn_amount = VALUES(swa_cdn_amount),
+                                storage_vm_amount = VALUES(storage_vm_amount),
+                                network_egress_amount = VALUES(network_egress_amount)
+                        `, [
+                            bill.organization_id, bill.azure_subscription_id, bill.invoice_number, bill.billing_period,
+                            bill.issue_date, bill.due_date, bill.payment_date, bill.status, bill.currency,
+                            bill.total_amount, bill.aca_compute_amount, bill.mysql_db_amount, bill.swa_cdn_amount,
+                            bill.storage_vm_amount, bill.network_egress_amount
+                        ]).catch(err => console.error('[CostAPI] DB Cache write failed:', err.message));
+                    }
+                } else {
+                    console.log('[CostAPI] Azure returned empty properties.rows dataset.');
                 }
+            } catch (liveErr) {
+                console.error('[CostAPI] Live Azure query error:', liveErr.message);
             }
 
             // Purge bad formatted billing periods from legacy bugs
@@ -8605,7 +8590,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
 
             // Load from DB (which is populated strictly via actual API query or db seeder)
             console.log(`[CostAPI] Loading resolved bills from database (billing_period >= '2026-05')...`);
-            const [rows] = await db.query(
+            let [rows] = await db.query(
                 `SELECT id, organization_id, azure_subscription_id, invoice_number, billing_period, 
                         DATE_FORMAT(issue_date, "%Y-%m-%d") as issue_date, 
                         DATE_FORMAT(due_date, "%Y-%m-%d") as due_date, 
@@ -8613,7 +8598,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         status, currency, 
                         total_amount, aca_compute_amount, mysql_db_amount, swa_cdn_amount, storage_vm_amount, network_egress_amount 
                  FROM azure_consumption_bills 
-                 WHERE organization_id = ? AND billing_period >= '2026-05'
+                 WHERE (organization_id = ? OR organization_id = 'estevia') AND billing_period >= '2026-05'
                  ORDER BY due_date DESC`,
                 [organizationId]
             ).catch(() => [[]]);
@@ -8634,7 +8619,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         try {
             const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
             const [bills] = await db.query(
-                "SELECT total_amount FROM azure_consumption_bills WHERE organization_id = ? AND billing_period >= '2026-05' ORDER BY due_date DESC LIMIT 6",
+                "SELECT total_amount FROM azure_consumption_bills WHERE (organization_id = ? OR organization_id = 'estevia') AND billing_period >= '2026-05' ORDER BY due_date DESC LIMIT 6",
                 [organizationId]
             ).catch(() => [[]]);
 
