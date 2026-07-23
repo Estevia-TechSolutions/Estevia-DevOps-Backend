@@ -23,7 +23,7 @@ exports.getMetrics = async (req, res) => {
         `;
         const params = [organization_id, environment, windowMinutes];
 
-        if (app_key) {
+        if (app_key && app_key !== 'all') {
             query += ` AND app_key = ?`;
             params.push(app_key);
         }

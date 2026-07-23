@@ -302,7 +302,51 @@ async function runAutoMigration() {
                 ON DUPLICATE KEY UPDATE name = VALUES(name)
             `, [u.email, u.email, u.name, masterOrgId, u.role, tenantId]);
         }
-        
+
+        // Verify and seed user_resource_permissions table for Dynamic Granular RBAC
+        console.log('[DevOps DB] Verifying user_resource_permissions table for Granular RBAC...');
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS user_resource_permissions (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id VARCHAR(255) NOT NULL,
+                organization_id VARCHAR(255) NOT NULL,
+                app_key VARCHAR(255) NOT NULL,
+                environment ENUM('dev', 'qa', 'prod') NOT NULL,
+                actions JSON NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_user_app_env (user_id, app_key, environment),
+                INDEX idx_user_org (user_id, organization_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        `);
+
+        console.log('[DevOps DB] Seeding & updating role-based granular grants for existing users...');
+        await pool.query(`
+            INSERT IGNORE INTO user_resource_permissions (user_id, organization_id, app_key, environment, actions)
+            SELECT u.id, u.organization_id, app_list.app_key, env_list.environment, 
+                   CASE 
+                       WHEN LOWER(u.role) IN ('owner', 'admin') THEN '["view", "deploy", "provision", "cost_remediation", "db_manage"]'
+                       WHEN LOWER(u.role) IN ('contributor', 'member') THEN '["view", "deploy", "provision", "cost_remediation"]'
+                       WHEN LOWER(u.role) = 'viewer' THEN '["view"]'
+                       ELSE '["view", "deploy"]'
+                   END AS actions
+            FROM users u
+            CROSS JOIN (SELECT 'connecthub' AS app_key UNION SELECT 'docai' UNION SELECT 'protrack' UNION SELECT 'talenthq' UNION SELECT 'evafusion' UNION SELECT 'evaops') app_list
+            CROSS JOIN (SELECT 'dev' AS environment UNION SELECT 'qa' UNION SELECT 'prod') env_list
+            WHERE NOT (LOWER(u.role) = 'member' AND env_list.environment = 'prod');
+        `);
+
+        await pool.query(`
+            UPDATE user_resource_permissions urp
+            JOIN users u ON urp.user_id = u.id AND urp.organization_id = u.organization_id
+            SET urp.actions = CASE 
+                WHEN LOWER(u.role) IN ('owner', 'admin') THEN '["view", "deploy", "provision", "cost_remediation", "db_manage"]'
+                WHEN LOWER(u.role) IN ('contributor', 'member') THEN '["view", "deploy", "provision", "cost_remediation"]'
+                WHEN LOWER(u.role) = 'viewer' THEN '["view"]'
+                ELSE '["view", "deploy"]'
+            END;
+        `);
+
         console.log('[DevOps DB] Database migrations check completed successfully.');
         
         // Automatically run invoice correction & regeneration

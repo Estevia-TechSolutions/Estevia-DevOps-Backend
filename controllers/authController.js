@@ -682,6 +682,18 @@ const updateUserRole = async (req, res) => {
 
         await db.query('UPDATE users SET role = ? WHERE id = ?', [role.toLowerCase(), userId]);
 
+        // Sync user_resource_permissions according to new role
+        const defaultActions = (role.toLowerCase() === 'owner' || role.toLowerCase() === 'admin')
+            ? ['view', 'deploy', 'provision', 'cost_remediation', 'db_manage']
+            : (role.toLowerCase() === 'viewer')
+            ? ['view']
+            : ['view', 'deploy', 'provision', 'cost_remediation'];
+
+        await db.query(
+            'UPDATE user_resource_permissions SET actions = ? WHERE user_id = ?',
+            [JSON.stringify(defaultActions), userId]
+        ).catch(() => {});
+
         // Fire Teams security alert asynchronously
         setImmediate(async () => {
             try {
