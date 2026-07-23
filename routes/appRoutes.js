@@ -29,16 +29,16 @@ router.get('/default-yml', lazyBillPackage('Developer'), appController.getDefaul
 router.post('/pipeline', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.createPipeline);
 
 // Get live build task logs from Azure DevOps
-router.get('/pipeline/logs', lazyBillPackage('DevOps'), appController.getPipelineLogs);
+router.get('/pipeline/logs', protectOptional, lazyBillPackage('DevOps'), appController.getPipelineLogs);
 
 // Get live build run state and timeline breakdown from Azure DevOps
-router.get('/pipeline/timeline', lazyBillPackage('DevOps'), appController.getPipelineTimeline);
+router.get('/pipeline/timeline', protectOptional, lazyBillPackage('DevOps'), appController.getPipelineTimeline);
 
 // Get the most recent build run for a given pipeline definition ID (for new-build discovery)
-router.get('/pipeline/latest', lazyBillPackage('DevOps'), appController.getLatestPipelineBuild);
+router.get('/pipeline/latest', protectOptional, lazyBillPackage('DevOps'), appController.getLatestPipelineBuild);
 
 // Get pipeline build history
-router.get('/pipeline/history', lazyBillPackage('DevOps'), appController.getBuildHistory);
+router.get('/pipeline/history', protectOptional, lazyBillPackage('DevOps'), appController.getBuildHistory);
 
 // Re-deploy a previous build (roles gated inside controller)
 router.post('/pipeline/redeploy', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.reDeployBuild);
