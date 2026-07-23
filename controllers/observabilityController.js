@@ -17,7 +17,7 @@ exports.getMetrics = async (req, res) => {
         if (time_window === '7d') windowMinutes = 10080;
 
         let query = `
-            SELECT id, app_key, resource_type, environment, cpu_percent, memory_mb, request_rate, p95_latency_ms, http_5xx_count, replica_count, recorded_at
+            SELECT id, app_key, resource_type, environment, cpu_percent, memory_mb, request_rate, p95_latency_ms, p99_latency_ms, http_5xx_count, replica_count, db_connections, network_in_kbps, network_out_kbps, storage_percent, disk_iops, recorded_at
             FROM resource_metrics_history
             WHERE organization_id = ? AND environment = ? AND recorded_at >= DATE_SUB(NOW(), INTERVAL ? MINUTE)
         `;
@@ -56,8 +56,14 @@ exports.getMetrics = async (req, res) => {
                 const mem = Math.floor(250 + Math.random() * 140);
                 const reqs = Math.floor(90 + Math.random() * 70);
                 const lat = Math.floor(45 + Math.random() * 55);
+                const lat99 = lat + Math.floor(20 + Math.random() * 30);
                 const errs = Math.random() > 0.88 ? Math.floor(Math.random() * 3) : 0;
                 const replicas = targetType === 'aca' ? 3 : 1;
+                const dbConns = Math.floor(12 + Math.random() * 20);
+                const netIn = parseFloat((120 + Math.random() * 250).toFixed(1));
+                const netOut = parseFloat((80 + Math.random() * 180).toFixed(1));
+                const storage = parseFloat((35 + Math.random() * 15).toFixed(1));
+                const iops = Math.floor(400 + Math.random() * 600);
 
                 const pt = {
                     id: i + 1,
@@ -68,8 +74,14 @@ exports.getMetrics = async (req, res) => {
                     memory_mb: mem,
                     request_rate: reqs,
                     p95_latency_ms: lat,
+                    p99_latency_ms: lat99,
                     http_5xx_count: errs,
                     replica_count: replicas,
+                    db_connections: dbConns,
+                    network_in_kbps: netIn,
+                    network_out_kbps: netOut,
+                    storage_percent: storage,
+                    disk_iops: iops,
                     recorded_at: recordedTime
                 };
                 generatedMetrics.push(pt);
@@ -77,9 +89,9 @@ exports.getMetrics = async (req, res) => {
                 // Attempt non-blocking async persist
                 db.query(`
                     INSERT INTO resource_metrics_history 
-                    (organization_id, app_key, resource_type, environment, cpu_percent, memory_mb, request_rate, p95_latency_ms, http_5xx_count, replica_count, recorded_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                `, [organization_id, targetApp, targetType, environment, cpu, mem, reqs, lat, errs, replicas, new Date(recordedTime)]).catch(() => {});
+                    (organization_id, app_key, resource_type, environment, cpu_percent, memory_mb, request_rate, p95_latency_ms, p99_latency_ms, http_5xx_count, replica_count, db_connections, network_in_kbps, network_out_kbps, storage_percent, disk_iops, recorded_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `, [organization_id, targetApp, targetType, environment, cpu, mem, reqs, lat, lat99, errs, replicas, dbConns, netIn, netOut, storage, iops, new Date(recordedTime)]).catch(() => {});
             }
 
             return res.json({ success: true, count: generatedMetrics.length, metrics: generatedMetrics });

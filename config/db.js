@@ -150,6 +150,10 @@ async function runAutoMigration() {
             console.log('[DevOps DB] Adding column sub_package_security to organizations...');
             await pool.query(`ALTER TABLE organizations ADD COLUMN sub_package_security TINYINT(1) NOT NULL DEFAULT 0`);
         }
+        if (!columnNames.includes('sub_package_observability')) {
+            console.log('[DevOps DB] Adding column sub_package_observability to organizations...');
+            await pool.query(`ALTER TABLE organizations ADD COLUMN sub_package_observability TINYINT(1) NOT NULL DEFAULT 0`);
+        }
         if (!columnNames.includes('billing_corrected')) {
             console.log('[DevOps DB] Adding column billing_corrected to organizations...');
             await pool.query(`ALTER TABLE organizations ADD COLUMN billing_corrected TINYINT(1) NOT NULL DEFAULT 0`);

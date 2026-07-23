@@ -10,8 +10,8 @@ const runIncidentScanCycle = async () => {
     if (isRunning) return;
     isRunning = true;
     try {
-        // Query active organizations
-        const [orgs] = await db.query('SELECT id, billing_currency FROM organizations WHERE is_disabled = 0');
+        // Query active organizations with Observability & AI Package active
+        const [orgs] = await db.query('SELECT id, billing_currency, sub_package_observability FROM organizations WHERE is_disabled = 0');
         if (!orgs || orgs.length === 0) {
             isRunning = false;
             return;
@@ -19,6 +19,10 @@ const runIncidentScanCycle = async () => {
 
         for (const org of orgs) {
             const orgId = org.id;
+            const isSubscribed = org.sub_package_observability ? (Buffer.isBuffer(org.sub_package_observability) ? org.sub_package_observability[0] === 1 : Number(org.sub_package_observability) === 1) : false;
+            if (!isSubscribed) {
+                continue; // Skip scanning organizations with Observability Package turned off
+            }
 
             // Fetch alert recipient configurations
             const [owners] = await db.query(

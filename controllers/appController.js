@@ -7445,7 +7445,7 @@ const appController = {
             `, [organizationId, organizationId.toUpperCase()]);
 
             const [[currentOrgStatus]] = await db.query(
-                'SELECT billing_currency, sub_package_devops, sub_package_developer, sub_package_security FROM organizations WHERE id = ?',
+                'SELECT billing_currency, sub_package_devops, sub_package_developer, sub_package_security, sub_package_observability FROM organizations WHERE id = ?',
                 [organizationId]
             );
 
@@ -7453,18 +7453,21 @@ const appController = {
             const devopsSub = subPackageDevops !== undefined ? (subPackageDevops ? 1 : 0) : (currentOrgStatus?.sub_package_devops ?? 0);
             const devSub = subPackageDeveloper !== undefined ? (subPackageDeveloper ? 1 : 0) : (currentOrgStatus?.sub_package_developer ?? 0);
             const secSub = subPackageSecurity !== undefined ? (subPackageSecurity ? 1 : 0) : (currentOrgStatus?.sub_package_security ?? 0);
+            const obsSub = subPackageObservability !== undefined ? (subPackageObservability ? 1 : 0) : (currentOrgStatus?.sub_package_observability ?? 0);
 
             // Check if any package is transitioning from 0 to 1 (newly subscribed)
             const pricing = {
                 devops: { USD: 150.00, INR: 12500.00 },
                 developer: { USD: 99.00, INR: 8250.00 },
-                security: { USD: 120.00, INR: 10000.00 }
+                security: { USD: 120.00, INR: 10000.00 },
+                observability: { USD: 149.00, INR: 12000.00 }
             };
 
             const activations = [];
             if (devopsSub && !currentOrgStatus?.sub_package_devops) activations.push({ name: 'DevOps', type: 'devops_package' });
             if (devSub && !currentOrgStatus?.sub_package_developer) activations.push({ name: 'Developer', type: 'developer_package' });
             if (secSub && !currentOrgStatus?.sub_package_security) activations.push({ name: 'Security', type: 'security_package' });
+            if (obsSub && !currentOrgStatus?.sub_package_observability) activations.push({ name: 'Observability', type: 'observability_package' });
 
             for (const pkg of activations) {
                 const price = pricing[pkg.name.toLowerCase()][currency];
@@ -7485,9 +7488,10 @@ const appController = {
                     billing_currency = ?,
                     sub_package_devops = ?,
                     sub_package_developer = ?,
-                    sub_package_security = ?
+                    sub_package_security = ?,
+                    sub_package_observability = ?
                 WHERE id = ?
-            `, [currency, devopsSub, devSub, secSub, organizationId]);
+            `, [currency, devopsSub, devSub, secSub, obsSub, organizationId]);
 
             // ── License Tier Change Enforcement ─────────────────────────────
             const [[currentOrg]] = await db.query(

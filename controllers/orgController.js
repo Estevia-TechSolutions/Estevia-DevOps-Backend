@@ -34,30 +34,33 @@ const orgController = {
                 orgId = `${orgId}-${Math.floor(1000 + Math.random() * 9000)}`;
             }
 
-            const { billingCurrency, subPackageDevops, subPackageDeveloper, subPackageSecurity } = req.body;
+            const { billingCurrency, subPackageDevops, subPackageDeveloper, subPackageSecurity, subPackageObservability } = req.body;
             const currency = billingCurrency || 'USD';
             const devopsSub = subPackageDevops ? 1 : 0;
             const devSub = subPackageDeveloper ? 1 : 0;
             const secSub = subPackageSecurity ? 1 : 0;
+            const obsSub = subPackageObservability ? 1 : 0;
 
             // Create organization
             await db.query(
-                `INSERT INTO organizations (id, name, tenant_id, admin_email, onboarding_complete, created_by, billing_currency, sub_package_devops, sub_package_developer, sub_package_security)
-                 VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
-                [orgId, name, tenantId, adminEmail, req.user.id, currency, devopsSub, devSub, secSub]
+                `INSERT INTO organizations (id, name, tenant_id, admin_email, onboarding_complete, created_by, billing_currency, sub_package_devops, sub_package_developer, sub_package_security, sub_package_observability)
+                 VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
+                [orgId, name, tenantId, adminEmail, req.user.id, currency, devopsSub, devSub, secSub, obsSub]
             );
 
             // Generate initial invoices for pre-selected packages
             const pricing = {
                 devops: { USD: 150.00, INR: 12500.00 },
                 developer: { USD: 99.00, INR: 8250.00 },
-                security: { USD: 120.00, INR: 10000.00 }
+                security: { USD: 120.00, INR: 10000.00 },
+                observability: { USD: 149.00, INR: 12000.00 }
             };
 
             const selectedPackages = [];
             if (devopsSub) selectedPackages.push({ name: 'DevOps', type: 'devops_package' });
             if (devSub) selectedPackages.push({ name: 'Developer', type: 'developer_package' });
             if (secSub) selectedPackages.push({ name: 'Security', type: 'security_package' });
+            if (obsSub) selectedPackages.push({ name: 'Observability', type: 'observability_package' });
 
             for (const pkg of selectedPackages) {
                 const price = pricing[pkg.name.toLowerCase()][currency];

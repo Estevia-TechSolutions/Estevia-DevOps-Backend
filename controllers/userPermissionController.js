@@ -109,10 +109,44 @@ exports.getUserPermissions = async (req, res) => {
         const { userId } = req.params;
         const orgId = req.user.organization_id;
 
-        const [rows] = await db.query(
+        let [rows] = await db.query(
             'SELECT app_key, environment, actions FROM user_resource_permissions WHERE user_id = ? AND organization_id = ?',
             [userId, orgId]
         );
+
+        if (!rows || rows.length === 0) {
+            // Seed role-based default permissions dynamically
+            const [uRows] = await db.query('SELECT role FROM users WHERE id = ?', [userId]).catch(() => [[]]);
+            const role = (uRows && uRows[0] && uRows[0].role) ? uRows[0].role.toLowerCase() : 'contributor';
+            
+            const defaultActions = (role === 'owner' || role === 'admin')
+                ? ['view', 'deploy', 'provision', 'cost_remediation', 'db_manage']
+                : (role === 'viewer')
+                ? ['view']
+                : ['view', 'deploy', 'provision', 'cost_remediation'];
+
+            const defaultApps = ['connecthub', 'docai', 'protrack', 'talenthq', 'evafusion', 'evaops'];
+            const insertVals = [];
+            for (const appKey of defaultApps) {
+                const envs = role === 'member' ? ['dev', 'qa'] : ['dev', 'qa', 'prod'];
+                for (const env of envs) {
+                    insertVals.push([userId, orgId, appKey, env, JSON.stringify(defaultActions)]);
+                }
+            }
+
+            if (insertVals.length > 0) {
+                await db.query(
+                    'INSERT IGNORE INTO user_resource_permissions (user_id, organization_id, app_key, environment, actions) VALUES ?',
+                    [insertVals]
+                ).catch(() => {});
+
+                const [newRows] = await db.query(
+                    'SELECT app_key, environment, actions FROM user_resource_permissions WHERE user_id = ? AND organization_id = ?',
+                    [userId, orgId]
+                ).catch(() => [[]]);
+                rows = newRows || [];
+            }
+        }
 
         const permissions = {};
         for (const r of rows) {

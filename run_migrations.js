@@ -401,6 +401,10 @@ async function main() {
             console.log('Adding column sub_package_security to organizations...');
             await connection.query("ALTER TABLE organizations ADD COLUMN sub_package_security TINYINT(1) NOT NULL DEFAULT 0");
         }
+        if (!orgColNamesList.includes('sub_package_observability')) {
+            console.log('Adding column sub_package_observability to organizations...');
+            await connection.query("ALTER TABLE organizations ADD COLUMN sub_package_observability TINYINT(1) NOT NULL DEFAULT 0");
+        }
 
         // Check if suggestion_id in applied_remediations needs modification
         const [remediationCols] = await connection.query(`
@@ -832,14 +836,31 @@ async function main() {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
 
-        console.log('Seeding default full-access grants for existing active users...');
+        console.log('Seeding & recalculating role-based granular grants for existing users...');
         await connection.query(`
             INSERT IGNORE INTO user_resource_permissions (user_id, organization_id, app_key, environment, actions)
             SELECT u.id, u.organization_id, app_list.app_key, env_list.environment, 
-                   '["view", "deploy", "provision", "cost_remediation", "db_manage"]'
+                   CASE 
+                       WHEN LOWER(u.role) IN ('owner', 'admin') THEN '["view", "deploy", "provision", "cost_remediation", "db_manage"]'
+                       WHEN LOWER(u.role) IN ('contributor', 'member') THEN '["view", "deploy", "provision", "cost_remediation"]'
+                       WHEN LOWER(u.role) = 'viewer' THEN '["view"]'
+                       ELSE '["view", "deploy"]'
+                   END AS actions
             FROM users u
             CROSS JOIN (SELECT 'connecthub' AS app_key UNION SELECT 'docai' UNION SELECT 'protrack' UNION SELECT 'talenthq' UNION SELECT 'evafusion' UNION SELECT 'evaops') app_list
-            CROSS JOIN (SELECT 'dev' AS environment UNION SELECT 'qa' UNION SELECT 'prod') env_list;
+            CROSS JOIN (SELECT 'dev' AS environment UNION SELECT 'qa' UNION SELECT 'prod') env_list
+            WHERE NOT (LOWER(u.role) = 'member' AND env_list.environment = 'prod');
+        `);
+
+        await connection.query(`
+            UPDATE user_resource_permissions urp
+            JOIN users u ON urp.user_id = u.id AND urp.organization_id = u.organization_id
+            SET urp.actions = CASE 
+                WHEN LOWER(u.role) IN ('owner', 'admin') THEN '["view", "deploy", "provision", "cost_remediation", "db_manage"]'
+                WHEN LOWER(u.role) IN ('contributor', 'member') THEN '["view", "deploy", "provision", "cost_remediation"]'
+                WHEN LOWER(u.role) = 'viewer' THEN '["view"]'
+                ELSE '["view", "deploy"]'
+            END;
         `);
 
         // 10. Add user_menu_permissions table for Top-Level Navigation Menu Item RBAC
@@ -945,8 +966,14 @@ async function main() {
                 memory_mb FLOAT NOT NULL DEFAULT 0,
                 request_rate FLOAT NOT NULL DEFAULT 0,
                 p95_latency_ms INT NOT NULL DEFAULT 0,
+                p99_latency_ms INT NOT NULL DEFAULT 0,
                 http_5xx_count INT NOT NULL DEFAULT 0,
                 replica_count INT NOT NULL DEFAULT 1,
+                db_connections INT NOT NULL DEFAULT 0,
+                network_in_kbps FLOAT NOT NULL DEFAULT 0,
+                network_out_kbps FLOAT NOT NULL DEFAULT 0,
+                storage_percent FLOAT NOT NULL DEFAULT 0,
+                disk_iops INT NOT NULL DEFAULT 0,
                 recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_app_env_time (app_key, environment, recorded_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
