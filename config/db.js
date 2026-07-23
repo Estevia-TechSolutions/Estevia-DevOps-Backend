@@ -391,9 +391,6 @@ async function runAutoMigration() {
             `, bill);
         }
 
-        console.log('[DevOps DB] Purging any legacy mock Azure Cloud bills...');
-        await pool.query(`DELETE FROM azure_consumption_bills WHERE invoice_number LIKE 'AZ-2026-%'`);
-
         console.log('[DevOps DB] Database migrations check completed successfully.');
         
         // Automatically run invoice correction & regeneration

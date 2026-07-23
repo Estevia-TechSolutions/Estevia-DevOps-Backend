@@ -8523,7 +8523,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                             monthlyGroup[billingPeriod] = {
                                 organization_id: organizationId,
                                 azure_subscription_id: subscriptionId,
-                                invoice_number: `AZ-${billingPeriod}-${Math.floor(1000 + Math.random() * 9000)}`,
+                                invoice_number: `INV-AZ-${billingPeriod}-LIVE`,
                                 billing_period: billingPeriod,
                                 issue_date: `${billingPeriod}-01`,
                                 due_date: `${billingPeriod}-15`,
