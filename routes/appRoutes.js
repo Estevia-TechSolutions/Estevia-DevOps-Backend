@@ -11,22 +11,22 @@ router.use('/observability', observabilityRoutes);
 router.get('/scan', protect, lazyBillPackage('DevOps'), appController.scanApps);
 
 // Provision new Static Web App
-router.post('/provision', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.provisionApp);
+router.post('/provision', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.provisionApp);
 
 // Bind custom domain in DNS & Azure
-router.post('/bind-domain', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.bindCustomDomain);
+router.post('/bind-domain', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.bindCustomDomain);
 
 // Check if azure-pipelines.yml exists in a GitHub repo
-router.get('/check-yml', lazyBillPackage('Developer'), appController.checkYml);
+router.get('/check-yml', protectOptional, lazyBillPackage('Developer'), appController.checkYml);
 
 // Fetch existing azure-pipelines.yml from GitHub repo
-router.get('/get-yml', lazyBillPackage('Developer'), appController.getYml);
+router.get('/get-yml', protectOptional, lazyBillPackage('Developer'), appController.getYml);
 
 // Generate default SWA pipeline template YML
-router.get('/default-yml', lazyBillPackage('Developer'), appController.getDefaultYml);
+router.get('/default-yml', protectOptional, lazyBillPackage('Developer'), appController.getDefaultYml);
 
 // Create CI/CD pipeline in Azure DevOps
-router.post('/pipeline', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.createPipeline);
+router.post('/pipeline', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.createPipeline);
 
 // Get live build task logs from Azure DevOps
 router.get('/pipeline/logs', protectOptional, lazyBillPackage('DevOps'), appController.getPipelineLogs);
@@ -41,117 +41,117 @@ router.get('/pipeline/latest', protectOptional, lazyBillPackage('DevOps'), appCo
 router.get('/pipeline/history', protectOptional, lazyBillPackage('DevOps'), appController.getBuildHistory);
 
 // Re-deploy a previous build (roles gated inside controller)
-router.post('/pipeline/redeploy', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.reDeployBuild);
+router.post('/pipeline/redeploy', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.reDeployBuild);
 
 // Cancel older duplicate builds for a pipeline
-router.post('/pipeline/cancel-older', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.cancelOlderPipelineBuilds);
+router.post('/pipeline/cancel-older', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.cancelOlderPipelineBuilds);
 
 // Prioritize a queued build for a pipeline
-router.post('/pipeline/prioritize', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.prioritizeBuild);
+router.post('/pipeline/prioritize', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.prioritizeBuild);
 
 // Commit a default azure-pipelines.yml to GitHub repo, then register pipeline
-router.post('/create-pipeline-yml', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.createPipelineYml);
+router.post('/create-pipeline-yml', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.createPipelineYml);
 
 // Get organization dynamic settings
-router.get('/organization-settings', appController.getOrgSettings);
+router.get('/organization-settings', protectOptional, appController.getOrgSettings);
 
 // Fetch Azure resource costs and optimizations
-router.get('/cost', lazyBillPackage('Security'), appController.getCostData);
-router.get('/cost/azure-bills', lazyBillPackage('Security'), appController.getAzureCloudBills);
-router.get('/cost/azure-forecast', lazyBillPackage('Security'), appController.getAzureCloudForecast);
+router.get('/cost', protectOptional, lazyBillPackage('Security'), appController.getCostData);
+router.get('/cost/azure-bills', protectOptional, lazyBillPackage('Security'), appController.getAzureCloudBills);
+router.get('/cost/azure-forecast', protectOptional, lazyBillPackage('Security'), appController.getAzureCloudForecast);
 
 // Apply cost optimization remediation suggestion
-router.post('/cost/apply-remediation', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('Security'), appController.applyRemediation);
+router.post('/cost/apply-remediation', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('Security'), appController.applyRemediation);
 
 // Azure Policy Compliance Auditing
-router.get('/compliance', lazyBillPackage('Security'), appController.getComplianceStatus);
-router.get('/compliance/settings', lazyBillPackage('Security'), appController.getComplianceSettings);
-router.post('/compliance/settings', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('Security'), appController.updateComplianceSettings);
-router.post('/compliance/remediate', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('Security'), appController.remediateCompliance);
+router.get('/compliance', protectOptional, lazyBillPackage('Security'), appController.getComplianceStatus);
+router.get('/compliance/settings', protectOptional, lazyBillPackage('Security'), appController.getComplianceSettings);
+router.post('/compliance/settings', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('Security'), appController.updateComplianceSettings);
+router.post('/compliance/remediate', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('Security'), appController.remediateCompliance);
 
 
 // Ask Eva AI about cost optimization
-router.post('/cost/ask-eva', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('Security'), appController.askEva);
+router.post('/cost/ask-eva', protectOptional, restrictTo('owner', 'admin', 'contributor', 'viewer'), lazyBillPackage('Security'), appController.askEva);
 
 // Fetch billing invoices history
-router.get('/billing', appController.getBillingHistory);
-router.get('/billing/forecast', appController.getBillingForecast);
+router.get('/billing', protectOptional, appController.getBillingHistory);
+router.get('/billing/forecast', protectOptional, appController.getBillingForecast);
 
 
 // Preview impact of a tier downgrade before confirming
-router.get('/downgrade-impact', restrictTo('owner', 'admin'), appController.getDowngradeImpact);
+router.get('/downgrade-impact', protect, restrictTo('owner', 'admin'), appController.getDowngradeImpact);
 
 // Update organization settings
-router.post('/organization-settings', restrictTo('owner', 'admin'), appController.updateOrgSettings);
+router.post('/organization-settings', protect, restrictTo('owner', 'admin'), appController.updateOrgSettings);
 
 // Test Microsoft Teams webhook connectivity
-router.post('/test-teams-webhook', restrictTo('owner', 'admin'), lazyBillPackage('DevOps'), appController.testTeamsWebhook);
+router.post('/test-teams-webhook', protect, restrictTo('owner', 'admin'), lazyBillPackage('DevOps'), appController.testTeamsWebhook);
 
 // Automated Microsoft Teams service hook setup
-router.post('/setup-teams-service-hook', restrictTo('owner', 'admin'), lazyBillPackage('DevOps'), appController.setupTeamsServiceHook);
+router.post('/setup-teams-service-hook', protect, restrictTo('owner', 'admin'), lazyBillPackage('DevOps'), appController.setupTeamsServiceHook);
 
 // Force discover Log Analytics workspace ID from Azure
-router.post('/discover-workspace', restrictTo('owner', 'admin'), lazyBillPackage('Security'), appController.discoverWorkspace);
+router.post('/discover-workspace', protect, restrictTo('owner', 'admin'), lazyBillPackage('Security'), appController.discoverWorkspace);
 
 // Auto-discover Azure databases and managed environments
-router.get('/discover-azure-resources', restrictTo('owner', 'admin'), lazyBillPackage('DevOps'), appController.discoverAzureResources);
+router.get('/discover-azure-resources', protect, restrictTo('owner', 'admin'), lazyBillPackage('DevOps'), appController.discoverAzureResources);
 
 // Fetch organization GitHub repos dynamically
-router.get('/github-repos', lazyBillPackage('Developer'), appController.getGithubRepos);
+router.get('/github-repos', protectOptional, lazyBillPackage('Developer'), appController.getGithubRepos);
 
 // Fetch repository branches dynamically
-router.get('/github-branches', lazyBillPackage('Developer'), appController.getGithubBranches);
+router.get('/github-branches', protectOptional, lazyBillPackage('Developer'), appController.getGithubBranches);
 
 // Check repo integrity: classify each branch as frontend/backend/mixed and cross-ref with deployed apps
-router.get('/repo-integrity', lazyBillPackage('Developer'), appController.checkRepoIntegrity);
+router.get('/repo-integrity', protectOptional, lazyBillPackage('Developer'), appController.checkRepoIntegrity);
 
 
 // Expose Database management endpoints
-router.get('/db-servers', lazyBillPackage('Developer'), appController.getDbServers);
-router.get('/databases', lazyBillPackage('Developer'), appController.getDatabases);
-router.post('/databases', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('Developer'), appController.provisionDatabase);
-router.get('/database-schema', lazyBillPackage('Developer'), appController.getDatabaseSchema);
-router.post('/execute-query', restrictTo('owner', 'admin', 'contributor', 'viewer'), lazyBillPackage('Developer'), appController.executeQuery);
+router.get('/db-servers', protectOptional, lazyBillPackage('Developer'), appController.getDbServers);
+router.get('/databases', protectOptional, lazyBillPackage('Developer'), appController.getDatabases);
+router.post('/databases', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('Developer'), appController.provisionDatabase);
+router.get('/database-schema', protectOptional, lazyBillPackage('Developer'), appController.getDatabaseSchema);
+router.post('/execute-query', protect, restrictTo('owner', 'admin', 'contributor', 'viewer'), lazyBillPackage('Developer'), appController.executeQuery);
 
 // Get dynamic Azure provisioning metadata (Resource Groups, locations, envs, registries, DevOps service connections)
-router.get('/provisioning-metadata', lazyBillPackage('DevOps'), appController.getProvisioningMetadata);
+router.get('/provisioning-metadata', protectOptional, lazyBillPackage('DevOps'), appController.getProvisioningMetadata);
 
 // List all available Azure resource groups
-router.get('/resource-groups', lazyBillPackage('DevOps'), appController.getResourceGroups);
+router.get('/resource-groups', protectOptional, lazyBillPackage('DevOps'), appController.getResourceGroups);
 
 // Create default Dockerfile in user's GitHub repository
-router.post('/create-dockerfile', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('Developer'), appController.createDockerfile);
+router.post('/create-dockerfile', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('Developer'), appController.createDockerfile);
 
 // Get Dockerfile content from user's GitHub repository
-router.get('/get-dockerfile', lazyBillPackage('Developer'), appController.getDockerfile);
+router.get('/get-dockerfile', protectOptional, lazyBillPackage('Developer'), appController.getDockerfile);
 
 // Push edited Dockerfile content back to GitHub
-router.put('/update-dockerfile', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('Developer'), appController.updateDockerfile);
+router.put('/update-dockerfile', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('Developer'), appController.updateDockerfile);
 
 // Check CNAME propagation and SSL status for a custom domain
-router.get('/domain-status', lazyBillPackage('DevOps'), appController.getDomainStatus);
+router.get('/domain-status', protectOptional, lazyBillPackage('DevOps'), appController.getDomainStatus);
 
 // Control app power states (start/stop/restart)
-router.post('/:name/control', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.controlApp);
+router.post('/:name/control', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.controlApp);
 
 // Revisions & traffic control for Container Apps (ACA)
-router.get('/:name/revisions', lazyBillPackage('DevOps'), appController.getRevisions);
-router.post('/:name/traffic', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.updateTraffic);
-router.post('/:name/revision-mode', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.updateRevisionMode);
+router.get('/:name/revisions', protectOptional, lazyBillPackage('DevOps'), appController.getRevisions);
+router.post('/:name/traffic', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.updateTraffic);
+router.post('/:name/revision-mode', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.updateRevisionMode);
 
 // DNS CNAME swap mapping (SWA/ACA)
-router.post('/dns-swap', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.dnsSwap);
+router.post('/dns-swap', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.dnsSwap);
 
 // Validate pipeline YAML content (azure-pipelines.yml or GitHub Actions workflow)
-router.post('/validate-yml', lazyBillPackage('Developer'), appController.validateYml);
+router.post('/validate-yml', protectOptional, lazyBillPackage('Developer'), appController.validateYml);
 
 // Validate Dockerfile content
-router.post('/validate-dockerfile', lazyBillPackage('Developer'), appController.validateDockerfile);
+router.post('/validate-dockerfile', protectOptional, lazyBillPackage('Developer'), appController.validateDockerfile);
 
 // Check YAML and Dockerfile health for a GitHub repo (for cloud scan indicators)
-router.get('/yml-health', lazyBillPackage('Developer'), appController.checkYmlHealth);
+router.get('/yml-health', protectOptional, lazyBillPackage('Developer'), appController.checkYmlHealth);
 
 // Delete SWA/ACA app from Azure and database
-router.delete('/:name', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.deleteApp);
+router.delete('/:name', protect, restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.deleteApp);
 
 module.exports = router;
