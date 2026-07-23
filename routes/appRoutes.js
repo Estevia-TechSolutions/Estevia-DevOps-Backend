@@ -1,10 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const appController = require('../controllers/appController');
-const { restrictTo, lazyBillPackage } = require('../middlewares/authMiddleware');
+const { protect, protectOptional, restrictTo, lazyBillPackage } = require('../middlewares/authMiddleware');
+
+// Mount Observability routes at the top before any parameterized routes
+const observabilityRoutes = require('./observabilityRoutes');
+router.use('/observability', observabilityRoutes);
 
 // Scan active resources from Azure and sync with DB
-router.get('/scan', lazyBillPackage('DevOps'), appController.scanApps);
+router.get('/scan', protect, lazyBillPackage('DevOps'), appController.scanApps);
 
 // Provision new Static Web App
 router.post('/provision', restrictTo('owner', 'admin', 'contributor'), lazyBillPackage('DevOps'), appController.provisionApp);

@@ -51,7 +51,7 @@ const credentialRoutes = require('./routes/credentialRoutes');
 app.use('/api/credentials', protect, credentialRoutes);
 
 const appRoutes = require('./routes/appRoutes');
-app.use('/api/apps', protect, appRoutes);
+app.use('/api/apps', appRoutes);
 
 const orgRoutes = require('./routes/orgRoutes');
 app.use('/api/org', orgRoutes);

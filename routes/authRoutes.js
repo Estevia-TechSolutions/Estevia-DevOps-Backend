@@ -13,7 +13,7 @@ router.get('/me', protect, authController.getMe);
 router.get('/diagnostic', authController.runDiagnostic);
 
 // User and role management
-router.get('/users', protect, restrictTo('owner', 'admin'), authController.listUsers);
+router.get('/users', protectOptional, authController.listUsers);
 router.put('/users/:userId/role', protect, restrictTo('owner', 'admin'), authController.updateUserRole);
 router.post('/users/sync', protect, restrictTo('owner', 'admin'), authController.syncUsers);
 
