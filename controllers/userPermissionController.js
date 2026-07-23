@@ -46,22 +46,15 @@ exports.getResourceCatalog = async (req, res) => {
             };
 
             const typeStr = ((appRow.type || appRow.app_type || '') + ' ' + rawName).toLowerCase();
-            if (typeStr.includes('swa') || typeStr.includes('staticweb') || typeStr.includes('static')) {
-                existing.resourceTypes.add('swa');
-                existing.icon = '🌐';
-            }
-            if (typeStr.includes('aca') || typeStr.includes('containerapp') || typeStr.includes('container')) {
+            if (typeStr.includes('aca') || typeStr.includes('containerapp') || typeStr.includes('container') || typeStr.includes('backend') || typeStr.includes('api')) {
                 existing.resourceTypes.add('aca');
                 existing.icon = '📦';
-            }
-            if (typeStr.includes('vm') || typeStr.includes('virtualmachine') || typeStr.includes('virtual')) {
+            } else if (typeStr.includes('vm') || typeStr.includes('virtualmachine') || typeStr.includes('virtual') || typeStr.includes('database') || typeStr.includes('db')) {
                 existing.resourceTypes.add('vm');
                 existing.icon = '🖥️';
-            }
-
-            // Fallback default type if none detected
-            if (existing.resourceTypes.size === 0) {
+            } else {
                 existing.resourceTypes.add('swa');
+                existing.icon = '🌐';
             }
 
             catalogMap.set(key, existing);
