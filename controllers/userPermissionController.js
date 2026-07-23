@@ -109,25 +109,56 @@ exports.getUserPermissions = async (req, res) => {
         const { userId } = req.params;
         const orgId = req.user.organization_id;
 
+        // Fetch user's role
+        const [uRows] = await db.query('SELECT role FROM users WHERE id = ?', [userId]).catch(() => [[]]);
+        const role = (uRows && uRows[0] && uRows[0].role) ? uRows[0].role.toLowerCase() : 'contributor';
+
+        // Retrieve existing permissions for user
         let [rows] = await db.query(
             'SELECT app_key, environment, actions FROM user_resource_permissions WHERE user_id = ? AND organization_id = ?',
             [userId, orgId]
         );
 
-        if (!rows || rows.length === 0) {
-            // Seed role-based default permissions dynamically
-            const [uRows] = await db.query('SELECT role FROM users WHERE id = ?', [userId]).catch(() => [[]]);
-            const role = (uRows && uRows[0] && uRows[0].role) ? uRows[0].role.toLowerCase() : 'contributor';
-            
+        // Fetch all catalog keys for organization to ensure complete coverage
+        const [scannedDbApps] = await db.query(
+            'SELECT name FROM scanned_apps WHERE organization_id = ?',
+            [orgId]
+        ).catch(() => [[]]);
+
+        const [registeredApps] = await db.query(
+            'SELECT name FROM applications WHERE organization_id = ?',
+            [orgId]
+        ).catch(() => [[]]);
+
+        const catalogKeySet = new Set();
+        for (const appRow of [...(scannedDbApps || []), ...(registeredApps || [])]) {
+            const key = extractAppKey(appRow.name);
+            if (key) catalogKeySet.add(key);
+        }
+
+        // Add standard application key fallbacks
+        const standardKeys = [
+            'connecthub', 'docai', 'protrack', 'talenthq', 'evafusion', 'evaops',
+            'estevia-hub', 'protrack-frontend', 'talenthq-frontend', 'docai-frontend',
+            'evafusion-frontend', 'connecthub-frontend', 'estevia-marketing-web',
+            'platform-management', 'restaurant-frontend', 'evanet',
+            'estevia-backend', 'estevia-api', 'estevia-db-vm'
+        ];
+        standardKeys.forEach(k => catalogKeySet.add(k));
+        const allCatalogKeys = Array.from(catalogKeySet);
+
+        const existingAppKeys = new Set((rows || []).map(r => r.app_key));
+        const missingKeys = allCatalogKeys.filter(k => !existingAppKeys.has(k));
+
+        if (missingKeys.length > 0) {
             const defaultActions = (role === 'owner' || role === 'admin')
                 ? ['view', 'deploy', 'provision', 'cost_remediation', 'db_manage']
                 : (role === 'viewer')
                 ? ['view']
                 : ['view', 'deploy', 'provision', 'cost_remediation'];
 
-            const defaultApps = ['connecthub', 'docai', 'protrack', 'talenthq', 'evafusion', 'evaops'];
             const insertVals = [];
-            for (const appKey of defaultApps) {
+            for (const appKey of missingKeys) {
                 const envs = role === 'member' ? ['dev', 'qa'] : ['dev', 'qa', 'prod'];
                 for (const env of envs) {
                     insertVals.push([userId, orgId, appKey, env, JSON.stringify(defaultActions)]);
