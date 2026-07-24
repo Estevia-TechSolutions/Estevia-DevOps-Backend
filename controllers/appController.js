@@ -2294,6 +2294,12 @@ const appController = {
                     if (baseApp && basePipeline && (baseApp === basePipeline || baseApp.includes(basePipeline) || basePipeline.includes(baseApp))) {
                         return true;
                     }
+                    if (
+                        (cleanAppName.includes('evaops') || cleanAppName.includes('devops') || cleanAppName.includes('api-evaops')) &&
+                        (pName.includes('evaops') || pName.includes('devops') || pName.includes('backend-api') || pName.includes('evaops-backend'))
+                    ) {
+                        return true;
+                    }
                     if (cleanAppName.includes(`${ownerPrefix}-api`) && pName.includes('backend-api')) {
                         return true;
                     }
@@ -3531,6 +3537,12 @@ const appController = {
                         const basePipeline = pName.replace('-pipeline', '').replace('-ci-cd', '').replace('-frontend', '').replace('-backend', '').replace('-api', '');
 
                         if (baseApp && basePipeline && (baseApp === basePipeline || baseApp.includes(basePipeline) || basePipeline.includes(baseApp))) {
+                            return true;
+                        }
+                        if (
+                            (cleanAppName.includes('evaops') || cleanAppName.includes('devops') || cleanAppName.includes('api-evaops')) &&
+                            (pName.includes('evaops') || pName.includes('devops') || pName.includes('backend-api') || pName.includes('evaops-backend'))
+                        ) {
                             return true;
                         }
                         if (cleanAppName.includes(`${ownerPrefix}-api`) && pName.includes('backend-api')) {
