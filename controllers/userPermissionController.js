@@ -45,16 +45,18 @@ exports.getResourceCatalog = async (req, res) => {
                 resourceTypes: new Set()
             };
 
-            const typeStr = ((appRow.type || appRow.app_type || '') + ' ' + rawName).toLowerCase();
-            if (typeStr.includes('aca') || typeStr.includes('containerapp') || typeStr.includes('container') || typeStr.includes('backend') || typeStr.includes('api')) {
-                existing.resourceTypes.add('aca');
-                existing.icon = '📦';
-            } else if (typeStr.includes('vm') || typeStr.includes('virtualmachine') || typeStr.includes('virtual') || typeStr.includes('database') || typeStr.includes('db')) {
+            const rawType = (appRow.type || appRow.app_type || '').toLowerCase();
+            const rawNameLower = rawName.toLowerCase();
+
+            if (rawType.includes('vm') || rawType.includes('virtualmachine') || rawType.includes('database') || rawNameLower.includes('vm') || rawNameLower.includes('db-server')) {
                 existing.resourceTypes.add('vm');
                 existing.icon = '🖥️';
-            } else {
+            } else if (rawType.includes('swa') || rawType.includes('staticwebapp') || rawType.includes('frontend') || rawNameLower.includes('swa') || rawNameLower.includes('-web')) {
                 existing.resourceTypes.add('swa');
                 existing.icon = '🌐';
+            } else {
+                existing.resourceTypes.add('aca');
+                existing.icon = '📦';
             }
 
             catalogMap.set(key, existing);
