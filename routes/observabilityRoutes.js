@@ -19,4 +19,8 @@ router.get('/resource-catalog', protectOptional, userPermissionController.getRes
 router.get('/menu-permissions/:userId', protectOptional, observabilityController.getUserMenuPermissions);
 router.put('/menu-permissions/:userId', protectOptional, observabilityController.updateUserMenuPermissions);
 
+// Per-application Log Drawer Telemetry & Logs Endpoints
+router.get('/:appName/metrics', protectOptional, observabilityController.getAppMetrics);
+router.get('/:appName/logs', protectOptional, observabilityController.getAppLogs);
+
 module.exports = router;
