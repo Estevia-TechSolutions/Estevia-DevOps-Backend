@@ -191,6 +191,10 @@ async function main() {
             console.log('Adding column mfa_enabled to users...');
             await connection.query('ALTER TABLE users ADD COLUMN mfa_enabled TINYINT(1) DEFAULT 0');
         }
+        if (!userColNames.includes('theme')) {
+            console.log('Adding column theme to users...');
+            await connection.query("ALTER TABLE users ADD COLUMN theme VARCHAR(20) DEFAULT 'light'");
+        }
 
         // 3. Create integration_credentials table
         console.log('Creating integration_credentials table...');

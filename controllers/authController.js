@@ -89,10 +89,11 @@ async function completeLoginSession(user, loginMethod, req, res, mfaVerified = f
             }
         }
 
-        // Fetch user's latest MFA status
-        const [users] = await db.query('SELECT mfa_enabled, mfa_secret, mfa_registered_name, mfa_registered_issuer FROM users WHERE id = ?', [user.id]);
+        // Fetch user's latest MFA status & theme
+        const [users] = await db.query('SELECT mfa_enabled, mfa_secret, mfa_registered_name, mfa_registered_issuer, theme FROM users WHERE id = ?', [user.id]);
         const dbUser = users[0] || {};
         const mfaEnabled = dbUser.mfa_enabled || 0;
+        user.theme = dbUser.theme || 'light';
 
         // Determine if MFA is enforced for this login method (bypass is always exempt)
         let mfaRequired = false;
@@ -1460,5 +1461,18 @@ module.exports = {
     validateEmailMfaOtp: exports.validateEmailMfaOtp,
     generateMfaRecoveryCodes: exports.generateMfaRecoveryCodes,
     validateMfaRecoveryCode: exports.validateMfaRecoveryCode,
-    updatePreferredMfaMethod: exports.updatePreferredMfaMethod
+    updatePreferredMfaMethod: exports.updatePreferredMfaMethod,
+    updateUserTheme: async (req, res) => {
+        try {
+            const { theme } = req.body;
+            const userId = req.user.id;
+            const validTheme = theme === 'dark' ? 'dark' : 'light';
+
+            await db.execute('UPDATE users SET theme = ? WHERE id = ?', [validTheme, userId]);
+            return res.json({ success: true, theme: validTheme });
+        } catch (err) {
+            console.error('[updateUserTheme] Error:', err);
+            return res.status(500).json({ message: 'Server error updating theme preference' });
+        }
+    }
 };
