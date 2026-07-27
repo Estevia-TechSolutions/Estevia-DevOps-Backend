@@ -2059,6 +2059,7 @@ const appController = {
         categoryApps.forEach(app => {
             if (!app.repositoryUrl) {
                 let deducedName = app.name.toLowerCase()
+                    .replace(/^estevia-/, '')
                     .replace(/-dev$/, '')
                     .replace(/-qa$/, '')
                     .replace(/-prod$/, '')
@@ -2068,14 +2069,14 @@ const appController = {
                     app.repositoryUrl = `https://github.com/${githubOwner}/estevia-restaurant-backend`;
                 } else if (deducedName.includes('restaurant-frontend') || deducedName.includes('restaurant-front')) {
                     app.repositoryUrl = `https://github.com/${githubOwner}/estevia-restaurant-frontend`;
-                } else if (deducedName.includes('backend-api') || deducedName === 'estevia-api') {
+                } else if (deducedName.includes('backend-api') || deducedName === 'api') {
                     app.repositoryUrl = `https://github.com/${githubOwner}/estevia-backend-api`;
                 } else if (deducedName.includes('platform-management')) {
                     app.repositoryUrl = `https://github.com/${githubOwner}/estevia-platform-management`;
                 } else if (deducedName.includes('devops-backend')) {
-                    app.repositoryUrl = `https://github.com/${githubOwner}/estevia-devops-backend`;
-                } else if (deducedName.includes('devops-frontend')) {
-                    app.repositoryUrl = `https://github.com/${githubOwner}/estevia-devops-frontend`;
+                    app.repositoryUrl = `https://github.com/${githubOwner}/Estevia-DevOps-Backend`;
+                } else if (deducedName.includes('devops-frontend') || deducedName === 'evaops') {
+                    app.repositoryUrl = `https://github.com/${githubOwner}/Estevia-DevOps-Frontend`;
                 } else if (deducedName.includes('evanet')) {
                     app.repositoryUrl = `https://github.com/${githubOwner}/evanet-frontend`;
                 } else {
