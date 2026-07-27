@@ -545,6 +545,20 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
     const ownerPrefix = githubOwner.toLowerCase().replace('-techsolutions', '').replace('-solutions', '').split('-')[0];
     const cleanAppName = appName.toLowerCase();
 
+    // 0. Direct match pass: Strip env suffixes (-dev, -qa, -prod, -swa) and check if it matches exact repo name
+    const appEnvStripped = cleanAppName
+        .replace(new RegExp(`^${ownerPrefix}-`), '')
+        .replace(/-swa$/, '')
+        .replace(/-(dev|qa|prod|production)$/, '');
+
+    for (const repo of reposList) {
+        const repoNameLower = repo.name.toLowerCase();
+        const repoClean = repoNameLower.replace(new RegExp(`^${ownerPrefix}-`), '');
+        if (appEnvStripped === repoNameLower || appEnvStripped === repoClean) {
+            return repo.html_url || repo.url || `https://github.com/${githubOwner}/${repo.name}`;
+        }
+    }
+
     // 1. Strip environment/type suffixes and organization prefixes from app name to get base name
     let baseApp = cleanAppName
         .replace(new RegExp(`^${ownerPrefix}-`), '') // strip "estevia-" prefix
