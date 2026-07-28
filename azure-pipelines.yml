@@ -46,17 +46,20 @@ stages:
         npm test
       displayName: 'Run tests'
 
-    - task: Docker@2
+    - task: AzureCLI@2
       displayName: 'Build and Push Image to ACR'
       inputs:
-        # Service connection scoped to Estevia-Platform-Subscription ACR
-        containerRegistry: 'estevia-platform-acr-sc'
-        repository: '$(imageRepository)'
-        command: 'buildAndPush'
-        Dockerfile: 'Dockerfile'
-        tags: |
-          $(Build.BuildId)
-          latest
+        azureSubscription: 'estevia-platform-sc'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az acr login --name esteviaplatformregistry
+          docker build \
+            -t $(containerRegistry)/$(imageRepository):$(Build.BuildId) \
+            -t $(containerRegistry)/$(imageRepository):latest \
+            -f Dockerfile .
+          docker push $(containerRegistry)/$(imageRepository):$(Build.BuildId)
+          docker push $(containerRegistry)/$(imageRepository):latest
 
 - stage: DeployToAzure
   displayName: 'Deploy Container App'
