@@ -34,7 +34,7 @@ stages:
   - job: Build
     displayName: 'Build and Push'
     pool:
-      vmImage: 'ubuntu-latest'
+      name: 'Estevia-Self-Hosted'
     steps:
     - task: NodeTool@0
       inputs:
@@ -65,7 +65,7 @@ stages:
   - deployment: Deploy
     displayName: 'Update Azure Container App'
     pool:
-      vmImage: 'ubuntu-latest'
+      name: 'Estevia-Self-Hosted'
     environment: 'production'
     strategy:
       runOnce:
