@@ -18,14 +18,14 @@ trigger:
 # ============================================================
 
 variables:
-  # ACR login server — update if registry changes
-  containerRegistry: 'esteviacoreregistry.azurecr.io'
+  # ACR login server (Estevia-Platform-Subscription registry)
+  containerRegistry: 'esteviaplatformregistry.azurecr.io'
   # Docker image name in ACR
   imageRepository: 'api-evaops'
   # Azure Container App resource name
   containerAppName: 'api-evaops'
-  # Azure Resource Group containing the Container App
-  resourceGroup: 'Estevia-Prod-RG'
+  # Azure Resource Group containing the Container App (Platform subscription)
+  resourceGroup: 'Estevia-Platform-RG'
 
 stages:
 - stage: BuildAndPush
@@ -49,8 +49,8 @@ stages:
     - task: Docker@2
       displayName: 'Build and Push Image to ACR'
       inputs:
-        # Service connection name — literal required (Azure DevOps parse-time validation)
-        containerRegistry: 'estevia-acr-sc'
+        # Service connection scoped to Estevia-Platform-Subscription ACR
+        containerRegistry: 'estevia-platform-acr-sc'
         repository: '$(imageRepository)'
         command: 'buildAndPush'
         Dockerfile: 'Dockerfile'
@@ -74,8 +74,8 @@ stages:
           - task: AzureCLI@2
             displayName: 'Deploy to Azure Container Apps'
             inputs:
-              # Service connection name — literal required (Azure DevOps parse-time validation)
-              azureSubscription: 'protrack-azure-sc'
+              # Service connection scoped to Estevia-Platform-Subscription
+              azureSubscription: 'estevia-platform-sc'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
@@ -83,4 +83,5 @@ stages:
                 az containerapp update --container-name api-evaops \
                   --name $(containerAppName) \
                   --resource-group $(resourceGroup) \
+                  --subscription 4a551976-35a8-4305-b128-fe592805be41 \
                   --image $(containerRegistry)/$(imageRepository):$(Build.BuildId)
