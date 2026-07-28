@@ -483,9 +483,9 @@ const getEnvType = (name, branch) => {
 
 const MASTER_ORGANIZATION_ID = process.env.MASTER_ORGANIZATION_ID || 'estevia';
 
-// Default Fallbacks — subscription/RG are now resolved dynamically; no hardcoded IDs.
-const SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID || null;
-const RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP || null;
+// Default Fallbacks
+const SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID || 'a812e8e3-34f9-4773-82ee-6398869533b0';
+const RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP || 'Estevia-Prod-RG';
 const DEFAULT_DOMAIN = process.env.DEFAULT_DOMAIN || 'esteviatech.com';
 
 // GitHub APIs Caches to avoid secondary rate limiting under rapid polling
@@ -2051,74 +2051,6 @@ const appController = {
     },
 
     /**
-     * Dynamically discovers all (subscriptionId, resourceGroup) scan targets for an organization.
-     * Reads AZURE_SUBSCRIPTION_IDS env var (comma-separated) + org settings subscription,
-     * then queries ARM to list all resource groups on each subscription, filtering to Estevia RGs.
-     * Falls back to the org-configured RG if ARM listing fails.
-     */
-    _discoverScanTargets: async (organizationId, orgSettings) => {
-        const primarySubId = orgSettings.azure_subscription_id || null;
-        const primaryRG = orgSettings.azure_resource_group || null;
-
-        // Build unique list of subscription IDs to scan
-        const envSubIds = (process.env.AZURE_SUBSCRIPTION_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-        const allSubIds = [...new Set([primarySubId, ...envSubIds].filter(Boolean))];
-
-        if (allSubIds.length === 0) {
-            console.warn('[AppController] _discoverScanTargets: No subscription IDs configured — scanner will return empty.');
-            return [];
-        }
-
-        const targets = [];
-        let credential;
-        try {
-            credential = await getAzureCredential(organizationId);
-        } catch (err) {
-            console.error('[AppController] _discoverScanTargets: Failed to get Azure credential:', err.message);
-            // Fallback to primary configured target
-            if (primarySubId && primaryRG) targets.push({ subscriptionId: primarySubId, resourceGroup: primaryRG });
-            return targets;
-        }
-
-        await Promise.all(allSubIds.map(async (subId) => {
-            try {
-                const tokenRes = await credential.getToken('https://management.azure.com/.default');
-                const token = tokenRes.token;
-                const rgUrl = `https://management.azure.com/subscriptions/${subId}/resourceGroups?api-version=2021-04-01`;
-                const rgRes = await axios.get(rgUrl, {
-                    headers: { 'Authorization': `Bearer ${token}` },
-                    timeout: 10000
-                });
-                const rgs = (rgRes.data?.value || [])
-                    .filter(rg => /estevia/i.test(rg.name) && rg.properties?.provisioningState === 'Succeeded')
-                    .map(rg => ({ subscriptionId: subId, resourceGroup: rg.name }));
-
-                if (rgs.length > 0) {
-                    targets.push(...rgs);
-                    console.log(`[AppController] _discoverScanTargets: Found ${rgs.length} RG(s) on sub ${subId}: ${rgs.map(r => r.resourceGroup).join(', ')}`);
-                } else if (subId === primarySubId && primaryRG) {
-                    // No Estevia RGs found on primary sub — fall back to configured RG
-                    targets.push({ subscriptionId: subId, resourceGroup: primaryRG });
-                }
-            } catch (err) {
-                console.warn(`[AppController] _discoverScanTargets: Failed to list RGs for sub ${subId}:`, err.message);
-                if (subId === primarySubId && primaryRG) {
-                    targets.push({ subscriptionId: subId, resourceGroup: primaryRG });
-                }
-            }
-        }));
-
-        // Deduplicate by subscriptionId+resourceGroup key
-        const seen = new Set();
-        return targets.filter(t => {
-            const key = `${t.subscriptionId}:${t.resourceGroup}`;
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-        });
-    },
-
-    /**
      * Helper to resolve, map and save a specific category of apps to DB incrementally.
      * Prevents locking up the main scan process and allows progressive updates.
      */
@@ -2686,10 +2618,10 @@ const appController = {
 
             const orgSettings = await appController._getOrgSettings(organizationId, true);
 
-            const defaultDomain = orgSettings.default_dns_domain || DEFAULT_DOMAIN;
-            const githubOwner = orgSettings.github_owner || 'Estevia-TechSolutions';
             const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
             const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
+            const defaultDomain = orgSettings.default_dns_domain || DEFAULT_DOMAIN;
+            const githubOwner = orgSettings.github_owner || 'Estevia-TechSolutions';
 
             // Cached request check
             if (req.query.cached === 'true') {
