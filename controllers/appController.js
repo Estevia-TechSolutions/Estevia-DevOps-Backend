@@ -2658,17 +2658,17 @@ const appController = {
             }
         }));
 
-        // Category Pruning logic
+        // Category Pruning logic restricted to target resource group
         const scannedNames = categoryApps.map(a => a.name);
         if (scannedNames.length > 0) {
             await db.query(
-                'DELETE FROM applications WHERE organization_id = ? AND app_type = ? AND name NOT IN (?)',
-                [organizationId, category, scannedNames]
+                "DELETE FROM applications WHERE organization_id = ? AND app_type = ? AND JSON_UNQUOTE(JSON_EXTRACT(azure_resource_details, '$.resourceGroup')) = ? AND name NOT IN (?)",
+                [organizationId, category, resourceGroup, scannedNames]
             );
         } else {
             await db.query(
-                'DELETE FROM applications WHERE organization_id = ? AND app_type = ?',
-                [organizationId, category]
+                "DELETE FROM applications WHERE organization_id = ? AND app_type = ? AND JSON_UNQUOTE(JSON_EXTRACT(azure_resource_details, '$.resourceGroup')) = ?",
+                [organizationId, category, resourceGroup]
             );
         }
     },
@@ -3102,10 +3102,31 @@ const appController = {
 
             const repoHasGithubActionsMap = new Map();
             const credential = await getAzureCredential(organizationId);
-            const webClient = new WebSiteManagementClient(credential, subscriptionId);
-            const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
-
             const apps = [];
+
+            const targets = [];
+            if (req.query.targets) {
+                try {
+                    targets.push(...JSON.parse(req.query.targets));
+                } catch (e) {
+                    console.warn('[AppController] Failed to parse targets query parameter:', e.message);
+                }
+            }
+            if (targets.length === 0) {
+                const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
+                targets.push(...discovered);
+            }
+            if (targets.length === 0) {
+                targets.push({ subscriptionId, resourceGroup });
+            }
+
+            for (const target of targets) {
+                const subscriptionId = target.subscriptionId;
+                const resourceGroup = target.resourceGroup;
+                console.log(`[AppController] Scanning target sub: ${subscriptionId}, RG: ${resourceGroup}`);
+
+                const webClient = new WebSiteManagementClient(credential, subscriptionId);
+                const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
 
             // 1. Fetch Static Web Apps (Frontends)
             const swaApps = [];
@@ -3435,6 +3456,7 @@ const appController = {
                 apps.push(...aksApps);
             } catch (err) {
                 console.error('[AppController] Error scanning AKS clusters:', err.message);
+            }
             }
 
 
@@ -7116,7 +7138,12 @@ const appController = {
                 : (app.azure_resource_details || {});
 
             const orgSettings = await appController._getOrgSettings(orgId);
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            let subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resId = azureDetails.resourceId || '';
+            const subIdMatch = resId.match(/\/subscriptions\/([^\/]+)/i);
+            if (subIdMatch) {
+                subscriptionId = subIdMatch[1];
+            }
             const resourceGroup = azureDetails.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             const isDevMode = !process.env.AZURE_CLIENT_ID;
@@ -9406,22 +9433,85 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         try {
             const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
             const orgSettings = await appController._getOrgSettings(organizationId);
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
 
-            const resourceGroups = [];
-            try {
-                const credential = await getAzureCredential(organizationId);
-                const client = new ResourceManagementClient(credential, subscriptionId);
-                for await (const rg of client.resourceGroups.list()) {
-                    resourceGroups.push(rg.name);
-                }
-            } catch (azureErr) {
-                console.warn('[AppController] Live Azure resource groups list failed, using configured fallback group:', azureErr.message);
-                resourceGroups.push(resourceGroup);
+            const primarySubId = orgSettings.azure_subscription_id || null;
+            const envSubIds = (process.env.AZURE_SUBSCRIPTION_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+            const allSubIds = [...new Set([primarySubId, ...envSubIds].filter(Boolean))];
+
+            if (allSubIds.length === 0) {
+                return res.json({ success: true, subscriptions: [] });
             }
 
-            res.json({ success: true, resourceGroups });
+            const credential = await getAzureCredential(organizationId);
+            const tokenRes = await credential.getToken("https://management.azure.com/.default");
+            const token = tokenRes.token;
+
+            // Fetch cached apps for fallback resource groups
+            const [dbApps] = await db.query('SELECT azure_resource_details FROM applications WHERE organization_id = ?', [organizationId]);
+            const cachedRGsBySub = {};
+            for (const app of dbApps) {
+                try {
+                    const details = typeof app.azure_resource_details === 'string'
+                        ? JSON.parse(app.azure_resource_details || '{}')
+                        : (app.azure_resource_details || {});
+                    const rg = details.resourceGroup;
+                    const resId = details.resourceId || '';
+                    const subIdMatch = resId.match(/\/subscriptions\/([^\/]+)/i);
+                    if (rg && subIdMatch) {
+                        const subId = subIdMatch[1];
+                        if (!cachedRGsBySub[subId]) cachedRGsBySub[subId] = new Set();
+                        cachedRGsBySub[subId].add(rg);
+                    }
+                } catch (e) {}
+            }
+
+            const subscriptions = [];
+
+            await Promise.all(allSubIds.map(async (subId) => {
+                let displayName = subId;
+                let status = 'active';
+                const rgs = new Set();
+
+                // Fallback: add org-configured resource group if it matches this subId
+                if (subId === primarySubId && orgSettings.azure_resource_group) {
+                    rgs.add(orgSettings.azure_resource_group);
+                }
+
+                // Add database cached resource groups for this subscription
+                if (cachedRGsBySub[subId]) {
+                    cachedRGsBySub[subId].forEach(rg => rgs.add(rg));
+                }
+
+                try {
+                    // Get subscription details (display name)
+                    const subUrl = `https://management.azure.com/subscriptions/${subId}?api-version=2020-01-01`;
+                    const subRes = await axios.get(subUrl, {
+                        headers: { 'Authorization': `Bearer ${token}` },
+                        timeout: 5000
+                    });
+                    displayName = subRes.data?.displayName || subId;
+
+                    // List live resource groups
+                    const client = new ResourceManagementClient(credential, subId);
+                    for await (const rg of client.resourceGroups.list()) {
+                        if (rg.name) {
+                            rgs.add(rg.name);
+                        }
+                    }
+                } catch (err) {
+                    console.warn(`[AppController] Live details/RGs fetch failed for sub ${subId}:`, err.message);
+                    status = 'offline';
+                }
+
+                subscriptions.push({
+                    id: subId,
+                    displayName,
+                    status,
+                    resourceGroups: [...rgs]
+                });
+            }));
+
+            res.json({ success: true, subscriptions });
         } catch (error) {
             console.error('[AppController] getResourceGroups failed:', error);
             res.status(500).json({ message: 'Failed to retrieve subscription resource groups.', error: error.message });
@@ -10343,15 +10433,34 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
             const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
+            const targets = [];
+            if (req.query.targets) {
+                try {
+                    targets.push(...JSON.parse(req.query.targets));
+                } catch (e) {
+                    console.warn('[AppController] Failed to parse targets query parameter:', e.message);
+                }
+            }
+            if (targets.length === 0) {
+                const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
+                targets.push(...discovered);
+            }
+            if (targets.length === 0) {
+                targets.push({ subscriptionId, resourceGroup });
+            }
+
             const resources = [];
             try {
                 const credential = await getAzureCredential(organizationId);
-                const tokenRes = await credential.getToken("https://management.azure.com/.default");
-                const token = tokenRes.token;
-
-                const resourceClient = new ResourceManagementClient(credential, subscriptionId);
-                for await (const r of resourceClient.resources.listByResourceGroup(resourceGroup)) {
-                    resources.push(r);
+                for (const target of targets) {
+                    try {
+                        const resourceClient = new ResourceManagementClient(credential, target.subscriptionId);
+                        for await (const r of resourceClient.resources.listByResourceGroup(target.resourceGroup)) {
+                            resources.push(r);
+                        }
+                    } catch (targetErr) {
+                        console.warn(`[AppController] getCompliance: Failed to list resources for sub ${target.subscriptionId}, RG ${target.resourceGroup}:`, targetErr.message);
+                    }
                 }
             } catch (err) {
                 console.warn('[AppController] Live Azure compliance scanning unavailable, falling back to local database records:', err.message);
