@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const incidentScanner = require('../utils/incidentScanner');
 
 const getScopedAppKeys = async (orgId, targetSubId, targetRg) => {
     if (!targetSubId && !targetRg) return null; // No filtering needed
@@ -193,9 +194,11 @@ exports.getMetrics = async (req, res) => {
                 `, [organization_id, targetApp, targetType, environment, cpu, mem, reqs, lat, lat99, errs, replicas, dbConns, netIn, netOut, storage, iops, new Date(recordedTime)]).catch(() => {});
             }
 
+            incidentScanner.runIncidentScanCycle().catch(() => {});
             return res.json({ success: true, count: generatedMetrics.length, metrics: generatedMetrics });
         }
 
+        incidentScanner.runIncidentScanCycle().catch(() => {});
         return res.json({ success: true, count: rows.length, metrics: rows });
     } catch (err) {
         console.error('[ObservabilityController] Error fetching metrics:', err);

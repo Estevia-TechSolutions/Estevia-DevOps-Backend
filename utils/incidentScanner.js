@@ -207,4 +207,4 @@ const startIncidentScanner = () => {
     setInterval(runIncidentScanCycle, 60000);
 };
 
-module.exports = { startIncidentScanner };
+module.exports = { startIncidentScanner, runIncidentScanCycle };
