@@ -18,25 +18,31 @@ const connectToDb = async (host, database, cred = {}, timeoutMs = 8000) => {
             ssl: { require: true, rejectUnauthorized: false }
         });
     } catch (sslErr) {
-        // Auto-create database if unknown database error occurs (AGENTS.md Rule 2)
+        // Auto-create database if unknown database error occurs on a matching host (AGENTS.md Rule 2)
         if (database && (sslErr.code === 'ER_BAD_DB_ERROR' || sslErr.errno === 1049 || sslErr.message?.includes('Unknown database'))) {
-            try {
-                console.log(`[DBHub Auto-Init] Database '${database}' missing on host ${host}. Creating database...`);
-                const adminConn = await mysql.createConnection({
-                    ...connOpts,
-                    database: undefined,
-                    ssl: { require: true, rejectUnauthorized: false }
-                });
-                await adminConn.query(`CREATE DATABASE IF NOT EXISTS \`${database}\``);
-                await adminConn.end();
-                return await mysql.createConnection({
-                    ...connOpts,
-                    ssl: { require: true, rejectUnauthorized: false }
-                });
-            } catch (createErr) {
-                console.warn(`[DBHub Auto-Init Failed] Could not auto-create database '${database}' on host ${host}:`, createErr.message);
-                throw sslErr;
+            const dPrefix = database.toLowerCase().split('_')[0];
+            const hPrefix = host.toLowerCase().split('.')[0];
+
+            if (dPrefix && dPrefix.length > 2 && hPrefix.includes(dPrefix)) {
+                try {
+                    console.log(`[DBHub Auto-Init] Database '${database}' missing on host ${host}. Creating database...`);
+                    const adminConn = await mysql.createConnection({
+                        ...connOpts,
+                        database: undefined,
+                        ssl: { require: true, rejectUnauthorized: false }
+                    });
+                    await adminConn.query(`CREATE DATABASE IF NOT EXISTS \`${database}\``);
+                    await adminConn.end();
+                    return await mysql.createConnection({
+                        ...connOpts,
+                        ssl: { require: true, rejectUnauthorized: false }
+                    });
+                } catch (createErr) {
+                    console.warn(`[DBHub Auto-Init Failed] Could not auto-create database '${database}' on host ${host}:`, createErr.message);
+                    throw sslErr;
+                }
             }
+            throw sslErr;
         }
         console.warn(`[DBHub SSL Fallback] Direct SSL connection failed for host ${host}, retrying without SSL. Error: ${sslErr.message}`);
         return await mysql.createConnection(connOpts);
@@ -47,20 +53,19 @@ const queryDbHelper = async (host, database, sql, params = [], organizationId = 
     const appController = require('./appController');
     const uniqueHosts = await appController._getDbHostCandidates(organizationId, host, database);
 
-    // Prioritize candidate hosts that match the target database or host pattern
-    const sortedHosts = [...uniqueHosts].sort((a, b) => {
-        const aLow = a.toLowerCase();
-        const bLow = b.toLowerCase();
-        const dLow = (database || '').toLowerCase();
-        const hLow = (host || '').toLowerCase();
+    // Dynamic Token-Based Scoring (Zero Hardcoding)
+    const dLow = (database || '').toLowerCase().split('_')[0];
+    const rawHost = (host || '').toLowerCase().split('.')[0];
 
-        const matchA = (dLow && aLow.includes(dLow.split('_')[0])) || (hLow && aLow.includes(hLow.split('.')[0]));
-        const matchB = (dLow && bLow.includes(dLow.split('_')[0])) || (hLow && bLow.includes(hLow.split('.')[0]));
+    const scoreHost = (h) => {
+        let score = 0;
+        const hLow = (h || '').toLowerCase();
+        if (dLow && dLow.length > 2 && hLow.includes(dLow)) score += 10;
+        if (rawHost && rawHost.length > 2 && hLow.includes(rawHost)) score += 5;
+        return score;
+    };
 
-        if (matchA && !matchB) return -1;
-        if (!matchA && matchB) return 1;
-        return 0;
-    });
+    const sortedHosts = [...uniqueHosts].sort((a, b) => scoreHost(b) - scoreHost(a));
 
     let lastDirectErr = null;
     for (const h of sortedHosts) {

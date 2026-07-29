@@ -9242,19 +9242,18 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const uniqueHosts = await appController._getDbHostCandidates(organizationId, req.query.host || serverName, dbName);
 
             let conn = null;
-            const sortedHosts = [...uniqueHosts].sort((a, b) => {
-                const aLow = a.toLowerCase();
-                const bLow = b.toLowerCase();
-                const dLow = (dbName || '').toLowerCase();
-                const rawHost = (req.query.host || serverName || '').toLowerCase();
+            const dLow = (dbName || '').toLowerCase().split('_')[0];
+            const rawHost = (req.query.host || serverName || '').toLowerCase().split('.')[0];
 
-                const matchA = (dLow && aLow.includes(dLow.split('_')[0])) || (rawHost && aLow.includes(rawHost.split('.')[0]));
-                const matchB = (dLow && bLow.includes(dLow.split('_')[0])) || (rawHost && bLow.includes(rawHost.split('.')[0]));
+            const scoreHost = (h) => {
+                let score = 0;
+                const hLow = (h || '').toLowerCase();
+                if (dLow && dLow.length > 2 && hLow.includes(dLow)) score += 10;
+                if (rawHost && rawHost.length > 2 && hLow.includes(rawHost)) score += 5;
+                return score;
+            };
 
-                if (matchA && !matchB) return -1;
-                if (!matchA && matchB) return 1;
-                return 0;
-            });
+            const sortedHosts = [...uniqueHosts].sort((a, b) => scoreHost(b) - scoreHost(a));
 
             let lastErr = null;
             for (const h of sortedHosts) {
