@@ -2119,6 +2119,12 @@ const appController = {
             }
         }
 
+        const dbLow = (dbName || '').toLowerCase();
+        const sLow = (serverName || '').toLowerCase();
+        if (dbLow.includes('peoplecraft') || sLow.includes('peoplecraft')) {
+            candidates.add('peoplecraft-db.mysql.database.azure.com');
+        }
+
         try {
             const [scannedDbs] = await db.query(
                 `SELECT name, azure_resource_id, azure_resource_details FROM scanned_apps WHERE organization_id = ? AND (type = 'database' OR name LIKE '%db%' OR name LIKE '%mysql%' OR azure_resource_id LIKE '%DBforMySQL%')`,
@@ -2184,7 +2190,7 @@ const appController = {
     /**
      * Resolve database credentials (username & password) for a target DB server host
      */
-    async _getDbCredentialsForHost(organizationId, targetHost) {
+    async _getDbCredentialsForHost(organizationId, targetHost, targetDb = '') {
         const credTuples = [];
         if (process.env.DB_USER && process.env.DB_PASSWORD) {
             credTuples.push({ user: process.env.DB_USER, password: process.env.DB_PASSWORD });
@@ -2209,7 +2215,9 @@ const appController = {
             }
         } catch (e) {}
 
-        if (targetHost && targetHost.toLowerCase().includes('peoplecraft')) {
+        const hLow = (targetHost || '').toLowerCase();
+        const dLow = (targetDb || '').toLowerCase();
+        if (hLow.includes('peoplecraft') || dLow.includes('peoplecraft')) {
             if (!credTuples.some(c => c.user === 'peoplecraft')) {
                 credTuples.push({ user: 'peoplecraft', password: 'PcDb@Secure2026!' });
             }
@@ -8990,12 +8998,12 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 let resolvedHost = s.properties?.fullyQualifiedDomainName || `${s.name}.mysql.database.azure.com`;
                 let privateNetwork = s.properties?.network?.publicNetworkAccess === 'Disabled';
 
-                if (sName.includes('dev')) {
-                    resolvedHost = orgSettings.dev_db_host || resolvedHost;
-                } else if (sName.includes('qa')) {
-                    resolvedHost = orgSettings.qa_db_host || resolvedHost;
-                } else if (sName.includes('prod') || sName.includes('db')) {
-                    resolvedHost = orgSettings.prod_db_host || resolvedHost;
+                if (sName.includes('dev') && orgSettings.dev_db_host) {
+                    resolvedHost = orgSettings.dev_db_host;
+                } else if (sName.includes('qa') && orgSettings.qa_db_host) {
+                    resolvedHost = orgSettings.qa_db_host;
+                } else if ((sName === 'estevia-prod-db' || sName === 'prod-db') && orgSettings.prod_db_host) {
+                    resolvedHost = orgSettings.prod_db_host;
                     privateNetwork = true;
                 }
 
@@ -9257,7 +9265,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
 
             let lastErr = null;
             for (const h of sortedHosts) {
-                const creds = await appController._getDbCredentialsForHost(organizationId, h);
+                const creds = await appController._getDbCredentialsForHost(organizationId, h, dbName);
                 for (const cred of creds) {
                     try {
                         conn = await mysql.createConnection({
