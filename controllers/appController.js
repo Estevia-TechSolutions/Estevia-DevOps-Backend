@@ -648,13 +648,18 @@ async function getAzureCredential(organizationId) {
         if (!azureSecrets && organizationId !== MASTER_ORGANIZATION_ID) {
             azureSecrets = await credentialController.getDecryptedCredentialsInternal(MASTER_ORGANIZATION_ID, 'azure').catch(() => null);
         }
-        if (azureSecrets && azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
-            console.log(`[AzureAuth] Using ClientSecretCredential for organization: ${organizationId}`);
-            creds.push(new ClientSecretCredential(
-                azureSecrets.tenantId,
-                azureSecrets.clientId,
-                azureSecrets.clientSecret
-            ));
+        if (azureSecrets) {
+            if (azureSecrets.type === 'managed_identity' || azureSecrets.clientId === 'SYSTEM_MANAGED_IDENTITY') {
+                console.log(`[AzureAuth] Using DefaultAzureCredential (Managed Identity) for organization: ${organizationId}`);
+                creds.push(new DefaultAzureCredential());
+            } else if (azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
+                console.log(`[AzureAuth] Using ClientSecretCredential for organization: ${organizationId}`);
+                creds.push(new ClientSecretCredential(
+                    azureSecrets.tenantId,
+                    azureSecrets.clientId,
+                    azureSecrets.clientSecret
+                ));
+            }
         }
     } catch (err) {
         console.warn(`[AzureAuth] Failed to retrieve Azure credentials for organization ${organizationId}:`, err.message);
