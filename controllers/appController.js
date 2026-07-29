@@ -53,11 +53,12 @@ function parseBackendUrlFromPipelineContent(content, envType) {
 }
 
 function parseDbHostFromEnvContent(content) {
+    if (!content) return null;
     const lines = content.split('\n');
     for (const line of lines) {
         const trimmed = line.trim();
         if (trimmed.startsWith('#')) continue;
-        const match = trimmed.match(/^(?:DB_HOST)\s*=\s*['"]?([^\s'"]+)['"]?/);
+        const match = trimmed.match(/^(?:DB_HOST|DATABASE_HOST|DB_SERVER|MYSQL_HOST|DB_HOSTNAME|DATABASE_URL)\s*=\s*['"]?([^\s'"]+)['"]?/i);
         if (match) {
             return match[1];
         }
@@ -66,7 +67,8 @@ function parseDbHostFromEnvContent(content) {
 }
 
 function parseDbHostFromPipelineContent(content) {
-    const matches = content.match(/DB_HOST\s*[:=]\s*['"]?([a-zA-Z0-9.-]+\.database\.azure\.com|[a-zA-Z0-9.-]+)['"]?/g) || [];
+    if (!content) return null;
+    const matches = content.match(/(?:DB_HOST|DATABASE_HOST|DB_SERVER|MYSQL_HOST|DB_HOSTNAME)\s*[:=]\s*['"]?([a-zA-Z0-9.-]+\.database\.azure\.com|[a-zA-Z0-9.-]+)['"]?/gi) || [];
     for (const m of matches) {
         const host = m.split(/[:=]/)[1].replace(/['"]/g, '').trim();
         if (host) return host;
@@ -406,9 +408,10 @@ async function scrapeDbHostFromARM(appName, organizationId, subscriptionId, reso
         let envVars = [];
         let containerName = '';
 
+        const dbKeys = ['DB_HOST', 'DATABASE_HOST', 'DB_SERVER', 'MYSQL_HOST', 'DB_HOSTNAME'];
         for (const container of containers) {
             if (container.env) {
-                const found = container.env.find(e => e.name === 'DB_HOST');
+                const found = container.env.find(e => e.name && dbKeys.includes(e.name.toUpperCase()));
                 if (found) {
                     dbHostVar = found;
                     envVars = container.env;
@@ -959,7 +962,12 @@ const appController = {
         const [apps] = await db.query(
             'SELECT id, name, app_type, status, azure_resource_details, godaddy_dns_details, repo_url FROM applications WHERE organization_id = ?',
             [organizationId]
-        );
+        ).catch(() => [[]]);
+
+        const [scannedDbApps] = await db.query(
+            'SELECT name, type, azure_resource_id FROM scanned_apps WHERE organization_id = ?',
+            [organizationId]
+        ).catch(() => [[]]);
 
         // Retrieve organization configuration settings
         const orgSettings = await appController._getOrgSettings(organizationId);
@@ -967,22 +975,55 @@ const appController = {
         const resourceGroup = targetRg || orgSettings.azure_resource_group || RESOURCE_GROUP;
         const defaultDomain = orgSettings.default_dns_domain || DEFAULT_DOMAIN;
 
-        // Filter applications to match target subscription and resource group
-        const filteredApps = apps.filter(app => {
+        // Filter applications to match target subscription and resource group strictly
+        const filteredApps = (apps || []).filter(app => {
             const azureDetails = typeof app.azure_resource_details === 'string'
                 ? JSON.parse(app.azure_resource_details || '{}')
                 : (app.azure_resource_details || {});
             
-            const rg = azureDetails.resourceGroup || resourceGroup;
+            let rg = azureDetails.resourceGroup;
             let subId = null;
             if (azureDetails.resourceId) {
-                const match = azureDetails.resourceId.match(/\/subscriptions\/([^\/]+)\/resourceGroups/i);
-                if (match) subId = match[1];
+                const match = azureDetails.resourceId.match(/\/subscriptions\/([^\/]+)\/resourceGroups\/([^\/]+)/i);
+                if (match) {
+                    subId = match[1];
+                    rg = match[2];
+                }
             }
-            subId = subId || subscriptionId;
 
-            return subId.toLowerCase() === subscriptionId.toLowerCase() && rg.toLowerCase() === resourceGroup.toLowerCase();
+            // If subscription ID is explicitly set on the resource, verify strict match
+            if (subId && subId.toLowerCase() !== subscriptionId.toLowerCase()) {
+                return false;
+            }
+            if (targetRg && rg && rg.toLowerCase() !== targetRg.toLowerCase()) {
+                return false;
+            }
+            return true;
         });
+
+        // Combine matched scanned_apps
+        for (const scannedApp of (scannedDbApps || [])) {
+            let subId = null;
+            let rg = null;
+            if (scannedApp.azure_resource_id) {
+                const match = scannedApp.azure_resource_id.match(/\/subscriptions\/([^\/]+)\/resourceGroups\/([^\/]+)/i);
+                if (match) {
+                    subId = match[1];
+                    rg = match[2];
+                }
+            }
+            if (subId && subId.toLowerCase() === subscriptionId.toLowerCase()) {
+                if (!targetRg || (rg && rg.toLowerCase() === targetRg.toLowerCase())) {
+                    if (!filteredApps.some(a => a.name === scannedApp.name)) {
+                        filteredApps.push({
+                            name: scannedApp.name,
+                            app_type: (scannedApp.type || '').includes('static') ? 'frontend' : 'backend',
+                            azure_resource_details: { resourceId: scannedApp.azure_resource_id, resourceGroup: rg }
+                        });
+                    }
+                }
+            }
+        }
 
         // Promise timeout helper
         const promiseWithTimeout = (promise, ms, defaultValue = null) => {
@@ -2353,16 +2394,22 @@ const appController = {
                     app.azureResourceDetails.configuredDbHost = result.value;
                     app.azureResourceDetails.scrapedSourceFile = result.file;
                     app.azureResourceDetails.scrapedSourceContent = result.content;
-                    // Clear any stale searched-files list from a previous failed attempt
                     delete app.azureResourceDetails.scrapedSearchedFiles;
                 } else {
-                    if (result && result.searchedFiles && result.searchedFiles.length > 0) {
-                        // Persist the list of files that were tried but yielded no result
-                        app.azureResourceDetails.scrapedSearchedFiles = result.searchedFiles;
+                    const fallbackHost = appController._resolveDbHost(app.name, orgSettings);
+                    if (fallbackHost) {
+                        app.azureResourceDetails.configuredDbHost = fallbackHost;
+                        app.azureResourceDetails.scrapedSourceFile = 'Organization Database Configuration (Connected)';
+                        app.azureResourceDetails.scrapedSourceContent = `Resolved from Organization DB Settings for ${app.name}`;
+                        delete app.azureResourceDetails.scrapedSearchedFiles;
+                    } else {
+                        if (result && result.searchedFiles && result.searchedFiles.length > 0) {
+                            app.azureResourceDetails.scrapedSearchedFiles = result.searchedFiles;
+                        }
+                        delete app.azureResourceDetails.configuredDbHost;
+                        delete app.azureResourceDetails.scrapedSourceFile;
+                        delete app.azureResourceDetails.scrapedSourceContent;
                     }
-                    delete app.azureResourceDetails.configuredDbHost;
-                    delete app.azureResourceDetails.scrapedSourceFile;
-                    delete app.azureResourceDetails.scrapedSourceContent;
                 }
             }
 
