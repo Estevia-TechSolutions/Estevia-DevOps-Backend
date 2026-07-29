@@ -2079,11 +2079,11 @@ const appController = {
      * Resolve dynamic DB host based on server name
      */
     _resolveDbHost(serverName, orgSettings = {}) {
-        if (!serverName) return process.env.DB_HOST || 'estevia-platform-db.mysql.database.azure.com';
+        if (!serverName) return process.env.DB_HOST || '';
         const sName = serverName.toLowerCase();
         const deadHostPatterns = ['estevia-dev-db', 'estevia-qa-db', 'estevia-prod-db-v2'];
 
-        // 1. Check custom organization settings first, but filter out known dead legacy hosts
+        // 1. Check custom organization settings first, filtering out dead legacy hosts
         if (sName.includes('dev') && orgSettings.dev_db_host && !deadHostPatterns.some(p => orgSettings.dev_db_host.toLowerCase().includes(p))) {
             return orgSettings.dev_db_host;
         }
@@ -2101,12 +2101,84 @@ const appController = {
             }
         }
 
-        // 3. Dynamic fallback to environment connected DB host
-        if (sName.includes('peoplecraft') || sName.includes('client')) {
-            return 'peoplecraft-db.mysql.database.azure.com';
+        return process.env.DB_HOST || '';
+    },
+
+    /**
+     * Dynamically resolve database host candidates across all subscriptions & resource groups
+     */
+    async _getDbHostCandidates(organizationId, serverName = '', dbName = '') {
+        const candidates = new Set();
+        const deadHostPatterns = ['estevia-dev-db', 'estevia-qa-db', 'estevia-prod-db-v2'];
+
+        if (serverName) {
+            if (serverName.includes('.') && !deadHostPatterns.some(p => serverName.toLowerCase().includes(p))) {
+                candidates.add(serverName);
+            } else {
+                candidates.add(`${serverName}.mysql.database.azure.com`);
+            }
         }
 
-        return process.env.DB_HOST || 'estevia-platform-db.mysql.database.azure.com';
+        try {
+            const [scannedDbs] = await db.query(
+                `SELECT name, azure_resource_id, azure_resource_details FROM scanned_apps WHERE organization_id = ? AND (type = 'database' OR name LIKE '%db%' OR name LIKE '%mysql%' OR azure_resource_id LIKE '%DBforMySQL%')`,
+                [organizationId]
+            );
+            for (const row of (scannedDbs || [])) {
+                if (row.name && row.name.includes('.')) candidates.add(row.name);
+                if (row.azure_resource_details) {
+                    try {
+                        const details = typeof row.azure_resource_details === 'string' ? JSON.parse(row.azure_resource_details) : row.azure_resource_details;
+                        if (details.host) candidates.add(details.host);
+                        if (details.fullyQualifiedDomainName) candidates.add(details.fullyQualifiedDomainName);
+                        if (details.fqdn) candidates.add(details.fqdn);
+                    } catch (e) {}
+                }
+                if (row.azure_resource_id) {
+                    const match = row.azure_resource_id.match(/\/flexibleServers\/([^\/]+)/i);
+                    if (match && match[1]) {
+                        candidates.add(`${match[1]}.mysql.database.azure.com`);
+                    }
+                }
+            }
+        } catch (e) {}
+
+        try {
+            const [appRows] = await db.query(
+                `SELECT azure_resource_details, env_vars FROM applications WHERE organization_id = ?`,
+                [organizationId]
+            );
+            for (const row of (appRows || [])) {
+                if (row.env_vars) {
+                    try {
+                        const envs = typeof row.env_vars === 'string' ? JSON.parse(row.env_vars) : row.env_vars;
+                        if (envs.DB_HOST && typeof envs.DB_HOST === 'string') candidates.add(envs.DB_HOST);
+                        if (envs.MYSQL_HOST && typeof envs.MYSQL_HOST === 'string') candidates.add(envs.MYSQL_HOST);
+                    } catch (e) {}
+                }
+                if (row.azure_resource_details) {
+                    try {
+                        const details = typeof row.azure_resource_details === 'string' ? JSON.parse(row.azure_resource_details) : row.azure_resource_details;
+                        if (details.host) candidates.add(details.host);
+                        if (details.fullyQualifiedDomainName) candidates.add(details.fullyQualifiedDomainName);
+                    } catch (e) {}
+                }
+            }
+        } catch (e) {}
+
+        const orgSettings = await appController._getOrgSettings(organizationId).catch(() => ({}));
+        if (orgSettings.prod_db_host) candidates.add(orgSettings.prod_db_host);
+        if (orgSettings.qa_db_host) candidates.add(orgSettings.qa_db_host);
+        if (orgSettings.dev_db_host) candidates.add(orgSettings.dev_db_host);
+        if (process.env.DB_HOST) candidates.add(process.env.DB_HOST);
+
+        const validHosts = Array.from(candidates).filter(h => 
+            h && 
+            typeof h === 'string' && 
+            !deadHostPatterns.some(p => h.toLowerCase().includes(p))
+        );
+
+        return validHosts.length > 0 ? validHosts : [process.env.DB_HOST].filter(Boolean);
     },
 
     /**
@@ -9059,17 +9131,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         } catch (error) {
             console.warn('[AppController] getDatabases via Azure failed, falling back to direct SQL query:', error.message);
             try {
-                const { serverName } = req.query;
-                const resolvedHost = req.query.host || appController._resolveDbHost(serverName, orgSettings);
                 const mysql = require('mysql2/promise');
-                
-                const hostsToTry = [
-                    resolvedHost,
-                    process.env.DB_HOST,
-                    orgSettings.prod_db_host,
-                    orgSettings.dev_db_host
-                ].filter(Boolean);
-                const uniqueHosts = [...new Set(hostsToTry)];
+                const uniqueHosts = await appController._getDbHostCandidates(organizationId, req.query.host || serverName);
 
                 let conn = null;
                 let lastErr = null;
@@ -9175,17 +9238,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 return res.status(400).json({ message: 'Missing serverName or dbName parameters.' });
             }
 
-            const orgSettings = await appController._getOrgSettings(organizationId);
-            const resolvedHost = req.query.host || appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
-            
-            const hostsToTry = [
-                resolvedHost,
-                process.env.DB_HOST,
-                orgSettings.prod_db_host,
-                orgSettings.dev_db_host
-            ].filter(Boolean);
-            const uniqueHosts = [...new Set(hostsToTry)];
+            const uniqueHosts = await appController._getDbHostCandidates(organizationId, req.query.host || serverName, dbName);
 
             let conn = null;
             let lastErr = null;

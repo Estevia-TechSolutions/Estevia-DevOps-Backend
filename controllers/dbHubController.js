@@ -25,17 +25,7 @@ const connectToDb = async (host, database, cred = {}, timeoutMs = 8000) => {
 
 const queryDbHelper = async (host, database, sql, params = [], organizationId = 'estevia') => {
     const appController = require('./appController');
-    const orgSettings = await appController._getOrgSettings(organizationId).catch(() => ({}));
-    const resolvedHost = appController._resolveDbHost(host, orgSettings);
-
-    const candidates = [
-        resolvedHost,
-        process.env.DB_HOST,
-        'estevia-platform-db.mysql.database.azure.com',
-        'peoplecraft-db.mysql.database.azure.com'
-    ].filter(Boolean);
-
-    const uniqueHosts = [...new Set(candidates)].filter(h => !h.includes('estevia-dev-db') && !h.includes('estevia-qa-db'));
+    const uniqueHosts = await appController._getDbHostCandidates(organizationId, host, database);
 
     let lastDirectErr = null;
     for (const h of uniqueHosts) {
