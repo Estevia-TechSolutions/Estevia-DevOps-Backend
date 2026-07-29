@@ -2146,7 +2146,7 @@ const appController = {
                     app.repositoryUrl = `https://github.com/${githubOwner}/estevia-backend-api`;
                 } else if (deducedName.includes('platform-management')) {
                     app.repositoryUrl = `https://github.com/${githubOwner}/estevia-platform-management`;
-                } else if (deducedName.includes('devops-backend')) {
+                } else if (deducedName.includes('devops-backend') || deducedName === 'api-evaops') {
                     app.repositoryUrl = `https://github.com/${githubOwner}/Estevia-DevOps-Backend`;
                 } else if (deducedName.includes('devops-frontend') || deducedName === 'evaops') {
                     app.repositoryUrl = `https://github.com/${githubOwner}/Estevia-DevOps-Frontend`;
@@ -2384,7 +2384,7 @@ const appController = {
                     }
                     if (
                         (cleanAppName.includes('evaops') || cleanAppName.includes('devops') || cleanAppName.includes('api-evaops')) &&
-                        (pName.includes('evaops') || pName.includes('devops') || pName.includes('backend-api') || pName.includes('evaops-backend'))
+                        (pName.includes('evaops') || pName.includes('devops') || pName.includes('evaops-backend'))
                     ) {
                         return true;
                     }
