@@ -9272,32 +9272,36 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         if (conn) break;
                     } catch (err) {
                         lastErr = err;
-                        // Auto-create database if unknown database error occurs (AGENTS.md Rule 2)
+                        // Auto-create database if unknown database error occurs on a matching host (AGENTS.md Rule 2)
                         if (dbName && (err.code === 'ER_BAD_DB_ERROR' || err.errno === 1049 || err.message?.includes('Unknown database'))) {
-                            try {
-                                console.log(`[AppController Schema] Database '${dbName}' missing on host ${h}. Creating database...`);
-                                const adminConn = await mysql.createConnection({
-                                    host: h,
-                                    user: cred.user,
-                                    password: cred.password,
-                                    port: process.env.DB_PORT || 3306,
-                                    ssl: { require: true, rejectUnauthorized: false },
-                                    connectTimeout: 5000
-                                });
-                                await adminConn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
-                                await adminConn.end();
-                                conn = await mysql.createConnection({
-                                    host: h,
-                                    user: cred.user,
-                                    password: cred.password,
-                                    database: dbName,
-                                    port: process.env.DB_PORT || 3306,
-                                    ssl: { require: true, rejectUnauthorized: false },
-                                    connectTimeout: 5000
-                                });
-                                if (conn) break;
-                            } catch (createErr) {
-                                console.warn(`[AppController Schema Auto-Init Failed] Could not create database '${dbName}' on host ${h}:`, createErr.message);
+                            const dPrefix = dbName.toLowerCase().split('_')[0];
+                            const hPrefix = h.toLowerCase().split('.')[0];
+                            if (dPrefix && dPrefix.length > 2 && hPrefix.includes(dPrefix)) {
+                                try {
+                                    console.log(`[AppController Schema] Database '${dbName}' missing on host ${h}. Creating database...`);
+                                    const adminConn = await mysql.createConnection({
+                                        host: h,
+                                        user: cred.user,
+                                        password: cred.password,
+                                        port: process.env.DB_PORT || 3306,
+                                        ssl: { require: true, rejectUnauthorized: false },
+                                        connectTimeout: 5000
+                                    });
+                                    await adminConn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
+                                    await adminConn.end();
+                                    conn = await mysql.createConnection({
+                                        host: h,
+                                        user: cred.user,
+                                        password: cred.password,
+                                        database: dbName,
+                                        port: process.env.DB_PORT || 3306,
+                                        ssl: { require: true, rejectUnauthorized: false },
+                                        connectTimeout: 5000
+                                    });
+                                    if (conn) break;
+                                } catch (createErr) {
+                                    console.warn(`[AppController Schema Auto-Init Failed] Could not create database '${dbName}' on host ${h}:`, createErr.message);
+                                }
                             }
                         }
                     }
