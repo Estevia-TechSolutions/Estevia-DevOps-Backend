@@ -954,7 +954,7 @@ const appController = {
         return settings;
     },
 
-    async _getCostAndOptimizationData(organizationId) {
+    async _getCostAndOptimizationData(organizationId, targetSubId = null, targetRg = null) {
         // Fetch applications from DB
         const [apps] = await db.query(
             'SELECT id, name, app_type, status, azure_resource_details, godaddy_dns_details, repo_url FROM applications WHERE organization_id = ?',
@@ -963,8 +963,8 @@ const appController = {
 
         // Retrieve organization configuration settings
         const orgSettings = await appController._getOrgSettings(organizationId);
-        const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-        const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+        const subscriptionId = targetSubId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+        const resourceGroup = targetRg || orgSettings.azure_resource_group || RESOURCE_GROUP;
         const defaultDomain = orgSettings.default_dns_domain || DEFAULT_DOMAIN;
 
         // Promise timeout helper
@@ -2065,25 +2065,65 @@ const appController = {
         const primarySubId = orgSettings.azure_subscription_id || null;
         const primaryRG = orgSettings.azure_resource_group || null;
 
-        // Build unique list of subscription IDs to scan
-        const envSubIds = (process.env.AZURE_SUBSCRIPTION_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-        const allSubIds = [...new Set([primarySubId, ...envSubIds].filter(Boolean))];
-
-        if (allSubIds.length === 0) {
-            console.warn('[AppController] _discoverScanTargets: No subscription IDs configured — scanner will return empty.');
-            return [];
-        }
-
-        const targets = [];
         let credential;
         try {
             credential = await getAzureCredential(organizationId);
         } catch (err) {
             console.error('[AppController] _discoverScanTargets: Failed to get Azure credential:', err.message);
-            // Fallback to primary configured target
+            const targets = [];
             if (primarySubId && primaryRG) targets.push({ subscriptionId: primarySubId, resourceGroup: primaryRG });
             return targets;
         }
+
+        // 1. Fetch cached subscription IDs from DB applications
+        const [dbApps] = await db.query('SELECT azure_resource_details FROM applications WHERE organization_id = ?', [organizationId]).catch(() => [[]]);
+        const cachedSubIds = new Set();
+        for (const app of dbApps) {
+            try {
+                const details = typeof app.azure_resource_details === 'string'
+                    ? JSON.parse(app.azure_resource_details || '{}')
+                    : (app.azure_resource_details || {});
+                const resId = details.resourceId || '';
+                const subIdMatch = resId.match(/\/subscriptions\/([^\/]+)/i);
+                if (subIdMatch) {
+                    cachedSubIds.add(subIdMatch[1]);
+                }
+            } catch (e) {}
+        }
+
+        // 2. Dynamically list all subscriptions from Azure API using credential
+        const apiSubIds = [];
+        try {
+            const tokenRes = await credential.getToken('https://management.azure.com/.default');
+            const token = tokenRes.token;
+            const subRes = await axios.get('https://management.azure.com/subscriptions?api-version=2020-01-01', {
+                headers: { 'Authorization': `Bearer ${token}` },
+                timeout: 8000
+            });
+            if (subRes.data && Array.isArray(subRes.data.value)) {
+                subRes.data.value.forEach(s => {
+                    if (s.subscriptionId) apiSubIds.push(s.subscriptionId);
+                });
+            }
+        } catch (err) {
+            console.warn('[AppController] _discoverScanTargets: Dynamic subscriptions query failed:', err.message);
+        }
+
+        // Merge all subscription IDs
+        const envSubIds = (process.env.AZURE_SUBSCRIPTION_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+        const allSubIds = [...new Set([
+            primarySubId,
+            ...envSubIds,
+            ...apiSubIds,
+            ...cachedSubIds
+        ].filter(Boolean))];
+
+        if (allSubIds.length === 0) {
+            console.warn('[AppController] _discoverScanTargets: No subscription IDs configured or discovered.');
+            return [];
+        }
+
+        const targets = [];
 
         await Promise.all(allSubIds.map(async (subId) => {
             try {
@@ -2731,8 +2771,20 @@ const appController = {
                     };
                 });
 
-                // Apply granular resource & environment permission filtering for non-admin users
                 let filteredApps = apps;
+                if (req.query.subscriptionId) {
+                    filteredApps = filteredApps.filter(app => {
+                        const resId = app.resourceId || '';
+                        const subIdMatch = resId.match(/\/subscriptions\/([^\/]+)/i);
+                        return subIdMatch && subIdMatch[1].toLowerCase() === req.query.subscriptionId.toLowerCase();
+                    });
+                }
+                if (req.query.resourceGroup) {
+                    filteredApps = filteredApps.filter(app => {
+                        return (app.resourceGroup || '').toLowerCase() === req.query.resourceGroup.toLowerCase();
+                    });
+                }
+
                 if (req.user && !['owner', 'admin'].includes(req.user.role?.toLowerCase())) {
                     const [permRows] = await db.query(
                         'SELECT app_key, environment, actions FROM user_resource_permissions WHERE user_id = ? AND organization_id = ?',
@@ -4055,6 +4107,7 @@ const appController = {
                 location,
                 githubRepo,
                 resourceGroup: customResourceGroup,
+                subscriptionId: reqSubscriptionId,
                 managedEnvironment,
                 cpu,
                 memory,
@@ -4110,7 +4163,7 @@ const appController = {
             // ── End License Tier Check ────────────────────────────────────────
 
             const orgSettings = await appController._getOrgSettings(organizationId);
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const subscriptionId = reqSubscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
             const targetResourceGroup = customResourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             const targetLocation = location || 'eastus2';
@@ -8247,7 +8300,8 @@ const appController = {
     getCostData: async (req, res) => {
         try {
             const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
-            const data = await appController._getCostAndOptimizationData(organizationId);
+            const { subscriptionId, resourceGroup } = req.query;
+            const data = await appController._getCostAndOptimizationData(organizationId, subscriptionId, resourceGroup);
             return res.json({
                 success: true,
                 ...data
@@ -8748,8 +8802,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         let orgSettings = {};
         try {
             orgSettings = await appController._getOrgSettings(organizationId);
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+            const subscriptionId = req.query.subscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             const credential = await getAzureCredential(organizationId);
             const tokenRes = await credential.getToken("https://management.azure.com/.default");
@@ -9152,7 +9206,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         try {
             const organizationId = req.query.organizationId || 'estevia';
             const orgSettings = await appController._getOrgSettings(organizationId);
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const subscriptionId = req.query.subscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
             const devopsOrgUrl = orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech';
             const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
 
@@ -9367,18 +9421,11 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const orgSettings = await appController._getOrgSettings(organizationId);
 
             const primarySubId = orgSettings.azure_subscription_id || null;
-            const envSubIds = (process.env.AZURE_SUBSCRIPTION_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-            const allSubIds = [...new Set([primarySubId, ...envSubIds].filter(Boolean))];
-
-            if (allSubIds.length === 0) {
-                return res.json({ success: true, subscriptions: [] });
-            }
-
             const credential = await getAzureCredential(organizationId);
             const tokenRes = await credential.getToken("https://management.azure.com/.default");
             const token = tokenRes.token;
 
-            // Fetch cached apps for fallback resource groups
+            // Fetch cached apps for fallback resource groups and subscription IDs
             const [dbApps] = await db.query('SELECT azure_resource_details FROM applications WHERE organization_id = ?', [organizationId]);
             const cachedRGsBySub = {};
             for (const app of dbApps) {
@@ -9397,10 +9444,44 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 } catch (e) {}
             }
 
+            // Dynamically discover all active subscription IDs via Azure API
+            const apiSubIds = [];
+            try {
+                const subListRes = await axios.get('https://management.azure.com/subscriptions?api-version=2020-01-01', {
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    timeout: 8000
+                });
+                if (subListRes.data && Array.isArray(subListRes.data.value)) {
+                    subListRes.data.value.forEach(s => {
+                        if (s.subscriptionId) apiSubIds.push(s.subscriptionId);
+                    });
+                }
+            } catch (err) {
+                console.warn('[AppController] getResourceGroups: Dynamic subscriptions query failed:', err.message);
+            }
+
+            const envSubIds = (process.env.AZURE_SUBSCRIPTION_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+            const allSubIds = [...new Set([
+                primarySubId,
+                ...envSubIds,
+                ...apiSubIds,
+                ...Object.keys(cachedRGsBySub)
+            ].filter(Boolean))];
+
+            if (allSubIds.length === 0) {
+                return res.json({ success: true, subscriptions: [] });
+            }
+
+            const subNames = {
+                '4a551976-35a8-4305-b128-fe592805be41': 'Estevia-Platform-Subscription',
+                '40070b3e-38c4-4c4e-89d5-dd601f9f7622': 'Estevia-Client-Projects-Subscription',
+                'a812e8e3-34f9-4773-82ee-6398869533b0': 'Estevia-TechSolutions - Azure Main (Legacy)'
+            };
+
             const subscriptions = [];
 
             await Promise.all(allSubIds.map(async (subId) => {
-                let displayName = subId;
+                let displayName = subNames[subId] || subId;
                 let status = 'active';
                 const rgs = new Set();
 
@@ -9415,13 +9496,15 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 }
 
                 try {
-                    // Get subscription details (display name)
+                    // Get subscription details (display name and state)
                     const subUrl = `https://management.azure.com/subscriptions/${subId}?api-version=2020-01-01`;
                     const subRes = await axios.get(subUrl, {
                         headers: { 'Authorization': `Bearer ${token}` },
                         timeout: 5000
                     });
-                    displayName = subRes.data?.displayName || subId;
+                    displayName = subRes.data?.displayName || displayName;
+                    const state = subRes.data?.state || 'active';
+                    status = state.toLowerCase() === 'enabled' ? 'active' : state.toLowerCase();
 
                     // List live resource groups
                     const client = new ResourceManagementClient(credential, subId);
@@ -9432,7 +9515,11 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     }
                 } catch (err) {
                     console.warn(`[AppController] Live details/RGs fetch failed for sub ${subId}:`, err.message);
-                    status = 'offline';
+                    if (subId === 'a812e8e3-34f9-4773-82ee-6398869533b0') {
+                        status = 'warned';
+                    } else {
+                        status = 'offline';
+                    }
                 }
 
                 subscriptions.push({
