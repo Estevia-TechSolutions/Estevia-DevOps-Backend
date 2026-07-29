@@ -943,7 +943,7 @@ async function main() {
                 app_key VARCHAR(255) NOT NULL,
                 resource_type ENUM('swa', 'aca', 'vm') NOT NULL DEFAULT 'aca',
                 environment ENUM('dev', 'qa', 'prod') NOT NULL,
-                category ENUM('CRITICAL_OUTAGE', 'HIGH_RESOURCE_PRESSURE', 'LATENCY_DEGRADATION', 'SSL_CERT_EXPIRING', 'HEALTH_CHECK_FAILURE') NOT NULL,
+                category VARCHAR(100) NOT NULL,
                 severity ENUM('P1_CRITICAL', 'P2_HIGH', 'P3_MEDIUM', 'P4_LOW') NOT NULL,
                 title VARCHAR(255) NOT NULL,
                 description TEXT NOT NULL,
@@ -956,6 +956,12 @@ async function main() {
                 INDEX idx_org_app_status (organization_id, app_key, status)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
+
+        try {
+            await connection.query(`ALTER TABLE resource_incidents MODIFY COLUMN category VARCHAR(100) NOT NULL;`);
+        } catch (e) {
+            // Ignore if already VARCHAR
+        }
 
         // 13. Add resource_metrics_history table for Prometheus Telemetry Charts
         console.log('Verifying resource_metrics_history table...');
