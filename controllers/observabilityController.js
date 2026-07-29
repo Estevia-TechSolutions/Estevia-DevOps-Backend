@@ -261,9 +261,7 @@ const autoSeedIncidents = async (orgId) => {
 exports.getIncidents = async (req, res) => {
     try {
         const organization_id = req.user?.organization_id || 'estevia';
-        const { app_key, environment, subscriptionId, resourceGroup } = req.query;
-
-        const scopedKeys = await getScopedAppKeys(organization_id, subscriptionId, resourceGroup);
+        const { app_key, environment } = req.query;
 
         let query = `
             SELECT id, organization_id, app_key, resource_type, environment, severity, title as incident_title, description as incident_description, category, telemetry_snapshot, status, acknowledged_at, resolved_at, responsible_user_id, created_at
@@ -275,15 +273,7 @@ exports.getIncidents = async (req, res) => {
         if (app_key) {
             query += ` AND app_key = ?`;
             params.push(app_key);
-        } else if (scopedKeys !== null) {
-            if (scopedKeys.length > 0) {
-                query += ` AND app_key IN (?)`;
-                params.push(scopedKeys);
-            } else {
-                return res.json({ success: true, count: 0, incidents: [] });
-            }
         }
-        
         if (environment) {
             query += ` AND environment = ?`;
             params.push(environment);
@@ -300,13 +290,11 @@ exports.getIncidents = async (req, res) => {
         }
 
         if (!rows || rows.length === 0) {
-            if (!subscriptionId && !resourceGroup) {
-                await autoSeedIncidents(organization_id);
-                try {
-                    const [reRows] = await db.query(query, params);
-                    rows = reRows || [];
-                } catch (reErr) {}
-            }
+            await autoSeedIncidents(organization_id);
+            try {
+                const [reRows] = await db.query(query, params);
+                rows = reRows || [];
+            } catch (reErr) {}
         }
 
         // Parse JSON telemetry_snapshot for response
