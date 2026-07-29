@@ -9374,20 +9374,6 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 return res.json({ success: true, subscriptions: [] });
             }
 
-            let azureSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure').catch(() => null);
-            if (!azureSecrets && organizationId !== MASTER_ORGANIZATION_ID) {
-                azureSecrets = await credentialController.getDecryptedCredentialsInternal(MASTER_ORGANIZATION_ID, 'azure').catch(() => null);
-            }
-            return res.json({
-                debug: true,
-                hasAzureSecrets: !!azureSecrets,
-                keys: azureSecrets ? Object.keys(azureSecrets) : [],
-                type: azureSecrets ? azureSecrets.type : null,
-                clientId: azureSecrets ? azureSecrets.clientId : null,
-                tenantId: azureSecrets ? azureSecrets.tenantId : null,
-                hasClientSecret: azureSecrets ? !!azureSecrets.clientSecret : false
-            });
-
             const credential = await getAzureCredential(organizationId);
             const tokenRes = await credential.getToken("https://management.azure.com/.default");
             const token = tokenRes.token;
