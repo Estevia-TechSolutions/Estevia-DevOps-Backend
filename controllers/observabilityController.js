@@ -247,25 +247,13 @@ exports.getIncidents = async (req, res) => {
 
         query += ` ORDER BY created_at DESC LIMIT 100`;
 
+        // Execute live incidents query (100% real-time from DB, zero hardcoded seeding)
         let rows = [];
         try {
             const [queryRows] = await db.query(query, params);
             rows = queryRows || [];
         } catch (e) {
-            console.warn('[ObservabilityController] DB incidents query failed, returning dynamic incidents list');
-        }
-
-        if (!rows || rows.length === 0) {
-            // Seed initial sample incidents into DB table
-            await db.query(`
-                INSERT INTO resource_incidents (organization_id, app_key, resource_type, environment, category, severity, title, description, telemetry_snapshot, status, created_at)
-                VALUES 
-                (?, 'estevia-backend', 'aca', 'dev', 'HIGH_RESOURCE_PRESSURE', 'P2_HIGH', 'High CPU Pressure Warning', 'Container CPU utilization exceeded 85% threshold during background scan', '{"cpu_percent": 87.4, "memory_mb": 410}', 'triggered', NOW() - INTERVAL 25 MINUTE),
-                (?, 'estevia-api', 'aca', 'prod', 'LATENCY_DEGRADATION', 'P1_CRITICAL', 'Elevated P95 Latency Spike', 'Elevated P95 Latency spikes detected on database query pool', '{"p95_latency_ms": 412, "active_connections": 92}', 'triggered', NOW() - INTERVAL 110 MINUTE)
-            `, [organization_id, organization_id]).catch(() => {});
-
-            const [newRows] = await db.query(query, params).catch(() => []);
-            rows = newRows || [];
+            console.warn('[ObservabilityController] DB incidents query failed:', e.message);
         }
 
         // Parse JSON telemetry_snapshot for response

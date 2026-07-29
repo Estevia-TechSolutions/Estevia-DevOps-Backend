@@ -91,11 +91,23 @@ exports.getResourceCatalog = async (req, res) => {
                 key,
                 label: key.charAt(0).toUpperCase() + key.slice(1).replace(/-/g, ' '),
                 icon: '📦',
-                resourceTypes: new Set()
+                resourceTypes: new Set(),
+                environments: new Set()
             };
 
             const rawType = (appRow.type || appRow.app_type || '').toLowerCase();
             const rawNameLower = rawName.toLowerCase();
+
+            // Detect environment suffix dynamically
+            const envSegmentMatch = rawNameLower.match(/-(dev|qa|prod|production|staging|test)(-swa)?$/i);
+            if (envSegmentMatch) {
+                const seg = envSegmentMatch[1].toLowerCase();
+                if (seg === 'prod' || seg === 'production') existing.environments.add('prod');
+                else if (seg === 'qa' || seg === 'staging' || seg === 'test') existing.environments.add('qa');
+                else existing.environments.add('dev');
+            } else {
+                existing.environments.add('prod');
+            }
 
             if (rawType.includes('vm') || rawType.includes('virtualmachine') || rawType.includes('database') || rawNameLower.includes('vm') || rawNameLower.includes('db-server')) {
                 existing.resourceTypes.add('vm');
@@ -116,35 +128,39 @@ exports.getResourceCatalog = async (req, res) => {
                 key: 'estevia-frontend',
                 label: 'Estevia DevOps Frontend (SWA)',
                 icon: '🌐',
-                resourceTypes: new Set(['swa'])
+                resourceTypes: new Set(['swa']),
+                environments: new Set(['dev', 'qa', 'prod'])
             });
             catalogMap.set('estevia-backend', {
                 key: 'estevia-backend',
                 label: 'Estevia DevOps Backend (ACA)',
                 icon: '📦',
-                resourceTypes: new Set(['aca'])
+                resourceTypes: new Set(['aca']),
+                environments: new Set(['dev', 'qa', 'prod'])
             });
             catalogMap.set('estevia-api', {
                 key: 'estevia-api',
                 label: 'Estevia Core API (ACA)',
                 icon: '📦',
-                resourceTypes: new Set(['aca'])
+                resourceTypes: new Set(['aca']),
+                environments: new Set(['dev', 'qa', 'prod'])
             });
             catalogMap.set('estevia-db-vm', {
                 key: 'estevia-db-vm',
                 label: 'Estevia Database Host (VM)',
                 icon: '🖥️',
-                resourceTypes: new Set(['vm'])
+                resourceTypes: new Set(['vm']),
+                environments: new Set(['prod'])
             });
         }
 
-        // Convert Sets to Arrays for clean JSON output
-        const catalog = Array.from(catalogMap.values()).map(item => ({
+        const resultCatalog = Array.from(catalogMap.values()).map(item => ({
             ...item,
-            resourceTypes: Array.from(item.resourceTypes)
+            resourceTypes: Array.from(item.resourceTypes),
+            environments: Array.from(item.environments).length > 0 ? Array.from(item.environments) : ['prod']
         }));
 
-        res.json({ success: true, count: catalog.length, catalog });
+        res.json({ success: true, count: resultCatalog.length, catalog: resultCatalog });
     } catch (err) {
         console.error('Failed to fetch resource catalog:', err.message);
         res.status(500).json({ error: 'Failed to retrieve dynamic resource catalog' });
