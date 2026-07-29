@@ -12,7 +12,7 @@ async function getAzureCredential(organizationId) {
     try {
         const azureSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure');
         if (azureSecrets) {
-            if (azureSecrets.type === 'managed_identity') {
+            if (azureSecrets.type === 'managed_identity' || azureSecrets.clientId === 'SYSTEM_MANAGED_IDENTITY') {
                 console.log(`[AzureAuth] Using DefaultAzureCredential (Managed Identity) for organization: ${organizationId}`);
                 return new DefaultAzureCredential();
             }
