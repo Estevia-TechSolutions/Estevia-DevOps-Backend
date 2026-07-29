@@ -967,6 +967,23 @@ const appController = {
         const resourceGroup = targetRg || orgSettings.azure_resource_group || RESOURCE_GROUP;
         const defaultDomain = orgSettings.default_dns_domain || DEFAULT_DOMAIN;
 
+        // Filter applications to match target subscription and resource group
+        const filteredApps = apps.filter(app => {
+            const azureDetails = typeof app.azure_resource_details === 'string'
+                ? JSON.parse(app.azure_resource_details || '{}')
+                : (app.azure_resource_details || {});
+            
+            const rg = azureDetails.resourceGroup || resourceGroup;
+            let subId = null;
+            if (azureDetails.resourceId) {
+                const match = azureDetails.resourceId.match(/\/subscriptions\/([^\/]+)\/resourceGroups/i);
+                if (match) subId = match[1];
+            }
+            subId = subId || subscriptionId;
+
+            return subId.toLowerCase() === subscriptionId.toLowerCase() && rg.toLowerCase() === resourceGroup.toLowerCase();
+        });
+
         // Promise timeout helper
         const promiseWithTimeout = (promise, ms, defaultValue = null) => {
             let timeoutId;
@@ -1003,7 +1020,7 @@ const appController = {
         // If no Azure resources could be fetched (timed out or connection error), fall back to DB records
         if (azureResources.length === 0) {
             console.log('[AppController] Azure resource listing returned empty or timed out. Generating fallback resources from database application records.');
-            for (const app of apps) {
+            for (const app of filteredApps) {
                 const azureDetails = typeof app.azure_resource_details === 'string'
                     ? JSON.parse(app.azure_resource_details || '{}')
                     : (app.azure_resource_details || {});
@@ -1103,7 +1120,7 @@ const appController = {
 
         // Match with DB apps by name or resource ID
         const dbAppMap = new Map();
-        for (const app of apps) {
+        for (const app of filteredApps) {
             const azureDetails = typeof app.azure_resource_details === 'string'
                 ? JSON.parse(app.azure_resource_details || '{}')
                 : (app.azure_resource_details || {});
@@ -1418,7 +1435,7 @@ const appController = {
         }
 
         // Sync database apps that were not matched by ID/name from the Azure subscription list
-        for (const app of apps) {
+        for (const app of filteredApps) {
             const appName = app.name.toLowerCase();
             const matched = Array.from(processedResourceIds).some(id => id.includes(appName)) ||
                 azureResources.some(r => r.name?.toLowerCase() === appName);
@@ -8558,10 +8575,11 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
             console.log(`[CostAPI] === Fetching Azure Cloud Bills for Organization: ${organizationId} ===`);
             
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const subscriptionId = req.query.subscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+
             // Query actual Azure Cost Management API
             try {
-                const orgSettings = await appController._getOrgSettings(organizationId);
-                const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
                 console.log(`[CostAPI] Querying live Azure Cost Management API for Subscription ID: ${subscriptionId}...`);
                 
                 const credential = await getAzureCredential(organizationId);
@@ -8736,8 +8754,9 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         status, currency, 
                         total_amount, aca_compute_amount, mysql_db_amount, swa_cdn_amount, storage_vm_amount, network_egress_amount 
                  FROM azure_consumption_bills 
-                 WHERE billing_period >= '2026-05'
-                 ORDER BY due_date DESC`
+                 WHERE billing_period >= '2026-05' AND azure_subscription_id = ?
+                 ORDER BY due_date DESC`,
+                [subscriptionId]
             ).catch(() => [[]]);
 
             console.log(`[CostAPI] Query returned ${rows ? rows.length : 0} bills from database. Sending response.`);
@@ -8959,8 +8978,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             }
 
             orgSettings = await appController._getOrgSettings(organizationId);
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+            const subscriptionId = req.query.subscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             const credential = await getAzureCredential(organizationId);
             const tokenRes = await credential.getToken("https://management.azure.com/.default");
@@ -8987,7 +9006,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             console.warn('[AppController] getDatabases via Azure failed, falling back to direct SQL query:', error.message);
             try {
                 const { serverName } = req.query;
-                const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
+                const resolvedHost = req.query.host || appController._resolveDbHost(serverName, orgSettings);
                 const mysql = require('mysql2/promise');
                 const conn = await mysql.createConnection({
                     host: resolvedHost,
@@ -9033,8 +9052,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             }
 
             const orgSettings = await appController._getOrgSettings(organizationId);
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+            const subscriptionId = req.body.subscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = req.body.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             const credential = await getAzureCredential(organizationId);
             const tokenRes = await credential.getToken("https://management.azure.com/.default");
@@ -9077,7 +9096,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             }
 
             const orgSettings = await appController._getOrgSettings(organizationId);
-            const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
+            const resolvedHost = req.query.host || appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
             const conn = await mysql.createConnection({
                 host: resolvedHost,
@@ -9155,7 +9174,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             }
 
             const orgSettings = await appController._getOrgSettings(organizationId);
-            const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
+            const resolvedHost = req.body.host || appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
 
             const conn = await mysql.createConnection({
@@ -9516,7 +9535,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 } catch (err) {
                     console.warn(`[AppController] Live details/RGs fetch failed for sub ${subId}:`, err.message);
                     if (subId === 'a812e8e3-34f9-4773-82ee-6398869533b0') {
-                        status = 'warned';
+                        status = 'restricted';
                     } else {
                         status = 'offline';
                     }
