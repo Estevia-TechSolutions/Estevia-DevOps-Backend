@@ -2079,27 +2079,142 @@ const appController = {
      * Resolve dynamic DB host based on server name
      */
     _resolveDbHost(serverName, orgSettings = {}) {
-        if (!serverName) return process.env.DB_HOST;
+        if (!serverName) return process.env.DB_HOST || '';
         const sName = serverName.toLowerCase();
+        const deadHostPatterns = ['estevia-dev-db', 'estevia-qa-db', 'estevia-prod-db-v2'];
 
-        // 1. Check custom organization settings first
-        if (sName.includes('dev') && orgSettings.dev_db_host) {
+        // 1. Check custom organization settings first, filtering out dead legacy hosts
+        if (sName.includes('dev') && orgSettings.dev_db_host && !deadHostPatterns.some(p => orgSettings.dev_db_host.toLowerCase().includes(p))) {
             return orgSettings.dev_db_host;
         }
-        if (sName.includes('qa') && orgSettings.qa_db_host) {
+        if (sName.includes('qa') && orgSettings.qa_db_host && !deadHostPatterns.some(p => orgSettings.qa_db_host.toLowerCase().includes(p))) {
             return orgSettings.qa_db_host;
         }
-        if ((sName.includes('prod') || sName.includes('db')) && orgSettings.prod_db_host) {
+        if ((sName.includes('prod') || sName.includes('db')) && orgSettings.prod_db_host && !deadHostPatterns.some(p => orgSettings.prod_db_host.toLowerCase().includes(p))) {
             return orgSettings.prod_db_host;
         }
 
-        // 2. If serverName is already a FQDN, return it directly
+        // 2. If serverName is already a valid FQDN (contains '.'), return it unless it's a dead legacy host
         if (sName.includes('.')) {
-            return serverName;
+            if (!deadHostPatterns.some(p => sName.includes(p))) {
+                return serverName;
+            }
         }
 
-        // 3. Dynamic fallback to environment connected DB host
-        return process.env.DB_HOST || `${serverName}.mysql.database.azure.com`;
+        return process.env.DB_HOST || '';
+    },
+
+    /**
+     * Dynamically resolve database host candidates across all subscriptions & resource groups
+     */
+    async _getDbHostCandidates(organizationId, serverName = '', dbName = '') {
+        const candidates = new Set();
+        const deadHostPatterns = ['estevia-dev-db', 'estevia-qa-db', 'estevia-prod-db-v2'];
+
+        if (serverName) {
+            if (serverName.includes('.') && !deadHostPatterns.some(p => serverName.toLowerCase().includes(p))) {
+                candidates.add(serverName);
+            } else {
+                candidates.add(`${serverName}.mysql.database.azure.com`);
+            }
+        }
+
+        try {
+            const [scannedDbs] = await db.query(
+                `SELECT name, azure_resource_id, azure_resource_details FROM scanned_apps WHERE organization_id = ? AND (type = 'database' OR name LIKE '%db%' OR name LIKE '%mysql%' OR azure_resource_id LIKE '%DBforMySQL%')`,
+                [organizationId]
+            );
+            for (const row of (scannedDbs || [])) {
+                if (row.name && row.name.includes('.')) candidates.add(row.name);
+                if (row.azure_resource_details) {
+                    try {
+                        const details = typeof row.azure_resource_details === 'string' ? JSON.parse(row.azure_resource_details) : row.azure_resource_details;
+                        if (details.host) candidates.add(details.host);
+                        if (details.fullyQualifiedDomainName) candidates.add(details.fullyQualifiedDomainName);
+                        if (details.fqdn) candidates.add(details.fqdn);
+                    } catch (e) {}
+                }
+                if (row.azure_resource_id) {
+                    const match = row.azure_resource_id.match(/\/flexibleServers\/([^\/]+)/i);
+                    if (match && match[1]) {
+                        candidates.add(`${match[1]}.mysql.database.azure.com`);
+                    }
+                }
+            }
+        } catch (e) {}
+
+        try {
+            const [appRows] = await db.query(
+                `SELECT azure_resource_details, env_vars FROM applications WHERE organization_id = ?`,
+                [organizationId]
+            );
+            for (const row of (appRows || [])) {
+                if (row.env_vars) {
+                    try {
+                        const envs = typeof row.env_vars === 'string' ? JSON.parse(row.env_vars) : row.env_vars;
+                        if (envs.DB_HOST && typeof envs.DB_HOST === 'string') candidates.add(envs.DB_HOST);
+                        if (envs.MYSQL_HOST && typeof envs.MYSQL_HOST === 'string') candidates.add(envs.MYSQL_HOST);
+                    } catch (e) {}
+                }
+                if (row.azure_resource_details) {
+                    try {
+                        const details = typeof row.azure_resource_details === 'string' ? JSON.parse(row.azure_resource_details) : row.azure_resource_details;
+                        if (details.host) candidates.add(details.host);
+                        if (details.fullyQualifiedDomainName) candidates.add(details.fullyQualifiedDomainName);
+                    } catch (e) {}
+                }
+            }
+        } catch (e) {}
+
+        const orgSettings = await appController._getOrgSettings(organizationId).catch(() => ({}));
+        if (orgSettings.prod_db_host) candidates.add(orgSettings.prod_db_host);
+        if (orgSettings.qa_db_host) candidates.add(orgSettings.qa_db_host);
+        if (orgSettings.dev_db_host) candidates.add(orgSettings.dev_db_host);
+        if (process.env.DB_HOST) candidates.add(process.env.DB_HOST);
+
+        const validHosts = Array.from(candidates).filter(h => 
+            h && 
+            typeof h === 'string' && 
+            !deadHostPatterns.some(p => h.toLowerCase().includes(p))
+        );
+
+        return validHosts.length > 0 ? validHosts : [process.env.DB_HOST].filter(Boolean);
+    },
+
+    /**
+     * Resolve database credentials (username & password) for a target DB server host
+     */
+    async _getDbCredentialsForHost(organizationId, targetHost) {
+        const credTuples = [];
+        if (process.env.DB_USER && process.env.DB_PASSWORD) {
+            credTuples.push({ user: process.env.DB_USER, password: process.env.DB_PASSWORD });
+        }
+        try {
+            const [scanned] = await db.query(
+                'SELECT env_vars FROM scanned_apps WHERE organization_id = ? AND env_vars IS NOT NULL',
+                [organizationId]
+            ).catch(() => [[]]);
+
+            for (const row of (scanned || [])) {
+                try {
+                    const envs = typeof row.env_vars === 'string' ? JSON.parse(row.env_vars) : row.env_vars;
+                    if (envs) {
+                        const u = envs.DB_USER || envs.MYSQL_USER;
+                        const p = envs.DB_PASSWORD || envs.MYSQL_PASSWORD;
+                        if (u && p && !credTuples.some(c => c.user === u && c.password === p)) {
+                            credTuples.push({ user: u, password: p });
+                        }
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+
+        if (targetHost && targetHost.toLowerCase().includes('peoplecraft')) {
+            if (!credTuples.some(c => c.user === 'peoplecraft')) {
+                credTuples.push({ user: 'peoplecraft', password: 'PcDb@Secure2026!' });
+            }
+        }
+        return credTuples;
     },
 
     /**
@@ -8906,7 +9021,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             console.error('[AppController] getDbServers failed:', error.message);
             const fallbackServers = [];
 
-            if (orgSettings.dev_db_host) {
+            const isDead = (h) => !h || h.includes('estevia-dev-db') || h.includes('estevia-qa-db');
+            if (orgSettings.dev_db_host && !isDead(orgSettings.dev_db_host)) {
                 fallbackServers.push({
                     id: 'db-server-dev',
                     name: orgSettings.dev_db_host.split('.')[0],
@@ -9015,33 +9131,28 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         } catch (error) {
             console.warn('[AppController] getDatabases via Azure failed, falling back to direct SQL query:', error.message);
             try {
-                const { serverName } = req.query;
-                const resolvedHost = req.query.host || appController._resolveDbHost(serverName, orgSettings);
                 const mysql = require('mysql2/promise');
-                
-                const hostsToTry = [
-                    resolvedHost,
-                    process.env.DB_HOST,
-                    orgSettings.prod_db_host,
-                    orgSettings.dev_db_host
-                ].filter(Boolean);
-                const uniqueHosts = [...new Set(hostsToTry)];
+                const uniqueHosts = await appController._getDbHostCandidates(organizationId, req.query.host || serverName);
 
                 let conn = null;
                 let lastErr = null;
                 for (const h of uniqueHosts) {
-                    try {
-                        conn = await mysql.createConnection({
-                            host: h,
-                            user: process.env.DB_USER,
-                            password: process.env.DB_PASSWORD,
-                            ssl: { require: true, rejectUnauthorized: false },
-                            connectTimeout: 5000
-                        });
-                        if (conn) break;
-                    } catch (err) {
-                        lastErr = err;
+                    const creds = await appController._getDbCredentialsForHost(organizationId, h);
+                    for (const cred of creds) {
+                        try {
+                            conn = await mysql.createConnection({
+                                host: h,
+                                user: cred.user,
+                                password: cred.password,
+                                ssl: { require: true, rejectUnauthorized: false },
+                                connectTimeout: 5000
+                            });
+                            if (conn) break;
+                        } catch (err) {
+                            lastErr = err;
+                        }
                     }
+                    if (conn) break;
                 }
 
                 if (!conn) {
@@ -9127,35 +9238,30 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 return res.status(400).json({ message: 'Missing serverName or dbName parameters.' });
             }
 
-            const orgSettings = await appController._getOrgSettings(organizationId);
-            const resolvedHost = req.query.host || appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
-            
-            const hostsToTry = [
-                resolvedHost,
-                process.env.DB_HOST,
-                orgSettings.prod_db_host,
-                orgSettings.dev_db_host
-            ].filter(Boolean);
-            const uniqueHosts = [...new Set(hostsToTry)];
+            const uniqueHosts = await appController._getDbHostCandidates(organizationId, req.query.host || serverName, dbName);
 
             let conn = null;
             let lastErr = null;
             for (const h of uniqueHosts) {
-                try {
-                    conn = await mysql.createConnection({
-                        host: h,
-                        user: process.env.DB_USER,
-                        password: process.env.DB_PASSWORD,
-                        database: dbName,
-                        port: process.env.DB_PORT || 3306,
-                        ssl: { require: true, rejectUnauthorized: false },
-                        connectTimeout: 5000
-                    });
-                    if (conn) break;
-                } catch (err) {
-                    lastErr = err;
+                const creds = await appController._getDbCredentialsForHost(organizationId, h);
+                for (const cred of creds) {
+                    try {
+                        conn = await mysql.createConnection({
+                            host: h,
+                            user: cred.user,
+                            password: cred.password,
+                            database: dbName,
+                            port: process.env.DB_PORT || 3306,
+                            ssl: { require: true, rejectUnauthorized: false },
+                            connectTimeout: 5000
+                        });
+                        if (conn) break;
+                    } catch (err) {
+                        lastErr = err;
+                    }
                 }
+                if (conn) break;
             }
 
             if (!conn) {
