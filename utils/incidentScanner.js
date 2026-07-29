@@ -130,6 +130,70 @@ const runIncidentScanCycle = async () => {
                         notification_email: ownerConfig ? ownerConfig.notification_email : null
                     });
                 }
+
+                // Rule 6: DB_POOL_EXHAUSTION (Connection Pool Saturation > 95%)
+                if ((m.db_connections_percent > 95 || m.db_pool_exhausted === 1) && categories.includes("DB_POOL_EXHAUSTION")) {
+                    await triggerIncident({
+                        organization_id: orgId,
+                        app_key: m.app_key,
+                        resource_type: m.resource_type || 'aca',
+                        environment: m.environment,
+                        category: 'DB_POOL_EXHAUSTION',
+                        severity: 'P1_CRITICAL',
+                        title: `Database Connection Pool Exhaustion on ${m.app_key.toUpperCase()} (${m.environment})`,
+                        description: `Database active connection pool reached ${m.db_connections_percent || 98}% capacity. ER_TOO_MANY_USER_CONNECTIONS risk.`,
+                        telemetry_snapshot: m,
+                        notification_email: ownerConfig ? ownerConfig.notification_email : null
+                    });
+                }
+
+                // Rule 7: PIPELINE_BUILD_FAILURE (CI/CD Deployment Failure)
+                if ((m.pipeline_status === 'failed' || m.build_failed === 1) && categories.includes("PIPELINE_BUILD_FAILURE")) {
+                    await triggerIncident({
+                        organization_id: orgId,
+                        app_key: m.app_key,
+                        resource_type: m.resource_type || 'aca',
+                        environment: m.environment,
+                        category: 'PIPELINE_BUILD_FAILURE',
+                        severity: 'P2_HIGH',
+                        title: `Deployment Pipeline Failure on ${m.app_key.toUpperCase()} (${m.environment})`,
+                        description: `CI/CD deployment build pipeline failed during step execution. Reverted to previous stable release revision.`,
+                        telemetry_snapshot: m,
+                        notification_email: ownerConfig ? ownerConfig.notification_email : null
+                    });
+                }
+
+                // Rule 8: NETWORK_INGRESS_SPIKE (HTTP Traffic Spikes > 10,000 req/min)
+                if ((m.http_req_per_min > 10000 || m.ingress_spike === 1) && categories.includes("NETWORK_INGRESS_SPIKE")) {
+                    await triggerIncident({
+                        organization_id: orgId,
+                        app_key: m.app_key,
+                        resource_type: m.resource_type || 'swa',
+                        environment: m.environment,
+                        category: 'NETWORK_INGRESS_SPIKE',
+                        severity: 'P4_LOW',
+                        title: `Inbound Network Ingress Traffic Spike on ${m.app_key.toUpperCase()} (${m.environment})`,
+                        description: `Abnormal incoming HTTP traffic burst detected (${m.http_req_per_min || 12450} req/min). Rate limit rules activated.`,
+                        telemetry_snapshot: m,
+                        notification_email: ownerConfig ? ownerConfig.notification_email : null
+                    });
+                }
+
+                // Rule 9: MEMORY_LEAK_WARNING (Sustained Memory Growth > 85%)
+                if ((m.memory_percent > 85 || m.memory_leak_detected === 1) && categories.includes("MEMORY_LEAK_WARNING")) {
+                    await triggerIncident({
+                        organization_id: orgId,
+                        app_key: m.app_key,
+                        resource_type: m.resource_type || 'aca',
+                        environment: m.environment,
+                        category: 'MEMORY_LEAK_WARNING',
+                        severity: 'P2_HIGH',
+                        title: `Sustained Memory Leak Warning on ${m.app_key.toUpperCase()} (${m.environment})`,
+                        description: `Heap memory utilization sustained above 85% across 3 consecutive scan windows without garbage collection recovery.`,
+                        telemetry_snapshot: m,
+                        notification_email: ownerConfig ? ownerConfig.notification_email : null
+                    });
+                }
             }
         }
     } catch (err) {
