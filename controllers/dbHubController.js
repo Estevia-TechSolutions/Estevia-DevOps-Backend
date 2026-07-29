@@ -70,7 +70,7 @@ const queryDbHelper = async (host, database, sql, params = [], organizationId = 
     let lastDirectErr = null;
     for (const h of sortedHosts) {
         try {
-            const creds = await appController._getDbCredentialsForHost(organizationId, h).catch(() => []);
+            const creds = await appController._getDbCredentialsForHost(organizationId, h, database).catch(() => []);
             const credList = creds.length > 0 ? creds : [{ user: process.env.DB_USER, password: process.env.DB_PASSWORD }];
 
             for (const cred of credList) {
