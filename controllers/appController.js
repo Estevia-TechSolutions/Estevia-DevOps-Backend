@@ -8971,7 +8971,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         location: 'Central US',
                         version: '8.0.21',
                         state: 'Ready',
-                        host: 'estevia-dev-db.mysql.database.azure.com',
+                        host: orgSettings.dev_db_host || process.env.DB_HOST || 'estevia-dev-db.mysql.database.azure.com',
                         privateNetwork: false,
                         sku: 'Standard_B1ms',
                         tier: 'Burstable',
@@ -8984,7 +8984,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         location: 'Central US',
                         version: '8.0.21',
                         state: 'Ready',
-                        host: 'estevia-qa-dn.mysql.database.azure.com',
+                        host: orgSettings.qa_db_host || process.env.DB_HOST || 'estevia-qa-dn.mysql.database.azure.com',
                         privateNetwork: false,
                         sku: 'Standard_B1ms',
                         tier: 'Burstable',
@@ -8997,7 +8997,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         location: 'Central US',
                         version: '8.0.21',
                         state: 'Ready',
-                        host: 'estevia-prod-db-v2.estevia-prod-db.private.mysql.database.azure.com',
+                        host: orgSettings.prod_db_host || process.env.DB_HOST || 'estevia-prod-db-v2.estevia-prod-db.private.mysql.database.azure.com',
                         privateNetwork: true,
                         sku: 'Standard_D2ads_v5',
                         tier: 'GeneralPurpose',
@@ -9055,13 +9055,35 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 const { serverName } = req.query;
                 const resolvedHost = req.query.host || appController._resolveDbHost(serverName, orgSettings);
                 const mysql = require('mysql2/promise');
-                const conn = await mysql.createConnection({
-                    host: resolvedHost,
-                    user: process.env.DB_USER,
-                    password: process.env.DB_PASSWORD,
-                    ssl: { require: true, rejectUnauthorized: false },
-                    connectTimeout: 5000
-                });
+                
+                const hostsToTry = [
+                    resolvedHost,
+                    process.env.DB_HOST,
+                    orgSettings.prod_db_host,
+                    orgSettings.dev_db_host
+                ].filter(Boolean);
+                const uniqueHosts = [...new Set(hostsToTry)];
+
+                let conn = null;
+                let lastErr = null;
+                for (const h of uniqueHosts) {
+                    try {
+                        conn = await mysql.createConnection({
+                            host: h,
+                            user: process.env.DB_USER,
+                            password: process.env.DB_PASSWORD,
+                            ssl: { require: true, rejectUnauthorized: false },
+                            connectTimeout: 5000
+                        });
+                        if (conn) break;
+                    } catch (err) {
+                        lastErr = err;
+                    }
+                }
+
+                if (!conn) {
+                    throw lastErr || new Error('Could not connect to any database server host');
+                }
 
                 const [rows] = await conn.query('SHOW DATABASES');
                 await conn.end();
@@ -9145,15 +9167,37 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const orgSettings = await appController._getOrgSettings(organizationId);
             const resolvedHost = req.query.host || appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
-            const conn = await mysql.createConnection({
-                host: resolvedHost,
-                user: process.env.DB_USER,
-                password: process.env.DB_PASSWORD,
-                database: dbName,
-                port: process.env.DB_PORT || 3306,
-                ssl: { require: true, rejectUnauthorized: false },
-                connectTimeout: 8000
-            });
+            
+            const hostsToTry = [
+                resolvedHost,
+                process.env.DB_HOST,
+                orgSettings.prod_db_host,
+                orgSettings.dev_db_host
+            ].filter(Boolean);
+            const uniqueHosts = [...new Set(hostsToTry)];
+
+            let conn = null;
+            let lastErr = null;
+            for (const h of uniqueHosts) {
+                try {
+                    conn = await mysql.createConnection({
+                        host: h,
+                        user: process.env.DB_USER,
+                        password: process.env.DB_PASSWORD,
+                        database: dbName,
+                        port: process.env.DB_PORT || 3306,
+                        ssl: { require: true, rejectUnauthorized: false },
+                        connectTimeout: 5000
+                    });
+                    if (conn) break;
+                } catch (err) {
+                    lastErr = err;
+                }
+            }
+
+            if (!conn) {
+                throw lastErr || new Error('Could not connect to database server host for schema retrieval');
+            }
 
             try {
                 // Fetch all columns for the target database from INFORMATION_SCHEMA
@@ -9224,15 +9268,36 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const resolvedHost = req.body.host || appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
 
-            const conn = await mysql.createConnection({
-                host: resolvedHost,
-                user: process.env.DB_USER,
-                password: process.env.DB_PASSWORD,
-                database: dbName,
-                port: process.env.DB_PORT || 3306,
-                ssl: { require: true, rejectUnauthorized: false },
-                connectTimeout: 8000
-            });
+            const hostsToTry = [
+                resolvedHost,
+                process.env.DB_HOST,
+                orgSettings.prod_db_host,
+                orgSettings.dev_db_host
+            ].filter(Boolean);
+            const uniqueHosts = [...new Set(hostsToTry)];
+
+            let conn = null;
+            let lastErr = null;
+            for (const h of uniqueHosts) {
+                try {
+                    conn = await mysql.createConnection({
+                        host: h,
+                        user: process.env.DB_USER,
+                        password: process.env.DB_PASSWORD,
+                        database: dbName,
+                        port: process.env.DB_PORT || 3306,
+                        ssl: { require: true, rejectUnauthorized: false },
+                        connectTimeout: 5000
+                    });
+                    if (conn) break;
+                } catch (err) {
+                    lastErr = err;
+                }
+            }
+
+            if (!conn) {
+                throw lastErr || new Error('Could not connect to database server host for query execution');
+            }
 
             try {
                 const [results, fields] = await conn.query(query);
