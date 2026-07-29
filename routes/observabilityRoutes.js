@@ -7,6 +7,7 @@ const { protect, protectOptional, lazyBillPackage } = require('../middlewares/au
 // Gated routes for Metrics & Incidents
 router.get('/metrics', protectOptional, lazyBillPackage('Observability'), observabilityController.getMetrics);
 router.get('/incidents', protectOptional, lazyBillPackage('Observability'), observabilityController.getIncidents);
+router.get('/incidents/:id/ai-remediation', protectOptional, lazyBillPackage('Observability'), observabilityController.getAIRemediation);
 router.post('/incidents/:id/acknowledge', protectOptional, lazyBillPackage('Observability'), observabilityController.acknowledgeIncident);
 router.post('/incidents/:id/resolve', protectOptional, lazyBillPackage('Observability'), observabilityController.resolveIncident);
 
