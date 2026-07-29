@@ -3118,8 +3118,20 @@ const appController = {
                 }
             }
             if (targets.length === 0) {
-                const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
-                targets.push(...discovered);
+                if (req.query.subscriptionId && req.query.resourceGroup) {
+                    targets.push({ subscriptionId: req.query.subscriptionId, resourceGroup: req.query.resourceGroup });
+                } else if (req.query.resourceGroup) {
+                    const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
+                    const matched = discovered.filter(t => t.resourceGroup.toLowerCase() === req.query.resourceGroup.toLowerCase());
+                    if (matched.length > 0) {
+                        targets.push(...matched);
+                    } else {
+                        targets.push({ subscriptionId, resourceGroup: req.query.resourceGroup });
+                    }
+                } else {
+                    const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
+                    targets.push(...discovered);
+                }
             }
             if (targets.length === 0) {
                 targets.push({ subscriptionId, resourceGroup });
@@ -3950,92 +3962,7 @@ const appController = {
                 }
             }));
 
-            // Prune applications from DB that are no longer present in Azure (for successfully scanned types)
-            if (swaScanSuccess) {
-                const scannedNames = apps.filter(a => a.type === 'frontend').map(a => a.name);
-                if (scannedNames.length > 0) {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "frontend" AND name NOT IN (?)',
-                        [organizationId, scannedNames]
-                    );
-                } else {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "frontend"',
-                        [organizationId]
-                    );
-                }
-            }
-            if (caScanSuccess) {
-                const scannedNames = apps.filter(a => a.type === 'backend').map(a => a.name);
-                if (scannedNames.length > 0) {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "backend" AND name NOT IN (?)',
-                        [organizationId, scannedNames]
-                    );
-                } else {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "backend"',
-                        [organizationId]
-                    );
-                }
-            }
-            if (vmScanSuccess) {
-                const scannedNames = apps.filter(a => a.type === 'vm').map(a => a.name);
-                if (scannedNames.length > 0) {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "vm" AND name NOT IN (?)',
-                        [organizationId, scannedNames]
-                    );
-                } else {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "vm"',
-                        [organizationId]
-                    );
-                }
-            }
-
-            if (aksScanSuccess) {
-                const scannedNames = apps.filter(a => a.type === 'cluster').map(a => a.name);
-                if (scannedNames.length > 0) {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "cluster" AND name NOT IN (?)',
-                        [organizationId, scannedNames]
-                    );
-                } else {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "cluster"',
-                        [organizationId]
-                    );
-                }
-            }
-            if (dbScanSuccess) {
-                const scannedNames = apps.filter(a => a.type === 'database').map(a => a.name);
-                if (scannedNames.length > 0) {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "database" AND name NOT IN (?)',
-                        [organizationId, scannedNames]
-                    );
-                } else {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "database"',
-                        [organizationId]
-                    );
-                }
-            }
-            if (networkScanSuccess) {
-                const scannedNames = apps.filter(a => a.type === 'network').map(a => a.name);
-                if (scannedNames.length > 0) {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "network" AND name NOT IN (?)',
-                        [organizationId, scannedNames]
-                    );
-                } else {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "network"',
-                        [organizationId]
-                    );
-                }
-            }
+            // Legacy pruning has been deleted as it is handled cleanly on a per-category basis inside _syncAppsInCategoryToDb.
 
 
             const integrity = {
