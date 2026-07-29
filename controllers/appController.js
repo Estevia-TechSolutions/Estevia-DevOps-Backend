@@ -8785,9 +8785,10 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
      * Lists MySQL Flexible Servers in the subscription.
      */
     getDbServers: async (req, res) => {
+        const organizationId = req.query.organizationId || 'estevia';
+        let orgSettings = {};
         try {
-            const organizationId = req.query.organizationId || 'estevia';
-            const orgSettings = await appController._getOrgSettings(organizationId);
+            orgSettings = await appController._getOrgSettings(organizationId);
             const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
             const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
 
