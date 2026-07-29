@@ -483,9 +483,9 @@ const getEnvType = (name, branch) => {
 
 const MASTER_ORGANIZATION_ID = process.env.MASTER_ORGANIZATION_ID || 'estevia';
 
-// Default Fallbacks
-const SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID || 'a812e8e3-34f9-4773-82ee-6398869533b0';
-const RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP || 'Estevia-Prod-RG';
+// Default Fallbacks — subscription/RG are now resolved dynamically; no hardcoded IDs.
+const SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID || null;
+const RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP || null;
 const DEFAULT_DOMAIN = process.env.DEFAULT_DOMAIN || 'esteviatech.com';
 
 // GitHub APIs Caches to avoid secondary rate limiting under rapid polling
@@ -648,13 +648,18 @@ async function getAzureCredential(organizationId) {
         if (!azureSecrets && organizationId !== MASTER_ORGANIZATION_ID) {
             azureSecrets = await credentialController.getDecryptedCredentialsInternal(MASTER_ORGANIZATION_ID, 'azure').catch(() => null);
         }
-        if (azureSecrets && azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
-            console.log(`[AzureAuth] Using ClientSecretCredential for organization: ${organizationId}`);
-            creds.push(new ClientSecretCredential(
-                azureSecrets.tenantId,
-                azureSecrets.clientId,
-                azureSecrets.clientSecret
-            ));
+        if (azureSecrets) {
+            if (azureSecrets.type === 'managed_identity' || azureSecrets.clientId === 'SYSTEM_MANAGED_IDENTITY') {
+                console.log(`[AzureAuth] Using DefaultAzureCredential (Managed Identity) for organization: ${organizationId}`);
+                creds.push(new DefaultAzureCredential());
+            } else if (azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
+                console.log(`[AzureAuth] Using ClientSecretCredential for organization: ${organizationId}`);
+                creds.push(new ClientSecretCredential(
+                    azureSecrets.tenantId,
+                    azureSecrets.clientId,
+                    azureSecrets.clientSecret
+                ));
+            }
         }
     } catch (err) {
         console.warn(`[AzureAuth] Failed to retrieve Azure credentials for organization ${organizationId}:`, err.message);
@@ -949,7 +954,7 @@ const appController = {
         return settings;
     },
 
-    async _getCostAndOptimizationData(organizationId) {
+    async _getCostAndOptimizationData(organizationId, targetSubId = null, targetRg = null) {
         // Fetch applications from DB
         const [apps] = await db.query(
             'SELECT id, name, app_type, status, azure_resource_details, godaddy_dns_details, repo_url FROM applications WHERE organization_id = ?',
@@ -958,9 +963,26 @@ const appController = {
 
         // Retrieve organization configuration settings
         const orgSettings = await appController._getOrgSettings(organizationId);
-        const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-        const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+        const subscriptionId = targetSubId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+        const resourceGroup = targetRg || orgSettings.azure_resource_group || RESOURCE_GROUP;
         const defaultDomain = orgSettings.default_dns_domain || DEFAULT_DOMAIN;
+
+        // Filter applications to match target subscription and resource group
+        const filteredApps = apps.filter(app => {
+            const azureDetails = typeof app.azure_resource_details === 'string'
+                ? JSON.parse(app.azure_resource_details || '{}')
+                : (app.azure_resource_details || {});
+            
+            const rg = azureDetails.resourceGroup || resourceGroup;
+            let subId = null;
+            if (azureDetails.resourceId) {
+                const match = azureDetails.resourceId.match(/\/subscriptions\/([^\/]+)\/resourceGroups/i);
+                if (match) subId = match[1];
+            }
+            subId = subId || subscriptionId;
+
+            return subId.toLowerCase() === subscriptionId.toLowerCase() && rg.toLowerCase() === resourceGroup.toLowerCase();
+        });
 
         // Promise timeout helper
         const promiseWithTimeout = (promise, ms, defaultValue = null) => {
@@ -998,7 +1020,7 @@ const appController = {
         // If no Azure resources could be fetched (timed out or connection error), fall back to DB records
         if (azureResources.length === 0) {
             console.log('[AppController] Azure resource listing returned empty or timed out. Generating fallback resources from database application records.');
-            for (const app of apps) {
+            for (const app of filteredApps) {
                 const azureDetails = typeof app.azure_resource_details === 'string'
                     ? JSON.parse(app.azure_resource_details || '{}')
                     : (app.azure_resource_details || {});
@@ -1098,7 +1120,7 @@ const appController = {
 
         // Match with DB apps by name or resource ID
         const dbAppMap = new Map();
-        for (const app of apps) {
+        for (const app of filteredApps) {
             const azureDetails = typeof app.azure_resource_details === 'string'
                 ? JSON.parse(app.azure_resource_details || '{}')
                 : (app.azure_resource_details || {});
@@ -1413,7 +1435,7 @@ const appController = {
         }
 
         // Sync database apps that were not matched by ID/name from the Azure subscription list
-        for (const app of apps) {
+        for (const app of filteredApps) {
             const appName = app.name.toLowerCase();
             const matched = Array.from(processedResourceIds).some(id => id.includes(appName)) ||
                 azureResources.some(r => r.name?.toLowerCase() === appName);
@@ -2051,6 +2073,114 @@ const appController = {
     },
 
     /**
+     * Dynamically discovers all (subscriptionId, resourceGroup) scan targets for an organization.
+     * Reads AZURE_SUBSCRIPTION_IDS env var (comma-separated) + org settings subscription,
+     * then queries ARM to list all resource groups on each subscription, filtering to Estevia RGs.
+     * Falls back to the org-configured RG if ARM listing fails.
+     */
+    _discoverScanTargets: async (organizationId, orgSettings) => {
+        const primarySubId = orgSettings.azure_subscription_id || null;
+        const primaryRG = orgSettings.azure_resource_group || null;
+
+        let credential;
+        try {
+            credential = await getAzureCredential(organizationId);
+        } catch (err) {
+            console.error('[AppController] _discoverScanTargets: Failed to get Azure credential:', err.message);
+            const targets = [];
+            if (primarySubId && primaryRG) targets.push({ subscriptionId: primarySubId, resourceGroup: primaryRG });
+            return targets;
+        }
+
+        // 1. Fetch cached subscription IDs from DB applications
+        const [dbApps] = await db.query('SELECT azure_resource_details FROM applications WHERE organization_id = ?', [organizationId]).catch(() => [[]]);
+        const cachedSubIds = new Set();
+        for (const app of dbApps) {
+            try {
+                const details = typeof app.azure_resource_details === 'string'
+                    ? JSON.parse(app.azure_resource_details || '{}')
+                    : (app.azure_resource_details || {});
+                const resId = details.resourceId || '';
+                const subIdMatch = resId.match(/\/subscriptions\/([^\/]+)/i);
+                if (subIdMatch) {
+                    cachedSubIds.add(subIdMatch[1]);
+                }
+            } catch (e) {}
+        }
+
+        // 2. Dynamically list all subscriptions from Azure API using credential
+        const apiSubIds = [];
+        try {
+            const tokenRes = await credential.getToken('https://management.azure.com/.default');
+            const token = tokenRes.token;
+            const subRes = await axios.get('https://management.azure.com/subscriptions?api-version=2020-01-01', {
+                headers: { 'Authorization': `Bearer ${token}` },
+                timeout: 8000
+            });
+            if (subRes.data && Array.isArray(subRes.data.value)) {
+                subRes.data.value.forEach(s => {
+                    if (s.subscriptionId) apiSubIds.push(s.subscriptionId);
+                });
+            }
+        } catch (err) {
+            console.warn('[AppController] _discoverScanTargets: Dynamic subscriptions query failed:', err.message);
+        }
+
+        // Merge all subscription IDs
+        const envSubIds = (process.env.AZURE_SUBSCRIPTION_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+        const allSubIds = [...new Set([
+            primarySubId,
+            ...envSubIds,
+            ...apiSubIds,
+            ...cachedSubIds
+        ].filter(Boolean))];
+
+        if (allSubIds.length === 0) {
+            console.warn('[AppController] _discoverScanTargets: No subscription IDs configured or discovered.');
+            return [];
+        }
+
+        const targets = [];
+
+        await Promise.all(allSubIds.map(async (subId) => {
+            try {
+                const tokenRes = await credential.getToken('https://management.azure.com/.default');
+                const token = tokenRes.token;
+                const rgUrl = `https://management.azure.com/subscriptions/${subId}/resourceGroups?api-version=2021-04-01`;
+                const rgRes = await axios.get(rgUrl, {
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    timeout: 10000
+                });
+                const rgs = (rgRes.data?.value || [])
+                    .filter(rg => /estevia/i.test(rg.name) && rg.properties?.provisioningState === 'Succeeded')
+                    .map(rg => ({ subscriptionId: subId, resourceGroup: rg.name }));
+
+                if (rgs.length > 0) {
+                    targets.push(...rgs);
+                    console.log(`[AppController] _discoverScanTargets: Found ${rgs.length} RG(s) on sub ${subId}: ${rgs.map(r => r.resourceGroup).join(', ')}`);
+                } else if (subId === primarySubId && primaryRG) {
+                    // No Estevia RGs found on primary sub — fall back to configured RG
+                    targets.push({ subscriptionId: subId, resourceGroup: primaryRG });
+                }
+            } catch (err) {
+                console.warn(`[AppController] _discoverScanTargets: Failed to list RGs for sub ${subId}:`, err.message);
+                if (subId === primarySubId && primaryRG) {
+                    targets.push({ subscriptionId: subId, resourceGroup: primaryRG });
+                }
+            }
+        }));
+
+        // Deduplicate by subscriptionId+resourceGroup key
+        const seen = new Set();
+        return targets.filter(t => {
+            const key = `${t.subscriptionId}:${t.resourceGroup}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    },
+
+    /**
      * Helper to resolve, map and save a specific category of apps to DB incrementally.
      * Prevents locking up the main scan process and allows progressive updates.
      */
@@ -2073,7 +2203,7 @@ const appController = {
                     app.repositoryUrl = `https://github.com/${githubOwner}/estevia-backend-api`;
                 } else if (deducedName.includes('platform-management')) {
                     app.repositoryUrl = `https://github.com/${githubOwner}/estevia-platform-management`;
-                } else if (deducedName.includes('devops-backend')) {
+                } else if (deducedName.includes('devops-backend') || deducedName === 'api-evaops') {
                     app.repositoryUrl = `https://github.com/${githubOwner}/Estevia-DevOps-Backend`;
                 } else if (deducedName.includes('devops-frontend') || deducedName === 'evaops') {
                     app.repositoryUrl = `https://github.com/${githubOwner}/Estevia-DevOps-Frontend`;
@@ -2311,7 +2441,7 @@ const appController = {
                     }
                     if (
                         (cleanAppName.includes('evaops') || cleanAppName.includes('devops') || cleanAppName.includes('api-evaops')) &&
-                        (pName.includes('evaops') || pName.includes('devops') || pName.includes('backend-api') || pName.includes('evaops-backend'))
+                        (pName.includes('evaops') || pName.includes('devops') || pName.includes('evaops-backend'))
                     ) {
                         return true;
                     }
@@ -2590,17 +2720,17 @@ const appController = {
             }
         }));
 
-        // Category Pruning logic
+        // Category Pruning logic restricted to target resource group
         const scannedNames = categoryApps.map(a => a.name);
         if (scannedNames.length > 0) {
             await db.query(
-                'DELETE FROM applications WHERE organization_id = ? AND app_type = ? AND name NOT IN (?)',
-                [organizationId, category, scannedNames]
+                "DELETE FROM applications WHERE organization_id = ? AND app_type = ? AND JSON_UNQUOTE(JSON_EXTRACT(azure_resource_details, '$.resourceGroup')) = ? AND name NOT IN (?)",
+                [organizationId, category, resourceGroup, scannedNames]
             );
         } else {
             await db.query(
-                'DELETE FROM applications WHERE organization_id = ? AND app_type = ?',
-                [organizationId, category]
+                "DELETE FROM applications WHERE organization_id = ? AND app_type = ? AND JSON_UNQUOTE(JSON_EXTRACT(azure_resource_details, '$.resourceGroup')) = ?",
+                [organizationId, category, resourceGroup]
             );
         }
     },
@@ -2618,10 +2748,10 @@ const appController = {
 
             const orgSettings = await appController._getOrgSettings(organizationId, true);
 
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
             const defaultDomain = orgSettings.default_dns_domain || DEFAULT_DOMAIN;
             const githubOwner = orgSettings.github_owner || 'Estevia-TechSolutions';
+            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             // Cached request check
             if (req.query.cached === 'true') {
@@ -2658,8 +2788,20 @@ const appController = {
                     };
                 });
 
-                // Apply granular resource & environment permission filtering for non-admin users
                 let filteredApps = apps;
+                if (req.query.subscriptionId) {
+                    filteredApps = filteredApps.filter(app => {
+                        const resId = app.resourceId || '';
+                        const subIdMatch = resId.match(/\/subscriptions\/([^\/]+)/i);
+                        return subIdMatch && subIdMatch[1].toLowerCase() === req.query.subscriptionId.toLowerCase();
+                    });
+                }
+                if (req.query.resourceGroup) {
+                    filteredApps = filteredApps.filter(app => {
+                        return (app.resourceGroup || '').toLowerCase() === req.query.resourceGroup.toLowerCase();
+                    });
+                }
+
                 if (req.user && !['owner', 'admin'].includes(req.user.role?.toLowerCase())) {
                     const [permRows] = await db.query(
                         'SELECT app_key, environment, actions FROM user_resource_permissions WHERE user_id = ? AND organization_id = ?',
@@ -3034,10 +3176,43 @@ const appController = {
 
             const repoHasGithubActionsMap = new Map();
             const credential = await getAzureCredential(organizationId);
-            const webClient = new WebSiteManagementClient(credential, subscriptionId);
-            const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
-
             const apps = [];
+
+            const targets = [];
+            if (req.query.targets) {
+                try {
+                    targets.push(...JSON.parse(req.query.targets));
+                } catch (e) {
+                    console.warn('[AppController] Failed to parse targets query parameter:', e.message);
+                }
+            }
+            if (targets.length === 0) {
+                if (req.query.subscriptionId && req.query.resourceGroup) {
+                    targets.push({ subscriptionId: req.query.subscriptionId, resourceGroup: req.query.resourceGroup });
+                } else if (req.query.resourceGroup) {
+                    const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
+                    const matched = discovered.filter(t => t.resourceGroup.toLowerCase() === req.query.resourceGroup.toLowerCase());
+                    if (matched.length > 0) {
+                        targets.push(...matched);
+                    } else {
+                        targets.push({ subscriptionId, resourceGroup: req.query.resourceGroup });
+                    }
+                } else {
+                    const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
+                    targets.push(...discovered);
+                }
+            }
+            if (targets.length === 0) {
+                targets.push({ subscriptionId, resourceGroup });
+            }
+
+            for (const target of targets) {
+                const subscriptionId = target.subscriptionId;
+                const resourceGroup = target.resourceGroup;
+                console.log(`[AppController] Scanning target sub: ${subscriptionId}, RG: ${resourceGroup}`);
+
+                const webClient = new WebSiteManagementClient(credential, subscriptionId);
+                const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
 
             // 1. Fetch Static Web Apps (Frontends)
             const swaApps = [];
@@ -3367,6 +3542,7 @@ const appController = {
                 apps.push(...aksApps);
             } catch (err) {
                 console.error('[AppController] Error scanning AKS clusters:', err.message);
+            }
             }
 
 
@@ -3855,92 +4031,7 @@ const appController = {
                 }
             }));
 
-            // Prune applications from DB that are no longer present in Azure (for successfully scanned types)
-            if (swaScanSuccess) {
-                const scannedNames = apps.filter(a => a.type === 'frontend').map(a => a.name);
-                if (scannedNames.length > 0) {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "frontend" AND name NOT IN (?)',
-                        [organizationId, scannedNames]
-                    );
-                } else {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "frontend"',
-                        [organizationId]
-                    );
-                }
-            }
-            if (caScanSuccess) {
-                const scannedNames = apps.filter(a => a.type === 'backend').map(a => a.name);
-                if (scannedNames.length > 0) {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "backend" AND name NOT IN (?)',
-                        [organizationId, scannedNames]
-                    );
-                } else {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "backend"',
-                        [organizationId]
-                    );
-                }
-            }
-            if (vmScanSuccess) {
-                const scannedNames = apps.filter(a => a.type === 'vm').map(a => a.name);
-                if (scannedNames.length > 0) {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "vm" AND name NOT IN (?)',
-                        [organizationId, scannedNames]
-                    );
-                } else {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "vm"',
-                        [organizationId]
-                    );
-                }
-            }
-
-            if (aksScanSuccess) {
-                const scannedNames = apps.filter(a => a.type === 'cluster').map(a => a.name);
-                if (scannedNames.length > 0) {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "cluster" AND name NOT IN (?)',
-                        [organizationId, scannedNames]
-                    );
-                } else {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "cluster"',
-                        [organizationId]
-                    );
-                }
-            }
-            if (dbScanSuccess) {
-                const scannedNames = apps.filter(a => a.type === 'database').map(a => a.name);
-                if (scannedNames.length > 0) {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "database" AND name NOT IN (?)',
-                        [organizationId, scannedNames]
-                    );
-                } else {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "database"',
-                        [organizationId]
-                    );
-                }
-            }
-            if (networkScanSuccess) {
-                const scannedNames = apps.filter(a => a.type === 'network').map(a => a.name);
-                if (scannedNames.length > 0) {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "network" AND name NOT IN (?)',
-                        [organizationId, scannedNames]
-                    );
-                } else {
-                    await db.query(
-                        'DELETE FROM applications WHERE organization_id = ? AND app_type = "network"',
-                        [organizationId]
-                    );
-                }
-            }
+            // Legacy pruning has been deleted as it is handled cleanly on a per-category basis inside _syncAppsInCategoryToDb.
 
 
             const integrity = {
@@ -4033,6 +4124,7 @@ const appController = {
                 location,
                 githubRepo,
                 resourceGroup: customResourceGroup,
+                subscriptionId: reqSubscriptionId,
                 managedEnvironment,
                 cpu,
                 memory,
@@ -4088,7 +4180,7 @@ const appController = {
             // ── End License Tier Check ────────────────────────────────────────
 
             const orgSettings = await appController._getOrgSettings(organizationId);
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const subscriptionId = reqSubscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
             const targetResourceGroup = customResourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             const targetLocation = location || 'eastus2';
@@ -7048,7 +7140,12 @@ const appController = {
                 : (app.azure_resource_details || {});
 
             const orgSettings = await appController._getOrgSettings(orgId);
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            let subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resId = azureDetails.resourceId || '';
+            const subIdMatch = resId.match(/\/subscriptions\/([^\/]+)/i);
+            if (subIdMatch) {
+                subscriptionId = subIdMatch[1];
+            }
             const resourceGroup = azureDetails.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             const isDevMode = !process.env.AZURE_CLIENT_ID;
@@ -8220,7 +8317,8 @@ const appController = {
     getCostData: async (req, res) => {
         try {
             const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
-            const data = await appController._getCostAndOptimizationData(organizationId);
+            const { subscriptionId, resourceGroup } = req.query;
+            const data = await appController._getCostAndOptimizationData(organizationId, subscriptionId, resourceGroup);
             return res.json({
                 success: true,
                 ...data
@@ -8298,7 +8396,7 @@ const appController = {
      */
     askEva: async (req, res) => {
         try {
-            const { question } = req.body;
+            const { question, subscriptionId, resourceGroup } = req.body;
             if (!question) {
                 return res.status(400).json({ success: false, message: 'Question is required.' });
             }
@@ -8306,7 +8404,7 @@ const appController = {
             const organizationId = req.body.organizationId || req.user?.organization_id || 'estevia';
 
             // Fetch dynamic resource details and optimization suggestions using unified helper
-            const costData = await appController._getCostAndOptimizationData(organizationId);
+            const costData = await appController._getCostAndOptimizationData(organizationId, subscriptionId, resourceGroup);
             const detailedCosts = costData.detailedCosts || [];
             const suggestions = costData.suggestions || [];
 
@@ -8477,10 +8575,11 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
             console.log(`[CostAPI] === Fetching Azure Cloud Bills for Organization: ${organizationId} ===`);
             
+            const orgSettings = await appController._getOrgSettings(organizationId);
+            const subscriptionId = req.query.subscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+
             // Query actual Azure Cost Management API
             try {
-                const orgSettings = await appController._getOrgSettings(organizationId);
-                const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
                 console.log(`[CostAPI] Querying live Azure Cost Management API for Subscription ID: ${subscriptionId}...`);
                 
                 const credential = await getAzureCredential(organizationId);
@@ -8655,8 +8754,9 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         status, currency, 
                         total_amount, aca_compute_amount, mysql_db_amount, swa_cdn_amount, storage_vm_amount, network_egress_amount 
                  FROM azure_consumption_bills 
-                 WHERE billing_period >= '2026-05'
-                 ORDER BY due_date DESC`
+                 WHERE billing_period >= '2026-05' AND azure_subscription_id = ?
+                 ORDER BY due_date DESC`,
+                [subscriptionId]
             ).catch(() => [[]]);
 
             console.log(`[CostAPI] Query returned ${rows ? rows.length : 0} bills from database. Sending response.`);
@@ -8717,11 +8817,12 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
      * Lists MySQL Flexible Servers in the subscription.
      */
     getDbServers: async (req, res) => {
+        const organizationId = req.query.organizationId || 'estevia';
+        let orgSettings = {};
         try {
-            const organizationId = req.query.organizationId || 'estevia';
-            const orgSettings = await appController._getOrgSettings(organizationId);
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+            orgSettings = await appController._getOrgSettings(organizationId);
+            const subscriptionId = req.query.subscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             const credential = await getAzureCredential(organizationId);
             const tokenRes = await credential.getToken("https://management.azure.com/.default");
@@ -8877,8 +8978,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             }
 
             orgSettings = await appController._getOrgSettings(organizationId);
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+            const subscriptionId = req.query.subscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             const credential = await getAzureCredential(organizationId);
             const tokenRes = await credential.getToken("https://management.azure.com/.default");
@@ -8905,7 +9006,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             console.warn('[AppController] getDatabases via Azure failed, falling back to direct SQL query:', error.message);
             try {
                 const { serverName } = req.query;
-                const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
+                const resolvedHost = req.query.host || appController._resolveDbHost(serverName, orgSettings);
                 const mysql = require('mysql2/promise');
                 const conn = await mysql.createConnection({
                     host: resolvedHost,
@@ -8951,8 +9052,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             }
 
             const orgSettings = await appController._getOrgSettings(organizationId);
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
+            const subscriptionId = req.body.subscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = req.body.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             const credential = await getAzureCredential(organizationId);
             const tokenRes = await credential.getToken("https://management.azure.com/.default");
@@ -8995,7 +9096,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             }
 
             const orgSettings = await appController._getOrgSettings(organizationId);
-            const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
+            const resolvedHost = req.query.host || appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
             const conn = await mysql.createConnection({
                 host: resolvedHost,
@@ -9073,7 +9174,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             }
 
             const orgSettings = await appController._getOrgSettings(organizationId);
-            const resolvedHost = appController._resolveDbHost(serverName, orgSettings);
+            const resolvedHost = req.body.host || appController._resolveDbHost(serverName, orgSettings);
             const mysql = require('mysql2/promise');
 
             const conn = await mysql.createConnection({
@@ -9124,7 +9225,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         try {
             const organizationId = req.query.organizationId || 'estevia';
             const orgSettings = await appController._getOrgSettings(organizationId);
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const subscriptionId = req.query.subscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
             const devopsOrgUrl = orgSettings.azure_devops_org_url || 'https://dev.azure.com/esteviatech';
             const devopsProject = orgSettings.azure_devops_project || 'Estevia-Platform';
 
@@ -9337,17 +9438,118 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         try {
             const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
             const orgSettings = await appController._getOrgSettings(organizationId);
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
 
+            const primarySubId = orgSettings.azure_subscription_id || null;
             const credential = await getAzureCredential(organizationId);
-            const client = new ResourceManagementClient(credential, subscriptionId);
+            const tokenRes = await credential.getToken("https://management.azure.com/.default");
+            const token = tokenRes.token;
 
-            const resourceGroups = [];
-            for await (const rg of client.resourceGroups.list()) {
-                resourceGroups.push(rg.name);
+            // Fetch cached apps for fallback resource groups and subscription IDs
+            const [dbApps] = await db.query('SELECT azure_resource_details FROM applications WHERE organization_id = ?', [organizationId]);
+            const cachedRGsBySub = {};
+            for (const app of dbApps) {
+                try {
+                    const details = typeof app.azure_resource_details === 'string'
+                        ? JSON.parse(app.azure_resource_details || '{}')
+                        : (app.azure_resource_details || {});
+                    const rg = details.resourceGroup;
+                    const resId = details.resourceId || '';
+                    const subIdMatch = resId.match(/\/subscriptions\/([^\/]+)/i);
+                    if (rg && subIdMatch) {
+                        const subId = subIdMatch[1];
+                        if (!cachedRGsBySub[subId]) cachedRGsBySub[subId] = new Set();
+                        cachedRGsBySub[subId].add(rg);
+                    }
+                } catch (e) {}
             }
 
-            res.json({ success: true, resourceGroups });
+            // Dynamically discover all active subscription IDs via Azure API
+            const apiSubIds = [];
+            try {
+                const subListRes = await axios.get('https://management.azure.com/subscriptions?api-version=2020-01-01', {
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    timeout: 8000
+                });
+                if (subListRes.data && Array.isArray(subListRes.data.value)) {
+                    subListRes.data.value.forEach(s => {
+                        if (s.subscriptionId) apiSubIds.push(s.subscriptionId);
+                    });
+                }
+            } catch (err) {
+                console.warn('[AppController] getResourceGroups: Dynamic subscriptions query failed:', err.message);
+            }
+
+            const envSubIds = (process.env.AZURE_SUBSCRIPTION_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+            const allSubIds = [...new Set([
+                primarySubId,
+                ...envSubIds,
+                ...apiSubIds,
+                ...Object.keys(cachedRGsBySub)
+            ].filter(Boolean))];
+
+            if (allSubIds.length === 0) {
+                return res.json({ success: true, subscriptions: [] });
+            }
+
+            const subNames = {
+                '4a551976-35a8-4305-b128-fe592805be41': 'Estevia-Platform-Subscription',
+                '40070b3e-38c4-4c4e-89d5-dd601f9f7622': 'Estevia-Client-Projects-Subscription',
+                'a812e8e3-34f9-4773-82ee-6398869533b0': 'Estevia-TechSolutions - Azure Main (Legacy)'
+            };
+
+            const subscriptions = [];
+
+            await Promise.all(allSubIds.map(async (subId) => {
+                let displayName = subNames[subId] || subId;
+                let status = 'active';
+                const rgs = new Set();
+
+                // Fallback: add org-configured resource group if it matches this subId
+                if (subId === primarySubId && orgSettings.azure_resource_group) {
+                    rgs.add(orgSettings.azure_resource_group);
+                }
+
+                // Add database cached resource groups for this subscription
+                if (cachedRGsBySub[subId]) {
+                    cachedRGsBySub[subId].forEach(rg => rgs.add(rg));
+                }
+
+                try {
+                    // Get subscription details (display name and state)
+                    const subUrl = `https://management.azure.com/subscriptions/${subId}?api-version=2020-01-01`;
+                    const subRes = await axios.get(subUrl, {
+                        headers: { 'Authorization': `Bearer ${token}` },
+                        timeout: 5000
+                    });
+                    displayName = subRes.data?.displayName || displayName;
+                    const state = subRes.data?.state || 'active';
+                    status = state.toLowerCase() === 'enabled' ? 'active' : state.toLowerCase();
+
+                    // List live resource groups
+                    const client = new ResourceManagementClient(credential, subId);
+                    for await (const rg of client.resourceGroups.list()) {
+                        if (rg.name) {
+                            rgs.add(rg.name);
+                        }
+                    }
+                } catch (err) {
+                    console.warn(`[AppController] Live details/RGs fetch failed for sub ${subId}:`, err.message);
+                    if (subId === 'a812e8e3-34f9-4773-82ee-6398869533b0') {
+                        status = 'restricted';
+                    } else {
+                        status = 'offline';
+                    }
+                }
+
+                subscriptions.push({
+                    id: subId,
+                    displayName,
+                    status,
+                    resourceGroups: [...rgs]
+                });
+            }));
+
+            res.json({ success: true, subscriptions });
         } catch (error) {
             console.error('[AppController] getResourceGroups failed:', error);
             res.status(500).json({ message: 'Failed to retrieve subscription resource groups.', error: error.message });
@@ -10266,28 +10468,95 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             } catch (e) {
                 severities = {};
             }
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
+            const queriedSubId = req.query.subscriptionId;
+            const queriedRg = req.query.resourceGroup;
+            const subscriptionId = queriedSubId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = queriedRg || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
-            const credential = await getAzureCredential(organizationId);
-            const tokenRes = await credential.getToken("https://management.azure.com/.default");
-            const token = tokenRes.token;
+            let targets = [];
+            if (queriedSubId || queriedRg) {
+                const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
+                if (discovered && discovered.length > 0) {
+                    targets = discovered.filter(t => {
+                        let match = true;
+                        if (queriedSubId) {
+                            match = match && (t.subscriptionId && t.subscriptionId.toLowerCase() === queriedSubId.toLowerCase());
+                        }
+                        if (queriedRg) {
+                            match = match && (t.resourceGroup && t.resourceGroup.toLowerCase() === queriedRg.toLowerCase());
+                        }
+                        return match;
+                    });
+                }
+                if (targets.length === 0) {
+                    targets.push({ subscriptionId, resourceGroup });
+                }
+            } else {
+                if (req.query.targets) {
+                    try {
+                        targets.push(...JSON.parse(req.query.targets));
+                    } catch (e) {
+                        console.warn('[AppController] Failed to parse targets query parameter:', e.message);
+                    }
+                }
+                if (targets.length === 0) {
+                    const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
+                    targets.push(...discovered);
+                }
+                if (targets.length === 0) {
+                    targets.push({ subscriptionId, resourceGroup });
+                }
+            }
 
-            const resourceClient = new ResourceManagementClient(credential, subscriptionId);
             const resources = [];
             try {
-                for await (const r of resourceClient.resources.listByResourceGroup(resourceGroup)) {
-                    resources.push(r);
+                const credential = await getAzureCredential(organizationId);
+                for (const target of targets) {
+                    try {
+                        const resourceClient = new ResourceManagementClient(credential, target.subscriptionId);
+                        for await (const r of resourceClient.resources.listByResourceGroup(target.resourceGroup)) {
+                            resources.push(r);
+                        }
+                    } catch (targetErr) {
+                        console.warn(`[AppController] getCompliance: Failed to list resources for sub ${target.subscriptionId}, RG ${target.resourceGroup}:`, targetErr.message);
+                    }
                 }
             } catch (err) {
-                console.error('[AppController] Error listing compliance resources:', err.message);
+                console.warn('[AppController] Live Azure compliance scanning unavailable, falling back to local database records:', err.message);
             }
 
             // Fetch registered applications
-            const [dbApps] = await db.query(
+            let [dbApps] = await db.query(
                 'SELECT id, name, app_type, status, azure_resource_details, repo_url FROM applications WHERE organization_id = ?',
                 [organizationId]
             );
+
+            if (queriedSubId || queriedRg) {
+                dbApps = (dbApps || []).filter(app => {
+                    const details = typeof app.azure_resource_details === 'string'
+                        ? JSON.parse(app.azure_resource_details || '{}')
+                        : (app.azure_resource_details || {});
+                    
+                    let subId = null;
+                    let rg = details.resourceGroup;
+                    if (details.resourceId) {
+                        const match = details.resourceId.match(/\/subscriptions\/([^\/]+)\/resourceGroups\/([^\/]+)/i);
+                        if (match) {
+                            subId = match[1];
+                            rg = match[2];
+                        }
+                    }
+                    
+                    let match = true;
+                    if (queriedSubId) {
+                        match = match && (subId && subId.toLowerCase() === queriedSubId.toLowerCase());
+                    }
+                    if (queriedRg) {
+                        match = match && (rg && rg.toLowerCase() === queriedRg.toLowerCase());
+                    }
+                    return match;
+                });
+            }
 
             // Fallback if no resources returned from Azure
             if (resources.length === 0) {
@@ -10324,14 +10593,15 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 }
 
                 // Inject mock orphaned vm to showcase shadow-it compliance auditing
-                if (resources.length > 0 && !resources.some(r => r.name === 'untracked-vm-sandbox')) {
+                const showShadowVm = !queriedRg || queriedRg.toLowerCase() === 'estevia-prod-rg';
+                if (showShadowVm && resources.length > 0 && !resources.some(r => r.name === 'untracked-vm-sandbox')) {
                     resources.push({
                         id: 'db-shadow-vm',
                         name: 'untracked-vm-sandbox',
                         type: 'Microsoft.Compute/virtualMachines',
                         location: 'East US',
                         tags: { Owner: 'unknown' },
-                        details: { portsOpen: ['3389'] }
+                        details: { portsOpen: ['3389'], resourceGroup: queriedRg || 'estevia-prod-rg' }
                     });
                 }
             }

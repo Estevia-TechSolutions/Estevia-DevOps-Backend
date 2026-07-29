@@ -17,7 +17,7 @@ async function getAzureCredential(organizationId) {
         const credentialController = require('../controllers/credentialController');
         const azureSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure');
         if (azureSecrets) {
-            if (azureSecrets.type === 'managed_identity') {
+            if (azureSecrets.type === 'managed_identity' || azureSecrets.clientId === 'SYSTEM_MANAGED_IDENTITY') {
                 return new DefaultAzureCredential();
             }
             if (azureSecrets.clientId && azureSecrets.clientSecret && azureSecrets.tenantId) {
