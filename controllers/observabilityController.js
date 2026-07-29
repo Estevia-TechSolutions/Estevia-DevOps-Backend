@@ -1,5 +1,87 @@
 const db = require('../config/db');
 
+const getScopedAppKeys = async (orgId, targetSubId, targetRg) => {
+    if (!targetSubId && !targetRg) return null; // No filtering needed
+    
+    const extractAppKey = (resourceName) => {
+        if (!resourceName) return 'unknown';
+        const clean = resourceName.toLowerCase()
+            .replace(/-(dev|qa|prod|production|staging|test)(-swa)?$/i, '')
+            .replace(/(-swa)?$/i, '')
+            .replace(/^estevia-/, '');
+        return clean || resourceName.toLowerCase();
+    };
+
+    const [apps] = await db.query(
+        'SELECT name, azure_resource_details FROM applications WHERE organization_id = ?',
+        [orgId]
+    ).catch(() => [[]]);
+
+    const [scannedDbApps] = await db.query(
+        'SELECT name, type, azure_resource_id FROM scanned_apps WHERE organization_id = ?',
+        [orgId]
+    ).catch(() => [[]]);
+
+    const scopedKeys = new Set();
+
+    for (const app of (apps || [])) {
+        let subId = null;
+        let rg = null;
+        try {
+            const details = typeof app.azure_resource_details === 'string' 
+                ? JSON.parse(app.azure_resource_details || '{}') 
+                : (app.azure_resource_details || {});
+            
+            rg = details.resourceGroup;
+            if (details.resourceId) {
+                const match = details.resourceId.match(/\/subscriptions\/([^\/]+)\/resourceGroups\/([^\/]+)/i);
+                if (match) {
+                    subId = match[1];
+                    rg = match[2];
+                }
+            }
+        } catch (e) {}
+
+        let match = true;
+        if (targetSubId) {
+            match = match && (subId && subId.toLowerCase() === targetSubId.toLowerCase());
+        }
+        if (targetRg) {
+            match = match && (rg && rg.toLowerCase() === targetRg.toLowerCase());
+        }
+        if (match) {
+            const key = extractAppKey(app.name);
+            if (key) scopedKeys.add(key);
+        }
+    }
+
+    for (const app of (scannedDbApps || [])) {
+        let subId = null;
+        let rg = null;
+        if (app.azure_resource_id) {
+            const match = app.azure_resource_id.match(/\/subscriptions\/([^\/]+)\/resourceGroups\/([^\/]+)/i);
+            if (match) {
+                subId = match[1];
+                rg = match[2];
+            }
+        }
+
+        let match = true;
+        if (targetSubId) {
+            match = match && (subId && subId.toLowerCase() === targetSubId.toLowerCase());
+        }
+        if (targetRg) {
+            match = match && (rg && rg.toLowerCase() === targetRg.toLowerCase());
+        }
+        if (match) {
+            const key = extractAppKey(app.name);
+            if (key) scopedKeys.add(key);
+        }
+    }
+
+    return Array.from(scopedKeys);
+};
+
 /**
  * GET /api/observability/metrics
  * Fetch Prometheus/Grafana-style time-series metrics
@@ -7,7 +89,7 @@ const db = require('../config/db');
 exports.getMetrics = async (req, res) => {
     try {
         const organization_id = req.user.organization_id || 'estevia';
-        const { app_key, environment = 'dev', time_window = '1h', resource_type = 'aca' } = req.query;
+        const { app_key, environment = 'dev', time_window = '1h', resource_type = 'aca', subscriptionId, resourceGroup } = req.query;
 
         // Calculate time boundary
         let windowMinutes = 60;
@@ -15,6 +97,19 @@ exports.getMetrics = async (req, res) => {
         if (time_window === '6h') windowMinutes = 360;
         if (time_window === '24h') windowMinutes = 1440;
         if (time_window === '7d') windowMinutes = 10080;
+
+        const scopedKeys = await getScopedAppKeys(organization_id, subscriptionId, resourceGroup);
+        if (scopedKeys !== null) {
+            if (app_key && app_key !== 'all') {
+                if (!scopedKeys.includes(app_key)) {
+                    return res.json({ success: true, count: 0, metrics: [] });
+                }
+            } else {
+                if (scopedKeys.length === 0) {
+                    return res.json({ success: true, count: 0, metrics: [] });
+                }
+            }
+        }
 
         let query = `
             SELECT id, app_key, resource_type, environment, cpu_percent, memory_mb, request_rate, p95_latency_ms, p99_latency_ms, http_5xx_count, replica_count, db_connections, network_in_kbps, network_out_kbps, storage_percent, disk_iops, recorded_at
@@ -26,7 +121,11 @@ exports.getMetrics = async (req, res) => {
         if (app_key && app_key !== 'all') {
             query += ` AND app_key = ?`;
             params.push(app_key);
+        } else if (scopedKeys !== null && scopedKeys.length > 0) {
+            query += ` AND app_key IN (?)`;
+            params.push(scopedKeys);
         }
+        
         if (resource_type) {
             query += ` AND resource_type = ?`;
             params.push(resource_type);
@@ -111,7 +210,20 @@ exports.getMetrics = async (req, res) => {
 exports.getIncidents = async (req, res) => {
     try {
         const organization_id = req.user?.organization_id || 'estevia';
-        const { app_key, environment } = req.query;
+        const { app_key, environment, subscriptionId, resourceGroup } = req.query;
+
+        const scopedKeys = await getScopedAppKeys(organization_id, subscriptionId, resourceGroup);
+        if (scopedKeys !== null) {
+            if (app_key) {
+                if (!scopedKeys.includes(app_key)) {
+                    return res.json({ success: true, count: 0, incidents: [] });
+                }
+            } else {
+                if (scopedKeys.length === 0) {
+                    return res.json({ success: true, count: 0, incidents: [] });
+                }
+            }
+        }
 
         let query = `
             SELECT id, organization_id, app_key, resource_type, environment, severity, incident_title, incident_description, telemetry_snapshot, status, acknowledged_at, resolved_at, responsible_user_id, created_at
@@ -123,7 +235,11 @@ exports.getIncidents = async (req, res) => {
         if (app_key) {
             query += ` AND app_key = ?`;
             params.push(app_key);
+        } else if (scopedKeys !== null && scopedKeys.length > 0) {
+            query += ` AND app_key IN (?)`;
+            params.push(scopedKeys);
         }
+        
         if (environment) {
             query += ` AND environment = ?`;
             params.push(environment);

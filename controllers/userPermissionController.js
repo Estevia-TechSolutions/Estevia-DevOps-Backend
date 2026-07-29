@@ -19,6 +19,9 @@ exports.getResourceCatalog = async (req, res) => {
         const orgId = req.user.organization_id;
         const catalogMap = new Map();
 
+        const targetSubId = req.query.subscriptionId;
+        const targetRg = req.query.resourceGroup;
+
         // 1. Query active scanned apps for org from MySQL
         const [scannedDbApps] = await db.query(
             'SELECT name, type, azure_resource_id FROM scanned_apps WHERE organization_id = ?',
@@ -27,11 +30,57 @@ exports.getResourceCatalog = async (req, res) => {
 
         // 2. Query manually registered or provisioned apps for org from MySQL
         const [registeredApps] = await db.query(
-            'SELECT name, app_type FROM applications WHERE organization_id = ?',
+            'SELECT name, app_type, azure_resource_details FROM applications WHERE organization_id = ?',
             [orgId]
         ).catch(() => [[]]);
 
-        const allRows = [...(scannedDbApps || []), ...(registeredApps || [])];
+        // Helper to check if a resource matches target scope
+        const matchesScope = (azureResourceId, azureResourceDetails) => {
+            if (!targetSubId && !targetRg) return true; // No filter requested
+            
+            let subId = null;
+            let rg = null;
+            
+            if (azureResourceId) {
+                const match = azureResourceId.match(/\/subscriptions\/([^\/]+)\/resourceGroups\/([^\/]+)/i);
+                if (match) {
+                    subId = match[1];
+                    rg = match[2];
+                }
+            }
+            
+            if (azureResourceDetails) {
+                try {
+                    const details = typeof azureResourceDetails === 'string' ? JSON.parse(azureResourceDetails) : azureResourceDetails;
+                    if (details.resourceGroup) {
+                        rg = details.resourceGroup;
+                    }
+                    if (details.resourceId) {
+                        const match = details.resourceId.match(/\/subscriptions\/([^\/]+)\/resourceGroups\/([^\/]+)/i);
+                        if (match) {
+                            subId = match[1];
+                            rg = match[2];
+                        }
+                    }
+                } catch (e) {
+                    // Ignore JSON parsing error
+                }
+            }
+            
+            let match = true;
+            if (targetSubId) {
+                match = match && (subId && subId.toLowerCase() === targetSubId.toLowerCase());
+            }
+            if (targetRg) {
+                match = match && (rg && rg.toLowerCase() === targetRg.toLowerCase());
+            }
+            return match;
+        };
+
+        const filteredScanned = (scannedDbApps || []).filter(app => matchesScope(app.azure_resource_id, null));
+        const filteredRegistered = (registeredApps || []).filter(app => matchesScope(null, app.azure_resource_details));
+
+        const allRows = [...filteredScanned, ...filteredRegistered];
 
         for (const appRow of allRows) {
             const rawName = appRow.name || '';

@@ -10468,23 +10468,44 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             } catch (e) {
                 severities = {};
             }
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
+            const queriedSubId = req.query.subscriptionId;
+            const queriedRg = req.query.resourceGroup;
+            const subscriptionId = queriedSubId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const resourceGroup = queriedRg || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
-            const targets = [];
-            if (req.query.targets) {
-                try {
-                    targets.push(...JSON.parse(req.query.targets));
-                } catch (e) {
-                    console.warn('[AppController] Failed to parse targets query parameter:', e.message);
-                }
-            }
-            if (targets.length === 0) {
+            let targets = [];
+            if (queriedSubId || queriedRg) {
                 const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
-                targets.push(...discovered);
-            }
-            if (targets.length === 0) {
-                targets.push({ subscriptionId, resourceGroup });
+                if (discovered && discovered.length > 0) {
+                    targets = discovered.filter(t => {
+                        let match = true;
+                        if (queriedSubId) {
+                            match = match && (t.subscriptionId && t.subscriptionId.toLowerCase() === queriedSubId.toLowerCase());
+                        }
+                        if (queriedRg) {
+                            match = match && (t.resourceGroup && t.resourceGroup.toLowerCase() === queriedRg.toLowerCase());
+                        }
+                        return match;
+                    });
+                }
+                if (targets.length === 0) {
+                    targets.push({ subscriptionId, resourceGroup });
+                }
+            } else {
+                if (req.query.targets) {
+                    try {
+                        targets.push(...JSON.parse(req.query.targets));
+                    } catch (e) {
+                        console.warn('[AppController] Failed to parse targets query parameter:', e.message);
+                    }
+                }
+                if (targets.length === 0) {
+                    const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
+                    targets.push(...discovered);
+                }
+                if (targets.length === 0) {
+                    targets.push({ subscriptionId, resourceGroup });
+                }
             }
 
             const resources = [];
@@ -10505,10 +10526,37 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             }
 
             // Fetch registered applications
-            const [dbApps] = await db.query(
+            let [dbApps] = await db.query(
                 'SELECT id, name, app_type, status, azure_resource_details, repo_url FROM applications WHERE organization_id = ?',
                 [organizationId]
             );
+
+            if (queriedSubId || queriedRg) {
+                dbApps = (dbApps || []).filter(app => {
+                    const details = typeof app.azure_resource_details === 'string'
+                        ? JSON.parse(app.azure_resource_details || '{}')
+                        : (app.azure_resource_details || {});
+                    
+                    let subId = null;
+                    let rg = details.resourceGroup;
+                    if (details.resourceId) {
+                        const match = details.resourceId.match(/\/subscriptions\/([^\/]+)\/resourceGroups\/([^\/]+)/i);
+                        if (match) {
+                            subId = match[1];
+                            rg = match[2];
+                        }
+                    }
+                    
+                    let match = true;
+                    if (queriedSubId) {
+                        match = match && (subId && subId.toLowerCase() === queriedSubId.toLowerCase());
+                    }
+                    if (queriedRg) {
+                        match = match && (rg && rg.toLowerCase() === queriedRg.toLowerCase());
+                    }
+                    return match;
+                });
+            }
 
             // Fallback if no resources returned from Azure
             if (resources.length === 0) {
@@ -10545,14 +10593,15 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 }
 
                 // Inject mock orphaned vm to showcase shadow-it compliance auditing
-                if (resources.length > 0 && !resources.some(r => r.name === 'untracked-vm-sandbox')) {
+                const showShadowVm = !queriedRg || queriedRg.toLowerCase() === 'estevia-prod-rg';
+                if (showShadowVm && resources.length > 0 && !resources.some(r => r.name === 'untracked-vm-sandbox')) {
                     resources.push({
                         id: 'db-shadow-vm',
                         name: 'untracked-vm-sandbox',
                         type: 'Microsoft.Compute/virtualMachines',
                         location: 'East US',
                         tags: { Owner: 'unknown' },
-                        details: { portsOpen: ['3389'] }
+                        details: { portsOpen: ['3389'], resourceGroup: queriedRg || 'estevia-prod-rg' }
                     });
                 }
             }
