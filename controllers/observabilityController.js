@@ -44,11 +44,11 @@ const getScopedAppKeys = async (orgId, targetSubId, targetRg) => {
         } catch (e) {}
 
         let match = true;
-        if (targetSubId) {
-            match = match && (subId && subId.toLowerCase() === targetSubId.toLowerCase());
+        if (targetSubId && subId) {
+            match = match && (subId.toLowerCase() === targetSubId.toLowerCase());
         }
-        if (targetRg) {
-            match = match && (rg && rg.toLowerCase() === targetRg.toLowerCase());
+        if (targetRg && rg) {
+            match = match && (rg.toLowerCase() === targetRg.toLowerCase());
         }
         if (match) {
             const key = extractAppKey(app.name);
@@ -68,11 +68,11 @@ const getScopedAppKeys = async (orgId, targetSubId, targetRg) => {
         }
 
         let match = true;
-        if (targetSubId) {
-            match = match && (subId && subId.toLowerCase() === targetSubId.toLowerCase());
+        if (targetSubId && subId) {
+            match = match && (subId.toLowerCase() === targetSubId.toLowerCase());
         }
-        if (targetRg) {
-            match = match && (rg && rg.toLowerCase() === targetRg.toLowerCase());
+        if (targetRg && rg) {
+            match = match && (rg.toLowerCase() === targetRg.toLowerCase());
         }
         if (match) {
             const key = extractAppKey(app.name);
@@ -216,15 +216,9 @@ exports.getIncidents = async (req, res) => {
         const { app_key, environment, subscriptionId, resourceGroup } = req.query;
 
         const scopedKeys = await getScopedAppKeys(organization_id, subscriptionId, resourceGroup);
-        if (scopedKeys !== null) {
-            if (app_key) {
-                if (!scopedKeys.includes(app_key)) {
-                    return res.json({ success: true, count: 0, incidents: [] });
-                }
-            } else {
-                if (scopedKeys.length === 0) {
-                    return res.json({ success: true, count: 0, incidents: [] });
-                }
+        if (scopedKeys !== null && scopedKeys.length > 0) {
+            if (app_key && !scopedKeys.includes(app_key)) {
+                return res.json({ success: true, count: 0, incidents: [] });
             }
         }
 
