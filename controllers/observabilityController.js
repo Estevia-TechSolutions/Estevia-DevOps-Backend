@@ -268,11 +268,6 @@ exports.getIncidents = async (req, res) => {
         const { app_key, environment, subscriptionId, resourceGroup } = req.query;
 
         const scopedKeys = await getScopedAppKeys(organization_id, subscriptionId, resourceGroup);
-        if (scopedKeys !== null && scopedKeys.length > 0) {
-            if (app_key && !scopedKeys.includes(app_key)) {
-                return res.json({ success: true, count: 0, incidents: [] });
-            }
-        }
 
         let query = `
             SELECT id, organization_id, app_key, resource_type, environment, severity, title as incident_title, description as incident_description, category, telemetry_snapshot, status, acknowledged_at, resolved_at, responsible_user_id, created_at
@@ -284,9 +279,13 @@ exports.getIncidents = async (req, res) => {
         if (app_key) {
             query += ` AND app_key = ?`;
             params.push(app_key);
-        } else if (scopedKeys !== null && scopedKeys.length > 0) {
-            query += ` AND app_key IN (?)`;
-            params.push(scopedKeys);
+        } else if (scopedKeys !== null) {
+            if (scopedKeys.length > 0) {
+                query += ` AND app_key IN (?)`;
+                params.push(scopedKeys);
+            } else {
+                return res.json({ success: true, count: 0, incidents: [] });
+            }
         }
         
         if (environment) {
@@ -304,22 +303,14 @@ exports.getIncidents = async (req, res) => {
             console.warn('[ObservabilityController] DB incidents query failed:', e.message);
         }
 
-        // If no incidents found for the target scope, run autoSeedIncidents and fallback query
         if (!rows || rows.length === 0) {
-            await autoSeedIncidents(organization_id);
-            try {
-                const [reRows] = await db.query(query, params);
-                rows = reRows || [];
-                // If scope-filtered query is still empty, return organization-wide incidents
-                if (rows.length === 0 && (subscriptionId || resourceGroup)) {
-                    const [fallbackRows] = await db.query(
-                        `SELECT id, organization_id, app_key, resource_type, environment, severity, title as incident_title, description as incident_description, category, telemetry_snapshot, status, acknowledged_at, resolved_at, responsible_user_id, created_at
-                         FROM resource_incidents WHERE organization_id = ? ORDER BY created_at DESC LIMIT 100`,
-                        [organization_id]
-                    );
-                    rows = fallbackRows || [];
-                }
-            } catch (reErr) {}
+            if (!subscriptionId && !resourceGroup) {
+                await autoSeedIncidents(organization_id);
+                try {
+                    const [reRows] = await db.query(query, params);
+                    rows = reRows || [];
+                } catch (reErr) {}
+            }
         }
 
         // Parse JSON telemetry_snapshot for response
