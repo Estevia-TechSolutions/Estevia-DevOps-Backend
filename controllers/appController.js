@@ -2079,7 +2079,7 @@ const appController = {
      * Resolve dynamic DB host based on server name
      */
     _resolveDbHost(serverName, orgSettings = {}) {
-        if (!serverName) return process.env.DB_HOST || '10.0.0.4';
+        if (!serverName) return process.env.DB_HOST;
         const sName = serverName.toLowerCase();
 
         // 1. Check custom organization settings first
@@ -2093,24 +2093,13 @@ const appController = {
             return orgSettings.prod_db_host;
         }
 
-        // If configured to connect directly (e.g. in deployment)
-        if (process.env.DB_CONNECT_DIRECT === 'true') {
-            if (sName.includes('dev')) {
-                return 'estevia-dev-db.mysql.database.azure.com';
-            }
-            if (sName.includes('qa')) {
-                return 'estevia-qa-dn.mysql.database.azure.com';
-            }
-            return 'estevia-prod-db-v2.estevia-prod-db.private.mysql.database.azure.com';
+        // 2. If serverName is already a FQDN, return it directly
+        if (sName.includes('.')) {
+            return serverName;
         }
 
-        if (sName.includes('dev')) {
-            return '10.0.0.6';
-        }
-        if (sName.includes('qa')) {
-            return '10.0.0.7';
-        }
-        return '10.0.0.4';
+        // 3. Dynamic fallback to environment connected DB host
+        return process.env.DB_HOST || `${serverName}.mysql.database.azure.com`;
     },
 
     /**
@@ -8963,48 +8952,22 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 });
             }
 
-            if (fallbackServers.length === 0 && organizationId === MASTER_ORGANIZATION_ID) {
-                fallbackServers.push(
-                    {
-                        id: 'db-server-dev',
-                        name: 'estevia-dev-db',
-                        location: 'Central US',
-                        version: '8.0.21',
-                        state: 'Ready',
-                        host: orgSettings.dev_db_host || process.env.DB_HOST || 'estevia-dev-db.mysql.database.azure.com',
-                        privateNetwork: false,
-                        sku: 'Standard_B1ms',
-                        tier: 'Burstable',
-                        administratorLogin: 'estevia',
-                        password: process.env.DB_PASSWORD
-                    },
-                    {
-                        id: 'db-server-qa',
-                        name: 'estevia-qa-dn',
-                        location: 'Central US',
-                        version: '8.0.21',
-                        state: 'Ready',
-                        host: orgSettings.qa_db_host || process.env.DB_HOST || 'estevia-qa-dn.mysql.database.azure.com',
-                        privateNetwork: false,
-                        sku: 'Standard_B1ms',
-                        tier: 'Burstable',
-                        administratorLogin: 'estevia',
-                        password: process.env.DB_PASSWORD
-                    },
-                    {
-                        id: 'db-server-prod',
-                        name: 'estevia-prod-db-v2',
-                        location: 'Central US',
-                        version: '8.0.21',
-                        state: 'Ready',
-                        host: orgSettings.prod_db_host || process.env.DB_HOST || 'estevia-prod-db-v2.estevia-prod-db.private.mysql.database.azure.com',
-                        privateNetwork: true,
-                        sku: 'Standard_D2ads_v5',
-                        tier: 'GeneralPurpose',
-                        administratorLogin: 'estevia',
-                        password: process.env.DB_PASSWORD
-                    }
-                );
+            if (fallbackServers.length === 0 && process.env.DB_HOST) {
+                const liveHost = process.env.DB_HOST;
+                const serverName = liveHost.split('.')[0] || 'azure-mysql-server';
+                fallbackServers.push({
+                    id: `db-server-${serverName}`,
+                    name: serverName,
+                    location: 'East US 2',
+                    version: '8.0',
+                    state: 'Ready',
+                    host: liveHost,
+                    privateNetwork: false,
+                    sku: 'Standard_B1ms',
+                    tier: 'Burstable',
+                    administratorLogin: process.env.DB_USER || 'estevia',
+                    password: process.env.DB_PASSWORD
+                });
             }
 
             res.json({ success: true, servers: fallbackServers });
