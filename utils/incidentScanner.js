@@ -144,15 +144,15 @@ const runIncidentScanCycle = async () => {
  */
 const triggerIncident = async (data) => {
     try {
-        // Check if active incident already exists for this app, env, and category
+        // Check if active or acknowledged incident already exists for this app, env, and category
         const [existing] = await db.query(
             `SELECT id FROM resource_incidents 
-             WHERE organization_id = ? AND app_key = ? AND environment = ? AND category = ? AND status = 'triggered'`,
+             WHERE organization_id = ? AND app_key = ? AND environment = ? AND category = ? AND status IN ('triggered', 'acknowledged')`,
             [data.organization_id, data.app_key, data.environment, data.category]
         );
 
         if (existing && existing.length > 0) {
-            return; // Prevent duplicate email alerts for active incident
+            return; // Prevent duplicate incident records and duplicate email alerts
         }
 
         const snapshotJson = JSON.stringify(data.telemetry_snapshot || {});
