@@ -2079,27 +2079,34 @@ const appController = {
      * Resolve dynamic DB host based on server name
      */
     _resolveDbHost(serverName, orgSettings = {}) {
-        if (!serverName) return process.env.DB_HOST;
+        if (!serverName) return process.env.DB_HOST || 'estevia-platform-db.mysql.database.azure.com';
         const sName = serverName.toLowerCase();
+        const deadHostPatterns = ['estevia-dev-db', 'estevia-qa-db', 'estevia-prod-db-v2'];
 
-        // 1. Check custom organization settings first
-        if (sName.includes('dev') && orgSettings.dev_db_host) {
+        // 1. Check custom organization settings first, but filter out known dead legacy hosts
+        if (sName.includes('dev') && orgSettings.dev_db_host && !deadHostPatterns.some(p => orgSettings.dev_db_host.toLowerCase().includes(p))) {
             return orgSettings.dev_db_host;
         }
-        if (sName.includes('qa') && orgSettings.qa_db_host) {
+        if (sName.includes('qa') && orgSettings.qa_db_host && !deadHostPatterns.some(p => orgSettings.qa_db_host.toLowerCase().includes(p))) {
             return orgSettings.qa_db_host;
         }
-        if ((sName.includes('prod') || sName.includes('db')) && orgSettings.prod_db_host) {
+        if ((sName.includes('prod') || sName.includes('db')) && orgSettings.prod_db_host && !deadHostPatterns.some(p => orgSettings.prod_db_host.toLowerCase().includes(p))) {
             return orgSettings.prod_db_host;
         }
 
-        // 2. If serverName is already a FQDN, return it directly
+        // 2. If serverName is already a valid FQDN (contains '.'), return it unless it's a dead legacy host
         if (sName.includes('.')) {
-            return serverName;
+            if (!deadHostPatterns.some(p => sName.includes(p))) {
+                return serverName;
+            }
         }
 
         // 3. Dynamic fallback to environment connected DB host
-        return process.env.DB_HOST || `${serverName}.mysql.database.azure.com`;
+        if (sName.includes('peoplecraft') || sName.includes('client')) {
+            return 'peoplecraft-db.mysql.database.azure.com';
+        }
+
+        return process.env.DB_HOST || 'estevia-platform-db.mysql.database.azure.com';
     },
 
     /**
@@ -8942,7 +8949,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             console.error('[AppController] getDbServers failed:', error.message);
             const fallbackServers = [];
 
-            if (orgSettings.dev_db_host) {
+            const isDead = (h) => !h || h.includes('estevia-dev-db') || h.includes('estevia-qa-db');
+            if (orgSettings.dev_db_host && !isDead(orgSettings.dev_db_host)) {
                 fallbackServers.push({
                     id: 'db-server-dev',
                     name: orgSettings.dev_db_host.split('.')[0],

@@ -1,9 +1,11 @@
-const connectToDb = async (host, database, timeoutMs = 8000) => {
+const connectToDb = async (host, database, cred = {}, timeoutMs = 8000) => {
     const mysql = require('mysql2/promise');
+    const user = cred.user || process.env.DB_USER;
+    const password = cred.password || process.env.DB_PASSWORD;
     const connOpts = {
         host,
-        user: process.env.DB_USER,
-        password: process.env.DB_PASSWORD,
+        user,
+        password,
         port: process.env.DB_PORT || 3306,
         connectTimeout: timeoutMs
     };
@@ -22,43 +24,67 @@ const connectToDb = async (host, database, timeoutMs = 8000) => {
 };
 
 const queryDbHelper = async (host, database, sql, params = [], organizationId = 'estevia') => {
-    // First, try connecting directly
-    try {
-        const conn = await connectToDb(host, database, 4000);
+    const appController = require('./appController');
+    const orgSettings = await appController._getOrgSettings(organizationId).catch(() => ({}));
+    const resolvedHost = appController._resolveDbHost(host, orgSettings);
+
+    const candidates = [
+        resolvedHost,
+        process.env.DB_HOST,
+        'estevia-platform-db.mysql.database.azure.com',
+        'peoplecraft-db.mysql.database.azure.com'
+    ].filter(Boolean);
+
+    const uniqueHosts = [...new Set(candidates)].filter(h => !h.includes('estevia-dev-db') && !h.includes('estevia-qa-db'));
+
+    let lastDirectErr = null;
+    for (const h of uniqueHosts) {
         try {
-            const [rows] = await conn.query(sql, params);
-            return rows;
-        } finally {
-            await conn.end();
-        }
-    } catch (err) {
-        console.warn(`[DBHub Direct Connect Failed] Host: ${host}. Attempting remote VPN proxy tunnel... Error:`, err.message);
-        
-        // If direct connection fails (due to VPN), proxy the request to the production DevOps Backend API!
-        const axios = require('axios');
-        const prodDevopsBase = process.env.PROD_DEVOPS_API_URL || 'https://prod-devops.esteviatech.com/api';
-        
-        try {
-            const proxyRes = await axios.post(`${prodDevopsBase}/database/proxy-query`, {
-                host,
-                database,
-                sql,
-                params
-            }, {
-                timeout: 10000,
-                headers: {
-                    'Content-Type': 'application/json'
+            const creds = await appController._getDbCredentialsForHost(organizationId, h).catch(() => []);
+            const credList = creds.length > 0 ? creds : [{ user: process.env.DB_USER, password: process.env.DB_PASSWORD }];
+
+            for (const cred of credList) {
+                try {
+                    const conn = await connectToDb(h, database, cred, 4000);
+                    try {
+                        const [rows] = await conn.query(sql, params);
+                        return rows;
+                    } finally {
+                        await conn.end();
+                    }
+                } catch (cErr) {
+                    lastDirectErr = cErr;
                 }
-            });
-            if (proxyRes.data && proxyRes.data.success) {
-                return proxyRes.data.rows;
-            } else {
-                throw new Error(proxyRes.data?.message || 'Remote query proxy failed.');
             }
-        } catch (proxyErr) {
-            console.error('[DBHub Proxy Tunnel Failed]:', proxyErr.message);
-            throw new Error(`Failed to query database directly or via VPN bridge. Please ensure VPN is active or prod DevOps gateway is online. (Direct Error: ${err.message})`);
+        } catch (hErr) {
+            lastDirectErr = hErr;
         }
+    }
+
+    console.warn(`[DBHub Direct Connect Failed] Target host: ${host}. Attempting remote VPN proxy tunnel... Last error:`, lastDirectErr?.message);
+    
+    // If direct connection fails for all candidates, proxy the request to the production DevOps Backend API
+    const axios = require('axios');
+    const prodDevopsBase = process.env.PROD_DEVOPS_API_URL || 'https://prod-devops.esteviatech.com/api';
+    
+    try {
+        const proxyRes = await axios.post(`${prodDevopsBase}/database/proxy-query`, {
+            host: resolvedHost,
+            database,
+            sql,
+            params
+        }, {
+            timeout: 10000,
+            headers: { 'Content-Type': 'application/json' }
+        });
+        if (proxyRes.data && proxyRes.data.success) {
+            return proxyRes.data.rows;
+        } else {
+            throw new Error(proxyRes.data?.message || 'Remote query proxy failed.');
+        }
+    } catch (proxyErr) {
+        console.error('[DBHub Proxy Tunnel Failed]:', proxyErr.message);
+        throw new Error(`Failed to query database server (${resolvedHost}). Please verify network connectivity or active credentials. (Error: ${lastDirectErr?.message || proxyErr.message})`);
     }
 };
 
