@@ -8379,7 +8379,7 @@ const appController = {
      */
     askEva: async (req, res) => {
         try {
-            const { question } = req.body;
+            const { question, subscriptionId, resourceGroup } = req.body;
             if (!question) {
                 return res.status(400).json({ success: false, message: 'Question is required.' });
             }
@@ -8387,7 +8387,7 @@ const appController = {
             const organizationId = req.body.organizationId || req.user?.organization_id || 'estevia';
 
             // Fetch dynamic resource details and optimization suggestions using unified helper
-            const costData = await appController._getCostAndOptimizationData(organizationId);
+            const costData = await appController._getCostAndOptimizationData(organizationId, subscriptionId, resourceGroup);
             const detailedCosts = costData.detailedCosts || [];
             const suggestions = costData.suggestions || [];
 
