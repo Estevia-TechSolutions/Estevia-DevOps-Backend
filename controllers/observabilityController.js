@@ -33,7 +33,7 @@ const getScopedAppKeys = async (orgId, targetSubId, targetRg) => {
                 ? JSON.parse(app.azure_resource_details || '{}') 
                 : (app.azure_resource_details || {});
             
-            rg = details.resourceGroup;
+            rg = details.resourceGroup || details.rg;
             if (details.resourceId) {
                 const match = details.resourceId.match(/\/subscriptions\/([^\/]+)\/resourceGroups\/([^\/]+)/i);
                 if (match) {
@@ -43,14 +43,22 @@ const getScopedAppKeys = async (orgId, targetSubId, targetRg) => {
             }
         } catch (e) {}
 
-        let match = true;
-        if (targetSubId && subId) {
-            match = match && (subId.toLowerCase() === targetSubId.toLowerCase());
+        const appNameLow = (app.name || '').toLowerCase();
+        if (!rg) {
+            if (appNameLow.includes('peoplecraft')) rg = 'Estevia-Client-Projects-RG';
+            else if (appNameLow.includes('evaops') || appNameLow.includes('estevia-platform')) rg = 'Estevia-Platform-RG';
+            else if (appNameLow.includes('marketing')) rg = 'Estevia-Prod-RG';
         }
-        if (targetRg && rg) {
-            match = match && (rg.toLowerCase() === targetRg.toLowerCase());
+
+        let isMatch = true;
+        if (targetSubId) {
+            isMatch = isMatch && (!!subId && subId.toLowerCase() === targetSubId.toLowerCase());
         }
-        if (match) {
+        if (targetRg) {
+            isMatch = isMatch && (!!rg && rg.toLowerCase() === targetRg.toLowerCase());
+        }
+
+        if (isMatch) {
             const key = extractAppKey(app.name);
             if (key) scopedKeys.add(key);
         }
@@ -67,14 +75,21 @@ const getScopedAppKeys = async (orgId, targetSubId, targetRg) => {
             }
         }
 
-        let match = true;
-        if (targetSubId && subId) {
-            match = match && (subId.toLowerCase() === targetSubId.toLowerCase());
+        const dbNameLow = (app.name || '').toLowerCase();
+        if (!rg) {
+            if (dbNameLow.includes('peoplecraft')) rg = 'Estevia-Client-Projects-RG';
+            else if (dbNameLow.includes('estevia-platform')) rg = 'Estevia-Platform-RG';
         }
-        if (targetRg && rg) {
-            match = match && (rg.toLowerCase() === targetRg.toLowerCase());
+
+        let isMatch = true;
+        if (targetSubId) {
+            isMatch = isMatch && (!!subId && subId.toLowerCase() === targetSubId.toLowerCase());
         }
-        if (match) {
+        if (targetRg) {
+            isMatch = isMatch && (!!rg && rg.toLowerCase() === targetRg.toLowerCase());
+        }
+
+        if (isMatch) {
             const key = extractAppKey(app.name);
             if (key) scopedKeys.add(key);
         }
