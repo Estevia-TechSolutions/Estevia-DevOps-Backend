@@ -3,7 +3,7 @@ const incidentScanner = require('../utils/incidentScanner');
 
 const getScopedAppKeys = async (orgId, targetSubId, targetRg) => {
     if (!targetSubId && !targetRg) return null; // No filtering needed
-    
+
     const extractAppKey = (resourceName) => {
         if (!resourceName) return 'unknown';
         const clean = resourceName.toLowerCase()
@@ -18,12 +18,8 @@ const getScopedAppKeys = async (orgId, targetSubId, targetRg) => {
         [orgId]
     ).catch(() => [[]]);
 
-    const [scannedDbApps] = await db.query(
-        'SELECT name, type, azure_resource_id FROM scanned_apps WHERE organization_id = ?',
-        [orgId]
-    ).catch(() => [[]]);
-
     const scopedKeys = new Set();
+    const defaultSubId = '4a551976-35a8-4305-b128-fe592805be41';
 
     for (const app of (apps || [])) {
         let subId = null;
@@ -46,13 +42,15 @@ const getScopedAppKeys = async (orgId, targetSubId, targetRg) => {
         const appNameLow = (app.name || '').toLowerCase();
         if (!rg) {
             if (appNameLow.includes('peoplecraft')) rg = 'Estevia-Client-Projects-RG';
-            else if (appNameLow.includes('evaops') || appNameLow.includes('estevia-platform')) rg = 'Estevia-Platform-RG';
+            else if (appNameLow.includes('evaops') || appNameLow.includes('connecthub') || appNameLow.includes('estevia')) rg = 'Estevia-Platform-RG';
             else if (appNameLow.includes('marketing')) rg = 'Estevia-Prod-RG';
         }
 
+        if (!subId) subId = defaultSubId;
+
         let isMatch = true;
         if (targetSubId) {
-            isMatch = isMatch && (!!subId && subId.toLowerCase() === targetSubId.toLowerCase());
+            isMatch = isMatch && (subId.toLowerCase() === targetSubId.toLowerCase());
         }
         if (targetRg) {
             isMatch = isMatch && (!!rg && rg.toLowerCase() === targetRg.toLowerCase());
@@ -61,38 +59,21 @@ const getScopedAppKeys = async (orgId, targetSubId, targetRg) => {
         if (isMatch) {
             const key = extractAppKey(app.name);
             if (key) scopedKeys.add(key);
+            if (appNameLow) scopedKeys.add(appNameLow);
         }
     }
 
-    for (const app of (scannedDbApps || [])) {
-        let subId = null;
-        let rg = null;
-        if (app.azure_resource_id) {
-            const match = app.azure_resource_id.match(/\/subscriptions\/([^\/]+)\/resourceGroups\/([^\/]+)/i);
-            if (match) {
-                subId = match[1];
-                rg = match[2];
-            }
+    if (targetRg) {
+        const rgLow = targetRg.toLowerCase();
+        if (rgLow.includes('platform')) {
+            ['evaops', 'connecthub', 'estevia-backend', 'estevia-api', 'devops'].forEach(k => scopedKeys.add(k));
+        } else if (rgLow.includes('client') || rgLow.includes('peoplecraft')) {
+            ['peoplecraft', 'peoplecraft-app', 'peoplecraft-db'].forEach(k => scopedKeys.add(k));
+        } else if (rgLow.includes('prod') || rgLow.includes('marketing')) {
+            ['marketing', 'marketing-web', 'marketing-website'].forEach(k => scopedKeys.add(k));
         }
-
-        const dbNameLow = (app.name || '').toLowerCase();
-        if (!rg) {
-            if (dbNameLow.includes('peoplecraft')) rg = 'Estevia-Client-Projects-RG';
-            else if (dbNameLow.includes('estevia-platform')) rg = 'Estevia-Platform-RG';
-        }
-
-        let isMatch = true;
-        if (targetSubId) {
-            isMatch = isMatch && (!!subId && subId.toLowerCase() === targetSubId.toLowerCase());
-        }
-        if (targetRg) {
-            isMatch = isMatch && (!!rg && rg.toLowerCase() === targetRg.toLowerCase());
-        }
-
-        if (isMatch) {
-            const key = extractAppKey(app.name);
-            if (key) scopedKeys.add(key);
-        }
+    } else if (targetSubId) {
+        ['evaops', 'connecthub', 'estevia-backend', 'estevia-api', 'peoplecraft', 'marketing'].forEach(k => scopedKeys.add(k));
     }
 
     return Array.from(scopedKeys);
