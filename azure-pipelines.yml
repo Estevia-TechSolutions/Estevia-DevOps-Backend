@@ -18,14 +18,14 @@ trigger:
 # ============================================================
 
 variables:
-  # ACR login server — update if registry changes
-  containerRegistry: 'esteviacoreregistry.azurecr.io'
+  # ACR login server (Estevia-Platform-Subscription registry)
+  containerRegistry: 'esteviaplatformregistry.azurecr.io'
   # Docker image name in ACR
   imageRepository: 'api-evaops'
   # Azure Container App resource name
   containerAppName: 'api-evaops'
-  # Azure Resource Group containing the Container App
-  resourceGroup: 'Estevia-Prod-RG'
+  # Azure Resource Group containing the Container App (Platform subscription)
+  resourceGroup: 'Estevia-Platform-RG'
 
 stages:
 - stage: BuildAndPush
@@ -46,17 +46,20 @@ stages:
         npm test
       displayName: 'Run tests'
 
-    - task: Docker@2
+    - task: AzureCLI@2
       displayName: 'Build and Push Image to ACR'
       inputs:
-        # Service connection name — literal required (Azure DevOps parse-time validation)
-        containerRegistry: 'estevia-acr-sc'
-        repository: '$(imageRepository)'
-        command: 'buildAndPush'
-        Dockerfile: 'Dockerfile'
-        tags: |
-          $(Build.BuildId)
-          latest
+        azureSubscription: 'estevia-platform-sc'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az acr login --name esteviaplatformregistry
+          docker build \
+            -t $(containerRegistry)/$(imageRepository):$(Build.BuildId) \
+            -t $(containerRegistry)/$(imageRepository):latest \
+            -f Dockerfile .
+          docker push $(containerRegistry)/$(imageRepository):$(Build.BuildId)
+          docker push $(containerRegistry)/$(imageRepository):latest
 
 - stage: DeployToAzure
   displayName: 'Deploy Container App'
@@ -74,8 +77,8 @@ stages:
           - task: AzureCLI@2
             displayName: 'Deploy to Azure Container Apps'
             inputs:
-              # Service connection name — literal required (Azure DevOps parse-time validation)
-              azureSubscription: 'protrack-azure-sc'
+              # Service connection scoped to Estevia-Platform-Subscription
+              azureSubscription: 'estevia-platform-sc'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
@@ -83,4 +86,5 @@ stages:
                 az containerapp update --container-name api-evaops \
                   --name $(containerAppName) \
                   --resource-group $(resourceGroup) \
+                  --subscription 4a551976-35a8-4305-b128-fe592805be41 \
                   --image $(containerRegistry)/$(imageRepository):$(Build.BuildId)
