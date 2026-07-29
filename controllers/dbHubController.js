@@ -18,6 +18,26 @@ const connectToDb = async (host, database, cred = {}, timeoutMs = 8000) => {
             ssl: { require: true, rejectUnauthorized: false }
         });
     } catch (sslErr) {
+        // Auto-create database if unknown database error occurs (AGENTS.md Rule 2)
+        if (database && (sslErr.code === 'ER_BAD_DB_ERROR' || sslErr.errno === 1049 || sslErr.message?.includes('Unknown database'))) {
+            try {
+                console.log(`[DBHub Auto-Init] Database '${database}' missing on host ${host}. Creating database...`);
+                const adminConn = await mysql.createConnection({
+                    ...connOpts,
+                    database: undefined,
+                    ssl: { require: true, rejectUnauthorized: false }
+                });
+                await adminConn.query(`CREATE DATABASE IF NOT EXISTS \`${database}\``);
+                await adminConn.end();
+                return await mysql.createConnection({
+                    ...connOpts,
+                    ssl: { require: true, rejectUnauthorized: false }
+                });
+            } catch (createErr) {
+                console.warn(`[DBHub Auto-Init Failed] Could not auto-create database '${database}' on host ${host}:`, createErr.message);
+                throw sslErr;
+            }
+        }
         console.warn(`[DBHub SSL Fallback] Direct SSL connection failed for host ${host}, retrying without SSL. Error: ${sslErr.message}`);
         return await mysql.createConnection(connOpts);
     }
@@ -27,8 +47,23 @@ const queryDbHelper = async (host, database, sql, params = [], organizationId = 
     const appController = require('./appController');
     const uniqueHosts = await appController._getDbHostCandidates(organizationId, host, database);
 
+    // Prioritize candidate hosts that match the target database or host pattern
+    const sortedHosts = [...uniqueHosts].sort((a, b) => {
+        const aLow = a.toLowerCase();
+        const bLow = b.toLowerCase();
+        const dLow = (database || '').toLowerCase();
+        const hLow = (host || '').toLowerCase();
+
+        const matchA = (dLow && aLow.includes(dLow.split('_')[0])) || (hLow && aLow.includes(hLow.split('.')[0]));
+        const matchB = (dLow && bLow.includes(dLow.split('_')[0])) || (hLow && bLow.includes(hLow.split('.')[0]));
+
+        if (matchA && !matchB) return -1;
+        if (!matchA && matchB) return 1;
+        return 0;
+    });
+
     let lastDirectErr = null;
-    for (const h of uniqueHosts) {
+    for (const h of sortedHosts) {
         try {
             const creds = await appController._getDbCredentialsForHost(organizationId, h).catch(() => []);
             const credList = creds.length > 0 ? creds : [{ user: process.env.DB_USER, password: process.env.DB_PASSWORD }];

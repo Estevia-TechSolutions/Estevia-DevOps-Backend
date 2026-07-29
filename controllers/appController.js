@@ -9242,8 +9242,22 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const uniqueHosts = await appController._getDbHostCandidates(organizationId, req.query.host || serverName, dbName);
 
             let conn = null;
+            const sortedHosts = [...uniqueHosts].sort((a, b) => {
+                const aLow = a.toLowerCase();
+                const bLow = b.toLowerCase();
+                const dLow = (dbName || '').toLowerCase();
+                const rawHost = (req.query.host || serverName || '').toLowerCase();
+
+                const matchA = (dLow && aLow.includes(dLow.split('_')[0])) || (rawHost && aLow.includes(rawHost.split('.')[0]));
+                const matchB = (dLow && bLow.includes(dLow.split('_')[0])) || (rawHost && bLow.includes(rawHost.split('.')[0]));
+
+                if (matchA && !matchB) return -1;
+                if (!matchA && matchB) return 1;
+                return 0;
+            });
+
             let lastErr = null;
-            for (const h of uniqueHosts) {
+            for (const h of sortedHosts) {
                 const creds = await appController._getDbCredentialsForHost(organizationId, h);
                 for (const cred of creds) {
                     try {
@@ -9259,6 +9273,34 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         if (conn) break;
                     } catch (err) {
                         lastErr = err;
+                        // Auto-create database if unknown database error occurs (AGENTS.md Rule 2)
+                        if (dbName && (err.code === 'ER_BAD_DB_ERROR' || err.errno === 1049 || err.message?.includes('Unknown database'))) {
+                            try {
+                                console.log(`[AppController Schema] Database '${dbName}' missing on host ${h}. Creating database...`);
+                                const adminConn = await mysql.createConnection({
+                                    host: h,
+                                    user: cred.user,
+                                    password: cred.password,
+                                    port: process.env.DB_PORT || 3306,
+                                    ssl: { require: true, rejectUnauthorized: false },
+                                    connectTimeout: 5000
+                                });
+                                await adminConn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
+                                await adminConn.end();
+                                conn = await mysql.createConnection({
+                                    host: h,
+                                    user: cred.user,
+                                    password: cred.password,
+                                    database: dbName,
+                                    port: process.env.DB_PORT || 3306,
+                                    ssl: { require: true, rejectUnauthorized: false },
+                                    connectTimeout: 5000
+                                });
+                                if (conn) break;
+                            } catch (createErr) {
+                                console.warn(`[AppController Schema Auto-Init Failed] Could not create database '${dbName}' on host ${h}:`, createErr.message);
+                            }
+                        }
                     }
                 }
                 if (conn) break;
