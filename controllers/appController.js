@@ -9407,13 +9407,18 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const organizationId = req.query.organizationId || req.user?.organization_id || 'estevia';
             const orgSettings = await appController._getOrgSettings(organizationId);
             const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-
-            const credential = await getAzureCredential(organizationId);
-            const client = new ResourceManagementClient(credential, subscriptionId);
+            const resourceGroup = orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             const resourceGroups = [];
-            for await (const rg of client.resourceGroups.list()) {
-                resourceGroups.push(rg.name);
+            try {
+                const credential = await getAzureCredential(organizationId);
+                const client = new ResourceManagementClient(credential, subscriptionId);
+                for await (const rg of client.resourceGroups.list()) {
+                    resourceGroups.push(rg.name);
+                }
+            } catch (azureErr) {
+                console.warn('[AppController] Live Azure resource groups list failed, using configured fallback group:', azureErr.message);
+                resourceGroups.push(resourceGroup);
             }
 
             res.json({ success: true, resourceGroups });
@@ -10338,18 +10343,18 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
             const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
-            const credential = await getAzureCredential(organizationId);
-            const tokenRes = await credential.getToken("https://management.azure.com/.default");
-            const token = tokenRes.token;
-
-            const resourceClient = new ResourceManagementClient(credential, subscriptionId);
             const resources = [];
             try {
+                const credential = await getAzureCredential(organizationId);
+                const tokenRes = await credential.getToken("https://management.azure.com/.default");
+                const token = tokenRes.token;
+
+                const resourceClient = new ResourceManagementClient(credential, subscriptionId);
                 for await (const r of resourceClient.resources.listByResourceGroup(resourceGroup)) {
                     resources.push(r);
                 }
             } catch (err) {
-                console.error('[AppController] Error listing compliance resources:', err.message);
+                console.warn('[AppController] Live Azure compliance scanning unavailable, falling back to local database records:', err.message);
             }
 
             // Fetch registered applications
