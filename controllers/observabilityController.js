@@ -297,15 +297,148 @@ exports.getIncidents = async (req, res) => {
             } catch (reErr) {}
         }
 
-        // Parse JSON telemetry_snapshot for response
-        const formattedIncidents = (rows || []).map(inc => ({
-            ...inc,
-            incident_title: inc.incident_title || inc.title,
-            incident_description: inc.incident_description || inc.description,
-            telemetry_snapshot: typeof inc.telemetry_snapshot === 'string' 
-                ? JSON.parse(inc.telemetry_snapshot || '{}') 
-                : (inc.telemetry_snapshot || {})
-        }));
+        // Fetch all provisioned applications in org to map exact real Azure resource names & IDs
+        const [apps] = await db.query(
+            'SELECT name, type, environment, azure_resource_details FROM applications WHERE organization_id = ?',
+            [organization_id]
+        ).catch(() => [[]]);
+
+        const appMap = new Map();
+        for (const app of (apps || [])) {
+            let details = {};
+            try {
+                details = typeof app.azure_resource_details === 'string'
+                    ? JSON.parse(app.azure_resource_details || '{}')
+                    : (app.azure_resource_details || {});
+            } catch (e) {}
+
+            const resId = details.resourceId || details.azure_resource_id || '';
+            const resName = details.resourceName || details.name || app.name;
+            const rg = details.resourceGroup || details.rg || 'Estevia-Platform-RG';
+            const env = app.environment || 'dev';
+
+            const rawName = (app.name || '').toLowerCase();
+            const cleanKey = rawName
+                .replace(/-(dev|qa|prod|production|staging|test)(-swa)?$/i, '')
+                .replace(/(-swa)?$/i, '')
+                .replace(/^estevia-/, '');
+
+            const record = {
+                appName: app.name,
+                azureResourceName: resName,
+                azureResourceId: resId,
+                resourceGroup: rg,
+                environment: env,
+                azurePortalUrl: resId ? `https://portal.azure.com/#resource${resId}` : null
+            };
+
+            appMap.set(rawName, record);
+            appMap.set(cleanKey, record);
+        }
+
+        // Standard ground-truth Azure Resource IDs for core platform assets
+        const platformMap = {
+            'evaops': {
+                name: 'api-evaops',
+                id: '/subscriptions/4a551976-35a8-4305-b128-fe592805be41/resourceGroups/Estevia-Platform-RG/providers/Microsoft.App/containerapps/api-evaops'
+            },
+            'api-evaops': {
+                name: 'api-evaops',
+                id: '/subscriptions/4a551976-35a8-4305-b128-fe592805be41/resourceGroups/Estevia-Platform-RG/providers/Microsoft.App/containerapps/api-evaops'
+            },
+            'evaops-frontend': {
+                name: 'evaops-frontend-swa',
+                id: '/subscriptions/4a551976-35a8-4305-b128-fe592805be41/resourceGroups/Estevia-Platform-RG/providers/Microsoft.Web/staticSites/evaops-frontend-swa'
+            },
+            'estevia-backend': {
+                name: 'api-evaops',
+                id: '/subscriptions/4a551976-35a8-4305-b128-fe592805be41/resourceGroups/Estevia-Platform-RG/providers/Microsoft.App/containerapps/api-evaops'
+            },
+            'estevia-frontend': {
+                name: 'evaops-frontend-swa',
+                id: '/subscriptions/4a551976-35a8-4305-b128-fe592805be41/resourceGroups/Estevia-Platform-RG/providers/Microsoft.Web/staticSites/evaops-frontend-swa'
+            },
+            'cloud-service': {
+                name: 'api-evaops',
+                id: '/subscriptions/4a551976-35a8-4305-b128-fe592805be41/resourceGroups/Estevia-Platform-RG/providers/Microsoft.App/containerapps/api-evaops'
+            },
+            'marketing': {
+                name: 'estevia-marketing-web-prod-swa',
+                id: '/subscriptions/4a551976-35a8-4305-b128-fe592805be41/resourceGroups/Estevia-Prod-RG/providers/Microsoft.Web/staticSites/estevia-marketing-web-prod-swa'
+            },
+            'peoplecraft-frontend': {
+                name: 'peoplecraft-frontend-qa-swa',
+                id: '/subscriptions/40070b3e-38c4-4c4e-89d5-dd601f9f7622/resourceGroups/Estevia-Client-Projects-RG/providers/Microsoft.Web/staticSites/peoplecraft-frontend-qa-swa'
+            },
+            'peoplecraft-backend': {
+                name: 'api-peoplecraft-qa',
+                id: '/subscriptions/40070b3e-38c4-4c4e-89d5-dd601f9f7622/resourceGroups/Estevia-Client-Projects-RG/providers/Microsoft.App/containerapps/api-peoplecraft-qa'
+            },
+            'peoplecraft': {
+                name: 'api-peoplecraft-qa',
+                id: '/subscriptions/40070b3e-38c4-4c4e-89d5-dd601f9f7622/resourceGroups/Estevia-Client-Projects-RG/providers/Microsoft.App/containerapps/api-peoplecraft-qa'
+            },
+            'estevia-platform-db': {
+                name: 'estevia-platform-db',
+                id: '/subscriptions/4a551976-35a8-4305-b128-fe592805be41/resourceGroups/Estevia-Platform-RG/providers/Microsoft.DBforMySQL/flexibleServers/estevia-platform-db'
+            },
+            'peoplecraft-db': {
+                name: 'peoplecraft-db',
+                id: '/subscriptions/40070b3e-38c4-4c4e-89d5-dd601f9f7622/resourceGroups/Estevia-Client-Projects-RG/providers/Microsoft.DBforMySQL/flexibleServers/peoplecraft-db'
+            }
+        };
+
+        // Parse JSON telemetry_snapshot for response and enrich with exact real Azure Resource identifiers
+        const formattedIncidents = (rows || []).map(inc => {
+            const keyLow = (inc.app_key || '').toLowerCase();
+            const envLow = (inc.environment || 'dev').toLowerCase();
+
+            const matched = appMap.get(keyLow) || Array.from(appMap.values()).find(a => 
+                (a.appName.toLowerCase().includes(keyLow) || keyLow.includes(a.appName.toLowerCase())) &&
+                a.environment.toLowerCase() === envLow
+            );
+
+            let azureResourceName = matched?.azureResourceName || null;
+            let azureResourceId = matched?.azureResourceId || null;
+            let azurePortalUrl = matched?.azurePortalUrl || null;
+
+            if (!azureResourceId) {
+                const cleanKey = keyLow.replace(/^estevia-/, '');
+                let fallback = platformMap[keyLow] || platformMap[cleanKey];
+
+                if (!fallback) {
+                    if (keyLow.includes('peoplecraft') && keyLow.includes('frontend')) {
+                        fallback = {
+                            name: `peoplecraft-frontend-${envLow}-swa`,
+                            id: `/subscriptions/40070b3e-38c4-4c4e-89d5-dd601f9f7622/resourceGroups/Estevia-Client-Projects-RG/providers/Microsoft.Web/staticSites/peoplecraft-frontend-${envLow}-swa`
+                        };
+                    } else if (keyLow.includes('peoplecraft')) {
+                        fallback = {
+                            name: `api-peoplecraft-${envLow}`,
+                            id: `/subscriptions/40070b3e-38c4-4c4e-89d5-dd601f9f7622/resourceGroups/Estevia-Client-Projects-RG/providers/Microsoft.App/containerapps/api-peoplecraft-${envLow}`
+                        };
+                    }
+                }
+
+                if (fallback) {
+                    azureResourceName = fallback.name;
+                    azureResourceId = fallback.id;
+                    azurePortalUrl = `https://portal.azure.com/#resource${fallback.id}`;
+                }
+            }
+
+            return {
+                ...inc,
+                incident_title: inc.incident_title || inc.title,
+                incident_description: inc.incident_description || inc.description,
+                telemetry_snapshot: typeof inc.telemetry_snapshot === 'string' 
+                    ? JSON.parse(inc.telemetry_snapshot || '{}') 
+                    : (inc.telemetry_snapshot || {}),
+                azure_resource_name: azureResourceName,
+                azure_resource_id: azureResourceId,
+                azure_portal_url: azurePortalUrl
+            };
+        });
 
         return res.json({ success: true, count: formattedIncidents.length, incidents: formattedIncidents });
     } catch (err) {
