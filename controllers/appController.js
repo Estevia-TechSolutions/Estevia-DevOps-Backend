@@ -3385,23 +3385,14 @@ const appController = {
                 }
             }
             if (targets.length === 0) {
-                if (req.query.subscriptionId && req.query.resourceGroup) {
-                    targets.push({ subscriptionId: req.query.subscriptionId, resourceGroup: req.query.resourceGroup });
-                } else if (req.query.resourceGroup) {
-                    const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
-                    const matched = discovered.filter(t => t.resourceGroup.toLowerCase() === req.query.resourceGroup.toLowerCase());
-                    if (matched.length > 0) {
-                        targets.push(...matched);
-                    } else {
-                        targets.push({ subscriptionId, resourceGroup: req.query.resourceGroup });
-                    }
-                } else {
-                    const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
+                const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
+                if (discovered && discovered.length > 0) {
                     targets.push(...discovered);
+                } else if (req.query.subscriptionId && req.query.resourceGroup) {
+                    targets.push({ subscriptionId: req.query.subscriptionId, resourceGroup: req.query.resourceGroup });
+                } else {
+                    targets.push({ subscriptionId, resourceGroup });
                 }
-            }
-            if (targets.length === 0) {
-                targets.push({ subscriptionId, resourceGroup });
             }
 
             for (const target of targets) {
@@ -9023,19 +9014,13 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const tokenRes = await credential.getToken("https://management.azure.com/.default");
             const token = tokenRes.token;
 
-            let targets = [];
-            if (req.query.subscriptionId && req.query.resourceGroup) {
-                targets.push({ subscriptionId: req.query.subscriptionId, resourceGroup: req.query.resourceGroup });
-            } else if (req.query.resourceGroup) {
-                const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
-                const matched = discovered.filter(t => t.resourceGroup.toLowerCase() === req.query.resourceGroup.toLowerCase());
-                targets = matched.length > 0 ? matched : [{ subscriptionId: orgSettings.azure_subscription_id || SUBSCRIPTION_ID, resourceGroup: req.query.resourceGroup }];
-            } else {
-                targets = await appController._discoverScanTargets(organizationId, orgSettings);
-            }
-
+            let targets = await appController._discoverScanTargets(organizationId, orgSettings);
             if (targets.length === 0) {
-                targets.push({ subscriptionId: orgSettings.azure_subscription_id || SUBSCRIPTION_ID, resourceGroup: orgSettings.azure_resource_group || RESOURCE_GROUP });
+                if (req.query.subscriptionId && req.query.resourceGroup) {
+                    targets.push({ subscriptionId: req.query.subscriptionId, resourceGroup: req.query.resourceGroup });
+                } else {
+                    targets.push({ subscriptionId: orgSettings.azure_subscription_id || SUBSCRIPTION_ID, resourceGroup: orgSettings.azure_resource_group || RESOURCE_GROUP });
+                }
             }
 
             const rawServersMap = new Map();
