@@ -9046,6 +9046,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
 
             const formatted = servers.map(s => {
                 const sName = s.name.toLowerCase();
+                const rgMatch = s.id ? s.id.match(/resourceGroups\/([^\/]+)/i) : null;
+                const resourceGroup = rgMatch ? rgMatch[1] : (s.resourceGroup || null);
                 let resolvedHost = s.properties?.fullyQualifiedDomainName || `${s.name}.mysql.database.azure.com`;
                 let privateNetwork = s.properties?.network?.publicNetworkAccess === 'Disabled';
 
@@ -9061,6 +9063,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 return {
                     id: s.id,
                     name: s.name,
+                    resourceGroup,
                     location: s.location,
                     version: s.properties?.version || '8.0',
                     state: s.properties?.state || 'Ready',
