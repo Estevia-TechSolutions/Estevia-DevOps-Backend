@@ -9763,10 +9763,12 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     subListRes.data.value.forEach(s => {
                         if (s.subscriptionId) {
                             apiSubIds.push(s.subscriptionId);
-                            apiSubMap.set(s.subscriptionId, {
-                                displayName: s.displayName,
-                                state: s.state
-                            });
+                            const info = {
+                                displayName: s.displayName || s.subscriptionName || s.subscriptionId,
+                                state: s.state || 'Enabled'
+                            };
+                            apiSubMap.set(s.subscriptionId.toLowerCase(), info);
+                            apiSubMap.set(s.subscriptionId, info);
                         }
                     });
                 }
@@ -9789,9 +9791,10 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const subscriptions = [];
 
             await Promise.all(allSubIds.map(async (subId) => {
-                const initialInfo = apiSubMap.get(subId);
-                let displayName = initialInfo?.displayName || subId;
-                let status = initialInfo?.state ? (initialInfo.state.toLowerCase() === 'enabled' ? 'active' : initialInfo.state.toLowerCase()) : 'active';
+                const initialInfo = apiSubMap.get((subId || '').toLowerCase()) || apiSubMap.get(subId);
+                let displayName = initialInfo?.displayName || (subId === primarySubId && orgSettings.azure_subscription_name ? orgSettings.azure_subscription_name : subId);
+                let stateLow = (initialInfo?.state || '').toLowerCase();
+                let status = stateLow ? (stateLow === 'enabled' ? 'active' : stateLow) : 'active';
                 const rgs = new Set();
 
                 // Fallback: add org-configured resource group if it matches this subId
@@ -9814,7 +9817,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     if (subRes.data?.displayName) {
                         displayName = subRes.data.displayName;
                     }
-                    const state = subRes.data?.state || 'active';
+                    const state = subRes.data?.state || 'Enabled';
                     status = state.toLowerCase() === 'enabled' ? 'active' : state.toLowerCase();
 
                     // List live resource groups
@@ -9826,7 +9829,16 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     }
                 } catch (err) {
                     console.warn(`[AppController] Live details/RGs fetch failed for sub ${subId}:`, err.message);
-                    if (!initialInfo) {
+                    const isAccessDeniedOrRestricted = err.response?.status === 403 || 
+                        err.response?.status === 401 || 
+                        (err.message || '').includes('Forbidden') || 
+                        (err.message || '').includes('Restricted') || 
+                        (err.message || '').includes('Disabled') || 
+                        (err.message || '').includes('AuthorizationFailed');
+                    
+                    if (isAccessDeniedOrRestricted) {
+                        status = 'restricted';
+                    } else if (!initialInfo) {
                         status = 'offline';
                     }
                 }
