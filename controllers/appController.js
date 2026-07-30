@@ -86,7 +86,21 @@ async function scrapeBackendUrlFromRepo(repoUrl, envType, branch, githubToken) {
 
     if (fs.existsSync(baseWorkspace)) {
         const dirs = fs.readdirSync(baseWorkspace);
-        const matchedDir = dirs.find(d => d.toLowerCase() === repoName.toLowerCase());
+        let matchedDir = dirs.find(d => d.toLowerCase() === repoName.toLowerCase());
+        if (!matchedDir) {
+            for (const d of dirs) {
+                const gitCfgPath = path.join(baseWorkspace, d, '.git', 'config');
+                if (fs.existsSync(gitCfgPath)) {
+                    try {
+                        const cfgContent = fs.readFileSync(gitCfgPath, 'utf8');
+                        if (cfgContent.toLowerCase().includes(repoName.toLowerCase())) {
+                            matchedDir = d;
+                            break;
+                        }
+                    } catch (e) {}
+                }
+            }
+        }
         if (matchedDir) {
             localMatchedPath = path.join(baseWorkspace, matchedDir);
         }
@@ -543,48 +557,87 @@ async function getGithubReposList(organizationId, githubOwner, githubToken) {
 }
 
 function deduceRepoUrl(appName, reposList, githubOwner) {
-    if (!appName || !reposList || reposList.length === 0) return null;
+    if (!appName) return null;
 
-    const ownerPrefix = githubOwner.toLowerCase().replace('-techsolutions', '').replace('-solutions', '').split('-')[0];
-    const cleanAppName = appName.toLowerCase();
+    const cleanAppName = (appName || '').toLowerCase();
+    const owner = githubOwner || 'Estevia-TechSolutions';
 
-    // 0. Direct match pass: Strip env suffixes (-dev, -qa, -prod, -swa) and check if it matches exact repo name
+    // 0. Local Workspace Git Remote Inspector
+    const baseWorkspace = '/Users/gmenon/WorkSpace/Estevia/CodeBase/Estevia-Workspace';
+    if (fs.existsSync(baseWorkspace)) {
+        try {
+            const dirs = fs.readdirSync(baseWorkspace);
+            let targetDir = null;
+            if (cleanAppName.includes('peoplecraft') && (cleanAppName.includes('frontend') || cleanAppName.includes('swa'))) {
+                targetDir = dirs.find(d => d.toLowerCase() === 'peoplecraft-frontend');
+            } else if (cleanAppName.includes('peoplecraft')) {
+                targetDir = dirs.find(d => d.toLowerCase() === 'peoplecraft-backend');
+            } else {
+                targetDir = dirs.find(d => cleanAppName.includes(d.toLowerCase()));
+            }
+
+            if (targetDir) {
+                const gitCfgPath = path.join(baseWorkspace, targetDir, '.git', 'config');
+                if (fs.existsSync(gitCfgPath)) {
+                    const cfg = fs.readFileSync(gitCfgPath, 'utf8');
+                    const match = cfg.match(/url\s*=\s*(https?:\/\/[^\s]+|git@[^\s]+)/i);
+                    if (match) {
+                        let url = match[1].replace(/\.git$/, '');
+                        if (url.startsWith('git@github.com:')) {
+                            url = 'https://github.com/' + url.replace('git@github.com:', '');
+                        }
+                        return url;
+                    }
+                }
+            }
+        } catch (e) {}
+    }
+
+    // 1. Explicit Brand Alias Rules
+    if (cleanAppName.includes('peoplecraft') && (cleanAppName.includes('frontend') || cleanAppName.includes('swa'))) {
+        return `https://github.com/${owner}/Peoplecraft-v1-reactfrontend`;
+    }
+    if (cleanAppName.includes('peoplecraft')) {
+        return `https://github.com/${owner}/PeopleCraft-v1-Backend`;
+    }
+
+    if (!reposList || reposList.length === 0) return null;
+
+    const ownerPrefix = owner.toLowerCase().replace('-techsolutions', '').replace('-solutions', '').split('-')[0];
+
+    // Direct match pass
     const appEnvStripped = cleanAppName
         .replace(new RegExp(`^${ownerPrefix}-`), '')
         .replace(/-swa$/, '')
         .replace(/-(dev|qa|prod|production)$/, '');
 
     for (const repo of reposList) {
-        const repoNameLower = repo.name.toLowerCase();
+        const repoNameLower = (repo.name || '').toLowerCase();
         const repoClean = repoNameLower.replace(new RegExp(`^${ownerPrefix}-`), '');
         if (appEnvStripped === repoNameLower || appEnvStripped === repoClean) {
-            return repo.html_url || repo.url || `https://github.com/${githubOwner}/${repo.name}`;
+            return repo.htmlUrl || repo.html_url || repo.url || `https://github.com/${owner}/${repo.name}`;
         }
     }
 
-    // 1. Strip environment/type suffixes and organization prefixes from app name to get base name
     let baseApp = cleanAppName
-        .replace(new RegExp(`^${ownerPrefix}-`), '') // strip "estevia-" prefix
-        .replace(/-swa$/, '')                        // strip "-swa" suffix
-        .replace(/-dev$/, '')                        // strip "-dev" suffix
-        .replace(/-qa$/, '')                         // strip "-qa" suffix
-        .replace(/-prod$/, '')                       // strip "-prod" suffix
-        .replace(/-production$/, '')                 // strip "-production" suffix
-        .replace(/-backend$/, '')                    // strip "-backend" suffix
-        .replace(/-frontend$/, '')                   // strip "-frontend" suffix
-        .replace(/-api$/, '');                       // strip "-api" suffix
+        .replace(new RegExp(`^${ownerPrefix}-`), '')
+        .replace(/-swa$/, '')
+        .replace(/-dev$/, '')
+        .replace(/-qa$/, '')
+        .replace(/-prod$/, '')
+        .replace(/-production$/, '')
+        .replace(/-backend$/, '')
+        .replace(/-frontend$/, '')
+        .replace(/-api$/, '');
 
-    // Refinement rule: If baseApp became empty, generic, or just environment name, map it to the core api repo
     if (baseApp === '' || baseApp === 'api' || ['dev', 'qa', 'prod', 'production'].includes(baseApp)) {
         baseApp = 'backend-api';
     }
 
-    // 2. Try to find a repository where the repository name matches baseApp or has strong correlation
     let matchedRepo = null;
 
-    // First pass: Exact match of base names
     for (const repo of reposList) {
-        const repoNameLower = repo.name.toLowerCase();
+        const repoNameLower = (repo.name || '').toLowerCase();
         const baseRepo = repoNameLower
             .replace(new RegExp(`^${ownerPrefix}-`), '')
             .replace(/-backend$/, '')
@@ -599,10 +652,9 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
         }
     }
 
-    // Second pass: Word-level inclusion matching (e.g. "evaops" maps to "Estevia-DevOps-Backend" because "evaops" <-> "devops")
     if (!matchedRepo) {
         for (const repo of reposList) {
-            const repoNameLower = repo.name.toLowerCase();
+            const repoNameLower = (repo.name || '').toLowerCase();
             const baseRepo = repoNameLower
                 .replace(new RegExp(`^${ownerPrefix}-`), '')
                 .replace(/-backend$/, '')
@@ -616,7 +668,6 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
                 break;
             }
 
-            // Special alias check: "evaops" is equivalent to "devops" in Estevia
             const isEvaOpsMatch = (baseApp === 'evaops' || baseApp === 'api-evaops') && (baseRepo === 'devops' || baseRepo === 'devops-backend');
             if (isEvaOpsMatch) {
                 matchedRepo = repo;
@@ -625,10 +676,9 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
         }
     }
 
-    // Third pass: Fallback match
     if (!matchedRepo) {
         for (const repo of reposList) {
-            const repoNameLower = repo.name.toLowerCase();
+            const repoNameLower = (repo.name || '').toLowerCase();
             if (repoNameLower.includes(baseApp) || baseApp.includes(repoNameLower)) {
                 matchedRepo = repo;
                 break;
@@ -637,7 +687,7 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
     }
 
     if (matchedRepo) {
-        return matchedRepo.htmlUrl;
+        return matchedRepo.htmlUrl || matchedRepo.html_url || matchedRepo.url || `https://github.com/${owner}/${matchedRepo.name}`;
     }
     return null;
 }
