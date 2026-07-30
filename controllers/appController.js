@@ -2487,6 +2487,31 @@ const appController = {
                         };
                     }
                 }
+                if (!result || !result.value) {
+                    // Dynamic peer token deduction across scanned container apps (Zero Hardcoding)
+                    const appTokens = app.name.toLowerCase()
+                        .replace(/^(ca|swa|api|app|func|rg|frontend|backend)-/i, '')
+                        .replace(/-(dev|qa|prod|production|staging|test|swa|frontend|backend)$/g, '')
+                        .split(/[-_\s]+/)
+                        .filter(t => t.length > 1);
+
+                    if (appTokens.length > 0) {
+                        const matchingBackend = (categoryApps || []).find(b => {
+                            if (!b.name || b.name === app.name) return false;
+                            const bName = b.name.toLowerCase();
+                            const bEnv = getEnvType(b.name, b.branch);
+                            return envType === bEnv && appTokens.some(token => bName.includes(token));
+                        });
+                        if (matchingBackend && (matchingBackend.hostname || matchingBackend.fqdn)) {
+                            const host = matchingBackend.hostname || matchingBackend.fqdn;
+                            result = {
+                                value: host.startsWith('http') ? host : `https://${host}`,
+                                file: 'Dynamic Token Ingress Deduction',
+                                content: `Auto-linked frontend ${app.name} to matching backend ${matchingBackend.name}`
+                            };
+                        }
+                    }
+                }
                 if (result && result.value) {
                     app.azureResourceDetails.configuredBackendUrl = result.value;
                     app.azureResourceDetails.scrapedSourceFile = result.file;
