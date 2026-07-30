@@ -9748,8 +9748,9 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 } catch (e) {}
             }
 
-            // Dynamically discover all active subscription IDs via Azure API
+            // Dynamically discover all active subscription IDs and display names via Azure API
             const apiSubIds = [];
+            const apiSubMap = new Map();
             try {
                 const subListRes = await axios.get('https://management.azure.com/subscriptions?api-version=2020-01-01', {
                     headers: { 'Authorization': `Bearer ${token}` },
@@ -9757,7 +9758,13 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 });
                 if (subListRes.data && Array.isArray(subListRes.data.value)) {
                     subListRes.data.value.forEach(s => {
-                        if (s.subscriptionId) apiSubIds.push(s.subscriptionId);
+                        if (s.subscriptionId) {
+                            apiSubIds.push(s.subscriptionId);
+                            apiSubMap.set(s.subscriptionId, {
+                                displayName: s.displayName,
+                                state: s.state
+                            });
+                        }
                     });
                 }
             } catch (err) {
@@ -9776,17 +9783,12 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 return res.json({ success: true, subscriptions: [] });
             }
 
-            const subNames = {
-                '4a551976-35a8-4305-b128-fe592805be41': 'Estevia-Platform-Subscription',
-                '40070b3e-38c4-4c4e-89d5-dd601f9f7622': 'Estevia-Client-Projects-Subscription',
-                'a812e8e3-34f9-4773-82ee-6398869533b0': 'Estevia-TechSolutions - Azure Main'
-            };
-
             const subscriptions = [];
 
             await Promise.all(allSubIds.map(async (subId) => {
-                let displayName = subNames[subId] || subId;
-                let status = 'active';
+                const initialInfo = apiSubMap.get(subId);
+                let displayName = initialInfo?.displayName || subId;
+                let status = initialInfo?.state ? (initialInfo.state.toLowerCase() === 'enabled' ? 'active' : initialInfo.state.toLowerCase()) : 'active';
                 const rgs = new Set();
 
                 // Fallback: add org-configured resource group if it matches this subId
@@ -9806,7 +9808,9 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         headers: { 'Authorization': `Bearer ${token}` },
                         timeout: 5000
                     });
-                    displayName = subRes.data?.displayName || displayName;
+                    if (subRes.data?.displayName) {
+                        displayName = subRes.data.displayName;
+                    }
                     const state = subRes.data?.state || 'active';
                     status = state.toLowerCase() === 'enabled' ? 'active' : state.toLowerCase();
 
@@ -9819,9 +9823,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     }
                 } catch (err) {
                     console.warn(`[AppController] Live details/RGs fetch failed for sub ${subId}:`, err.message);
-                    if (subId === 'a812e8e3-34f9-4773-82ee-6398869533b0') {
-                        status = 'restricted';
-                    } else {
+                    if (!initialInfo) {
                         status = 'offline';
                     }
                 }
