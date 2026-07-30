@@ -2390,7 +2390,7 @@ const appController = {
     _syncAppsInCategoryToDb: async (categoryApps, category, organizationId, resourceGroup, defaultDomain, githubOwner, devopsPipelines, godaddyCnames, githubToken, repoHasGithubActionsMap) => {
         // Deduce repo URLs for scanned apps that lack them
         categoryApps.forEach(app => {
-            if (!app.repositoryUrl) {
+            if (!app.repositoryUrl || /-(qa|prod|dev|swa)$/i.test(app.repositoryUrl.split('/').pop() || '')) {
                 let deducedName = app.name.toLowerCase()
                     .replace(/^estevia-/, '')
                     .replace(/-dev$/, '')
@@ -2410,10 +2410,12 @@ const appController = {
                     app.repositoryUrl = `https://github.com/${githubOwner}/Estevia-DevOps-Backend`;
                 } else if (deducedName.includes('devops-frontend') || deducedName === 'evaops') {
                     app.repositoryUrl = `https://github.com/${githubOwner}/Estevia-DevOps-Frontend`;
+                } else if (deducedName.includes('peoplecraft') && (deducedName.includes('frontend') || app.name.toLowerCase().includes('swa'))) {
+                    app.repositoryUrl = `https://github.com/${githubOwner}/Peoplecraft-v1-reactfrontend`;
+                } else if (deducedName.includes('peoplecraft')) {
+                    app.repositoryUrl = `https://github.com/${githubOwner}/PeopleCraft-v1-Backend`;
                 } else if (deducedName.includes('evanet')) {
                     app.repositoryUrl = `https://github.com/${githubOwner}/evanet-frontend`;
-                } else {
-                    app.repositoryUrl = `https://github.com/${githubOwner}/${deducedName}`;
                 }
             }
         });
@@ -2430,7 +2432,7 @@ const appController = {
             try {
                 const reposList = await getGithubReposList(organizationId, githubOwner, githubToken);
                 for (const categoryApp of categoryApps) {
-                    if (!categoryApp.repositoryUrl) {
+                    if (!categoryApp.repositoryUrl || /-(qa|prod|dev|swa)$/i.test(categoryApp.repositoryUrl.split('/').pop() || '')) {
                         const deducedUrl = deduceRepoUrl(categoryApp.name, reposList, githubOwner);
                         if (deducedUrl) {
                             categoryApp.repositoryUrl = deducedUrl;
