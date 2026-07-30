@@ -9779,7 +9779,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const subNames = {
                 '4a551976-35a8-4305-b128-fe592805be41': 'Estevia-Platform-Subscription',
                 '40070b3e-38c4-4c4e-89d5-dd601f9f7622': 'Estevia-Client-Projects-Subscription',
-                'a812e8e3-34f9-4773-82ee-6398869533b0': 'Estevia-TechSolutions - Azure Main (Legacy)'
+                'a812e8e3-34f9-4773-82ee-6398869533b0': 'Estevia-TechSolutions - Azure Main'
             };
 
             const subscriptions = [];
