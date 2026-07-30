@@ -2948,7 +2948,7 @@ const appController = {
 
             const defaultDomain = orgSettings.default_dns_domain || DEFAULT_DOMAIN;
             const githubOwner = orgSettings.github_owner || 'Estevia-TechSolutions';
-            const subscriptionId = orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const subscriptionId = req.query.subscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
             const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
 
             // Cached request check
@@ -3385,23 +3385,14 @@ const appController = {
                 }
             }
             if (targets.length === 0) {
-                if (req.query.subscriptionId && req.query.resourceGroup) {
-                    targets.push({ subscriptionId: req.query.subscriptionId, resourceGroup: req.query.resourceGroup });
-                } else if (req.query.resourceGroup) {
-                    const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
-                    const matched = discovered.filter(t => t.resourceGroup.toLowerCase() === req.query.resourceGroup.toLowerCase());
-                    if (matched.length > 0) {
-                        targets.push(...matched);
-                    } else {
-                        targets.push({ subscriptionId, resourceGroup: req.query.resourceGroup });
-                    }
-                } else {
-                    const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
+                const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
+                if (discovered && discovered.length > 0) {
                     targets.push(...discovered);
+                } else if (req.query.subscriptionId && req.query.resourceGroup) {
+                    targets.push({ subscriptionId: req.query.subscriptionId, resourceGroup: req.query.resourceGroup });
+                } else {
+                    targets.push({ subscriptionId, resourceGroup });
                 }
-            }
-            if (targets.length === 0) {
-                targets.push({ subscriptionId, resourceGroup });
             }
 
             for (const target of targets) {
@@ -9019,19 +9010,40 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
         let orgSettings = {};
         try {
             orgSettings = await appController._getOrgSettings(organizationId);
-            const subscriptionId = req.query.subscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
-            const resourceGroup = req.query.resourceGroup || orgSettings.azure_resource_group || RESOURCE_GROUP;
-
             const credential = await getAzureCredential(organizationId);
             const tokenRes = await credential.getToken("https://management.azure.com/.default");
             const token = tokenRes.token;
 
-            const url = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.DBforMySQL/flexibleServers?api-version=2021-05-01`;
-            const response = await axios.get(url, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            let targets = await appController._discoverScanTargets(organizationId, orgSettings);
+            if (targets.length === 0) {
+                if (req.query.subscriptionId && req.query.resourceGroup) {
+                    targets.push({ subscriptionId: req.query.subscriptionId, resourceGroup: req.query.resourceGroup });
+                } else {
+                    targets.push({ subscriptionId: orgSettings.azure_subscription_id || SUBSCRIPTION_ID, resourceGroup: orgSettings.azure_resource_group || RESOURCE_GROUP });
+                }
+            }
 
-            const servers = response.data?.value || [];
+            const rawServersMap = new Map();
+            await Promise.all(targets.map(async (t) => {
+                try {
+                    const url = `https://management.azure.com/subscriptions/${t.subscriptionId}/resourceGroups/${t.resourceGroup}/providers/Microsoft.DBforMySQL/flexibleServers?api-version=2021-05-01`;
+                    const response = await axios.get(url, {
+                        headers: { 'Authorization': `Bearer ${token}` },
+                        timeout: 5000
+                    });
+                    const servers = response.data?.value || [];
+                    for (const s of servers) {
+                        if (s.name && !rawServersMap.has(s.name.toLowerCase())) {
+                            rawServersMap.set(s.name.toLowerCase(), s);
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`[AppController] getDbServers target failed for sub ${t.subscriptionId} rg ${t.resourceGroup}:`, e.message);
+                }
+            }));
+
+            const servers = Array.from(rawServersMap.values());
+
             const formatted = servers.map(s => {
                 const sName = s.name.toLowerCase();
                 let resolvedHost = s.properties?.fullyQualifiedDomainName || `${s.name}.mysql.database.azure.com`;
