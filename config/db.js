@@ -174,6 +174,19 @@ async function runAutoMigration() {
             await pool.query(`ALTER TABLE applications ADD COLUMN license_frozen TINYINT(1) NOT NULL DEFAULT 0`);
         }
         
+        console.log('[DevOps DB] Auto-correcting applications repository URLs for PeopleCraft...');
+        await pool.query(`
+            UPDATE applications
+            SET repo_url = 'https://github.com/Estevia-TechSolutions/Peoplecraft-v1-reactfrontend'
+            WHERE (name LIKE '%peoplecraft%frontend%' OR name LIKE '%peoplecraft%swa%')
+        `).catch(err => console.warn('[DevOps DB] PeopleCraft frontend URL auto-correct notice:', err.message));
+
+        await pool.query(`
+            UPDATE applications
+            SET repo_url = 'https://github.com/Estevia-TechSolutions/PeopleCraft-v1-Backend'
+            WHERE name LIKE '%peoplecraft%' AND name NOT LIKE '%frontend%' AND name NOT LIKE '%swa%'
+        `).catch(err => console.warn('[DevOps DB] PeopleCraft backend URL auto-correct notice:', err.message));
+
         const masterOrgId = process.env.MASTER_ORGANIZATION_ID || 'estevia';
         const masterAdminEmail = process.env.MASTER_ADMIN_EMAIL || 'govind.m@esteviatech.com';
         console.log(`[DevOps DB] Seeding admin_email and license tier for ${masterOrgId} organization...`);
