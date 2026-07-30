@@ -559,137 +559,128 @@ async function getGithubReposList(organizationId, githubOwner, githubToken) {
 function deduceRepoUrl(appName, reposList, githubOwner) {
     if (!appName) return null;
 
-    const cleanAppName = (appName || '').toLowerCase();
     const owner = githubOwner || 'Estevia-TechSolutions';
 
-    // 0. Local Workspace Git Remote Inspector
-    const baseWorkspace = '/Users/gmenon/WorkSpace/Estevia/CodeBase/Estevia-Workspace';
+    // 1. Dynamic Local Workspace .git/config Inspector (Zero hardcoding)
+    const baseWorkspace = process.env.ESTEVIA_WORKSPACE_PATH || '/Users/gmenon/WorkSpace/Estevia/CodeBase/Estevia-Workspace';
     if (fs.existsSync(baseWorkspace)) {
         try {
-            const dirs = fs.readdirSync(baseWorkspace);
-            let targetDir = null;
-            if (cleanAppName.includes('peoplecraft') && (cleanAppName.includes('frontend') || cleanAppName.includes('swa'))) {
-                targetDir = dirs.find(d => d.toLowerCase() === 'peoplecraft-frontend');
-            } else if (cleanAppName.includes('peoplecraft')) {
-                targetDir = dirs.find(d => d.toLowerCase() === 'peoplecraft-backend');
-            } else {
-                targetDir = dirs.find(d => cleanAppName.includes(d.toLowerCase()));
-            }
+            const dirs = fs.readdirSync(baseWorkspace, { withFileTypes: true })
+                .filter(d => d.isDirectory())
+                .map(d => d.name);
 
-            if (targetDir) {
-                const gitCfgPath = path.join(baseWorkspace, targetDir, '.git', 'config');
+            const nameTokens = appName.toLowerCase()
+                .replace(/^(ca|swa|api|app|func|rg)-/i, '')
+                .replace(/-(dev|qa|prod|production|staging|test|swa)$/g, '')
+                .split(/[-_\s]+/)
+                .filter(t => t.length > 1);
+
+            let bestLocalUrl = null;
+            let bestLocalScore = -1;
+
+            for (const dir of dirs) {
+                const gitCfgPath = path.join(baseWorkspace, dir, '.git', 'config');
                 if (fs.existsSync(gitCfgPath)) {
                     const cfg = fs.readFileSync(gitCfgPath, 'utf8');
                     const match = cfg.match(/url\s*=\s*(https?:\/\/[^\s]+|git@[^\s]+)/i);
                     if (match) {
-                        let url = match[1].replace(/\.git$/, '');
-                        if (url.startsWith('git@github.com:')) {
-                            url = 'https://github.com/' + url.replace('git@github.com:', '');
+                        let remoteUrl = match[1].replace(/\.git$/, '');
+                        if (remoteUrl.startsWith('git@github.com:')) {
+                            remoteUrl = 'https://github.com/' + remoteUrl.replace('git@github.com:', '');
                         }
-                        return url;
+
+                        const dirLower = dir.toLowerCase();
+                        const repoSlug = remoteUrl.split('/').pop().toLowerCase();
+
+                        let score = 0;
+                        for (const token of nameTokens) {
+                            if (dirLower.includes(token) || repoSlug.includes(token)) {
+                                score += 20;
+                            }
+                        }
+
+                        const isFrontendApp = /frontend|swa/i.test(appName);
+                        const isBackendApp = /backend|api|^ca-/i.test(appName);
+
+                        const isFrontendRepo = /frontend|react|ui|web/i.test(dirLower) || /frontend|react|ui|web/i.test(repoSlug);
+                        const isBackendRepo = /backend|api|server/i.test(dirLower) || /backend|api|server/i.test(repoSlug);
+
+                        if (isFrontendApp && isFrontendRepo) score += 30;
+                        if (isBackendApp && isBackendRepo) score += 30;
+                        if (isFrontendApp && isBackendRepo) score -= 50;
+                        if (isBackendApp && isFrontendRepo) score -= 50;
+
+                        if (score > bestLocalScore && score >= 20) {
+                            bestLocalScore = score;
+                            bestLocalUrl = remoteUrl;
+                        }
                     }
                 }
             }
-        } catch (e) {}
+
+            if (bestLocalUrl && bestLocalScore >= 20) {
+                return bestLocalUrl;
+            }
+        } catch (e) {
+            console.warn('[deduceRepoUrl] Local workspace inspector notice:', e.message);
+        }
     }
 
-    // 1. Explicit Brand Alias Rules
-    if (cleanAppName.includes('peoplecraft') && (cleanAppName.includes('frontend') || cleanAppName.includes('swa'))) {
-        return `https://github.com/${owner}/Peoplecraft-v1-reactfrontend`;
-    }
-    if (cleanAppName.includes('peoplecraft')) {
-        return `https://github.com/${owner}/PeopleCraft-v1-Backend`;
-    }
-
+    // 2. Dynamic GitHub API Token Scoring Engine (Zero hardcoding)
     if (!reposList || reposList.length === 0) return null;
 
-    const ownerPrefix = owner.toLowerCase().replace('-techsolutions', '').replace('-solutions', '').split('-')[0];
+    const isFrontendApp = /frontend|swa/i.test(appName);
+    const isBackendApp = /backend|api|^ca-/i.test(appName);
 
-    // Direct match pass
-    const appEnvStripped = cleanAppName
-        .replace(new RegExp(`^${ownerPrefix}-`), '')
-        .replace(/-swa$/, '')
-        .replace(/-(dev|qa|prod|production)$/, '');
+    const appClean = appName.toLowerCase()
+        .replace(/^(ca|swa|api|app|func|rg)-/i, '')
+        .replace(/-(dev|qa|prod|production|staging|test|swa)$/g, '');
 
-    for (const repo of reposList) {
-        const repoNameLower = (repo.name || '').toLowerCase();
-        const repoClean = repoNameLower.replace(new RegExp(`^${ownerPrefix}-`), '');
-        if (appEnvStripped === repoNameLower || appEnvStripped === repoClean) {
-            return repo.htmlUrl || repo.html_url || repo.url || `https://github.com/${owner}/${repo.name}`;
-        }
-    }
+    const appTokens = appClean.split(/[-_\s]+/).filter(t => t.length > 1 && !['dev','qa','prod','production','staging','test','swa','api','backend','frontend'].includes(t));
 
-    let baseApp = cleanAppName
-        .replace(new RegExp(`^${ownerPrefix}-`), '')
-        .replace(/-swa$/, '')
-        .replace(/-dev$/, '')
-        .replace(/-qa$/, '')
-        .replace(/-prod$/, '')
-        .replace(/-production$/, '')
-        .replace(/-backend$/, '')
-        .replace(/-frontend$/, '')
-        .replace(/-api$/, '');
-
-    if (baseApp === '' || baseApp === 'api' || ['dev', 'qa', 'prod', 'production'].includes(baseApp)) {
-        baseApp = 'backend-api';
-    }
-
-    let matchedRepo = null;
+    let bestRepo = null;
+    let maxScore = -999;
 
     for (const repo of reposList) {
-        const repoNameLower = (repo.name || '').toLowerCase();
-        const baseRepo = repoNameLower
-            .replace(new RegExp(`^${ownerPrefix}-`), '')
-            .replace(/-backend$/, '')
-            .replace(/-frontend$/, '')
-            .replace(/-api$/, '')
-            .replace(/-ci-cd$/, '')
-            .replace(/-pipeline$/, '');
+        const repoName = (repo.name || '').toLowerCase();
+        const repoUrl = repo.htmlUrl || repo.html_url || repo.url || `https://github.com/${owner}/${repo.name}`;
+        
+        let score = 0;
 
-        if (baseApp === baseRepo) {
-            matchedRepo = repo;
-            break;
+        if (appClean === repoName) {
+            score += 200;
+        }
+
+        for (const token of appTokens) {
+            if (repoName.includes(token)) {
+                score += 50;
+            }
+        }
+
+        const isFrontendRepo = /frontend|react|ui|web|client|swa/i.test(repoName);
+        const isBackendRepo = /backend|api|server|service/i.test(repoName);
+
+        if (isFrontendApp) {
+            if (isFrontendRepo) score += 40;
+            if (isBackendRepo) score -= 60;
+        }
+        if (isBackendApp) {
+            if (isBackendRepo) score += 40;
+            if (isFrontendRepo) score -= 60;
+        }
+
+        if (score > maxScore && score > 0) {
+            maxScore = score;
+            bestRepo = repoUrl;
         }
     }
 
-    if (!matchedRepo) {
-        for (const repo of reposList) {
-            const repoNameLower = (repo.name || '').toLowerCase();
-            const baseRepo = repoNameLower
-                .replace(new RegExp(`^${ownerPrefix}-`), '')
-                .replace(/-backend$/, '')
-                .replace(/-frontend$/, '')
-                .replace(/-api$/, '')
-                .replace(/-ci-cd$/, '')
-                .replace(/-pipeline$/, '');
-
-            if (baseApp && baseRepo && (baseApp.includes(baseRepo) || baseRepo.includes(baseApp))) {
-                matchedRepo = repo;
-                break;
-            }
-
-            const isEvaOpsMatch = (baseApp === 'evaops' || baseApp === 'api-evaops') && (baseRepo === 'devops' || baseRepo === 'devops-backend');
-            if (isEvaOpsMatch) {
-                matchedRepo = repo;
-                break;
-            }
-        }
+    if (bestRepo && maxScore >= 30) {
+        return bestRepo;
     }
 
-    if (!matchedRepo) {
-        for (const repo of reposList) {
-            const repoNameLower = (repo.name || '').toLowerCase();
-            if (repoNameLower.includes(baseApp) || baseApp.includes(repoNameLower)) {
-                matchedRepo = repo;
-                break;
-            }
-        }
-    }
-
-    if (matchedRepo) {
-        return matchedRepo.htmlUrl || matchedRepo.html_url || matchedRepo.url || `https://github.com/${owner}/${matchedRepo.name}`;
-    }
-    return null;
+    // 3. Fallback: Algorithmic slug clean (Zero hardcoded app names)
+    return `https://github.com/${owner}/${appClean}`;
 }
 
 
@@ -2388,38 +2379,6 @@ const appController = {
      * Prevents locking up the main scan process and allows progressive updates.
      */
     _syncAppsInCategoryToDb: async (categoryApps, category, organizationId, resourceGroup, defaultDomain, githubOwner, devopsPipelines, godaddyCnames, githubToken, repoHasGithubActionsMap) => {
-        // Deduce repo URLs for scanned apps that lack them
-        categoryApps.forEach(app => {
-            if (!app.repositoryUrl || /-(qa|prod|dev|swa)$/i.test(app.repositoryUrl.split('/').pop() || '')) {
-                let deducedName = app.name.toLowerCase()
-                    .replace(/^estevia-/, '')
-                    .replace(/-dev$/, '')
-                    .replace(/-qa$/, '')
-                    .replace(/-prod$/, '')
-                    .replace(/-swa$/, '');
-                
-                if (deducedName.includes('restaurant-backend')) {
-                    app.repositoryUrl = `https://github.com/${githubOwner}/estevia-restaurant-backend`;
-                } else if (deducedName.includes('restaurant-frontend') || deducedName.includes('restaurant-front')) {
-                    app.repositoryUrl = `https://github.com/${githubOwner}/estevia-restaurant-frontend`;
-                } else if (deducedName.includes('backend-api') || deducedName === 'api') {
-                    app.repositoryUrl = `https://github.com/${githubOwner}/estevia-backend-api`;
-                } else if (deducedName.includes('platform-management')) {
-                    app.repositoryUrl = `https://github.com/${githubOwner}/estevia-platform-management`;
-                } else if (deducedName.includes('devops-backend') || deducedName === 'api-evaops') {
-                    app.repositoryUrl = `https://github.com/${githubOwner}/Estevia-DevOps-Backend`;
-                } else if (deducedName.includes('devops-frontend') || deducedName === 'evaops') {
-                    app.repositoryUrl = `https://github.com/${githubOwner}/Estevia-DevOps-Frontend`;
-                } else if (deducedName.includes('peoplecraft') && (deducedName.includes('frontend') || app.name.toLowerCase().includes('swa'))) {
-                    app.repositoryUrl = `https://github.com/${githubOwner}/Peoplecraft-v1-reactfrontend`;
-                } else if (deducedName.includes('peoplecraft')) {
-                    app.repositoryUrl = `https://github.com/${githubOwner}/PeopleCraft-v1-Backend`;
-                } else if (deducedName.includes('evanet')) {
-                    app.repositoryUrl = `https://github.com/${githubOwner}/evanet-frontend`;
-                }
-            }
-        });
-
         const orgSettings = await appController._getOrgSettings(organizationId);
         let devopsSecrets = null;
         try {
@@ -2427,21 +2386,24 @@ const appController = {
         } catch (e) {
             console.warn('[AppController] Failed to decrypt DevOps credentials for sync:', e.message);
         }
-        // Deduce repository URLs for category apps that lack one
+
+        // Dynamically deduce repository URLs using token-scoring engine (Zero hardcoding)
+        let reposList = [];
         if (githubToken && githubOwner) {
             try {
-                const reposList = await getGithubReposList(organizationId, githubOwner, githubToken);
-                for (const categoryApp of categoryApps) {
-                    if (!categoryApp.repositoryUrl || /-(qa|prod|dev|swa)$/i.test(categoryApp.repositoryUrl.split('/').pop() || '')) {
-                        const deducedUrl = deduceRepoUrl(categoryApp.name, reposList, githubOwner);
-                        if (deducedUrl) {
-                            categoryApp.repositoryUrl = deducedUrl;
-                            console.log(`[AppController] Deduced repository URL for ${categoryApp.name}: ${deducedUrl}`);
-                        }
-                    }
-                }
+                reposList = await getGithubReposList(organizationId, githubOwner, githubToken);
             } catch (err) {
-                console.warn('[AppController] Failed to automatically deduce repository URLs:', err.message);
+                console.warn('[AppController] Failed to fetch GitHub repos list for sync:', err.message);
+            }
+        }
+
+        for (const categoryApp of categoryApps) {
+            if (!categoryApp.repositoryUrl || /-(qa|prod|dev|swa)$/i.test(categoryApp.repositoryUrl.split('/').pop() || '')) {
+                const deducedUrl = deduceRepoUrl(categoryApp.name, reposList, githubOwner);
+                if (deducedUrl) {
+                    categoryApp.repositoryUrl = deducedUrl;
+                    console.log(`[AppController] Dynamically deduced repository URL for ${categoryApp.name}: ${deducedUrl}`);
+                }
             }
         }
 
