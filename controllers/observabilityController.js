@@ -754,9 +754,30 @@ exports.getAIRemediation = async (req, res) => {
             return res.status(404).json({ error: 'Incident record not found.' });
         }
 
-        const snapshot = typeof incident.telemetry_snapshot === 'string'
-            ? JSON.parse(incident.telemetry_snapshot || '{}')
-            : (incident.telemetry_snapshot || {});
+        // Extract actual Azure resource parameters from snapshot or app key
+        const rawAppKey = (incident.app_key || 'cloud-service').toLowerCase();
+        const cleanSlug = rawAppKey
+            .replace(/-(dev|qa|prod|production|staging|test)(-swa)?$/i, '')
+            .replace(/(-swa)?$/i, '')
+            .replace(/^estevia-/, '');
+        const envLow = (incident.environment || 'dev').toLowerCase();
+        const resTypeLow = (incident.resource_type || 'aca').toLowerCase();
+
+        const actualResourceName = snapshot.azure_resource_name || snapshot.resource_name || snapshot.appName || (
+            resTypeLow === 'swa' ? `${cleanSlug}-frontend-${envLow}-swa` :
+            resTypeLow === 'vm' ? `vm-${cleanSlug}-${envLow}` :
+            resTypeLow === 'mysql' ? `${cleanSlug}-db` :
+            `api-${cleanSlug}-${envLow}`
+        );
+
+        const actualRg = snapshot.resource_group || snapshot.rg || (
+            cleanSlug.includes('peoplecraft') ? 'Estevia-Client-Projects-RG' :
+            cleanSlug.includes('marketing') ? 'Estevia-Prod-RG' : 'Estevia-Platform-RG'
+        );
+
+        const actualSubId = snapshot.subscription_id || snapshot.subscriptionId || (
+            cleanSlug.includes('peoplecraft') ? '40070b3e-38c4-4c4e-89d5-dd601f9f7622' : '4a551976-35a8-4305-b128-fe592805be41'
+        );
 
         const apiKey = process.env.OPENAI_API_KEY;
         let aiResult = null;
@@ -774,12 +795,15 @@ exports.getAIRemediation = async (req, res) => {
                         messages: [
                             {
                                 role: 'system',
-                                content: 'You are Eva AI DevOps Assistant. Provide structured JSON real-time remediation for Azure cloud incidents.'
+                                content: 'You are Eva AI DevOps Assistant. Provide structured JSON real-time remediation for Azure cloud incidents. Use actual resource names, resource groups, and subscription IDs passed in prompt.'
                             },
                             {
                                 role: 'user',
                                 content: `Generate a step-by-step remediation guide in JSON for:
-App Key: ${incident.app_key}
+App Slug: ${cleanSlug}
+Actual Azure Resource Name: ${actualResourceName}
+Target Resource Group: ${actualRg}
+Subscription ID: ${actualSubId}
 Resource Type: ${incident.resource_type}
 Environment: ${incident.environment}
 Category: ${incident.category}
@@ -792,7 +816,8 @@ Respond strictly in valid JSON with schema:
 {
   "diagnosis": "Root cause summary...",
   "steps": ["Step 1...", "Step 2...", "Step 3..."],
-  "azureCliCommands": ["az containerapp revision show...", "az containerapp replica count..."],
+  "azureCliCommands": ["az containerapp revision show...", "az containerapp update..."],
+  "powerShellCommands": ["Get-AzContainerApp...", "Update-AzContainerApp..."],
   "preventiveAction": "Preventive recommendation..."
 }`
                             }
@@ -816,49 +841,93 @@ Respond strictly in valid JSON with schema:
 
         // Fallback: Deterministic Eva AI Remediation Engine if OpenAI API key is not present or failed
         if (!aiResult) {
-            const app = incident.app_key || 'cloud-service';
-            const env = (incident.environment || 'dev').toUpperCase();
-            const resType = (incident.resource_type || 'aca').toUpperCase();
             const cat = incident.category || 'HIGH_RESOURCE_PRESSURE';
 
-            if (cat === 'CRITICAL_OUTAGE' || cat === 'HEALTH_CHECK_FAILURE') {
+            if (resTypeLow === 'swa') {
                 aiResult = {
-                    diagnosis: `Critical service unavailability detected on ${app} (${env}). Container revision health check probes failed due to unresponsive HTTP endpoints.`,
+                    diagnosis: `Static Web App frontend deployment anomaly or FQDN latency degradation detected on ${actualResourceName} (${actualRg}).`,
                     steps: [
-                        `Inspect Azure Container App revision status for ${app} in target Resource Group.`,
-                        `Check backend application container stdout/stderr log stream for uncaught runtime errors or crash loops.`,
-                        `Restart container revision and scale replica count from 1 to 3 to restore immediate availability.`
+                        `Verify custom domain binding SSL certificate validation status on Azure Static Web App ${actualResourceName}.`,
+                        `Inspect CDN edge routing rules and static asset deployment history for environment ${envLow.toUpperCase()}.`,
+                        `Purge global CDN edge cache to restore asset freshness.`
                     ],
                     azureCliCommands: [
-                        `az containerapp revision list --name ca-${app}-${env.toLowerCase()} --resource-group Estevia-Platform-RG`,
-                        `az containerapp logs show --name ca-${app}-${env.toLowerCase()} --resource-group Estevia-Platform-RG --follow`
+                        `az staticwebapp show --name ${actualResourceName} --resource-group ${actualRg} --subscription ${actualSubId}`,
+                        `az staticwebapp hostname list --name ${actualResourceName} --resource-group ${actualRg} --subscription ${actualSubId}`
+                    ],
+                    powerShellCommands: [
+                        `Get-AzStaticWebApp -ResourceGroupName "${actualRg}" -Name "${actualResourceName}"`
+                    ],
+                    preventiveAction: `Configure automated SSL certificate auto-renewal and GitHub Actions deployment verification hooks.`
+                };
+            } else if (resTypeLow === 'mysql') {
+                aiResult = {
+                    diagnosis: `Database server connection pressure or query queue lock detected on ${actualResourceName} in ${actualRg}.`,
+                    steps: [
+                        `Inspect active thread connections and slow query log for database server ${actualResourceName}.`,
+                        `Verify VNet subnet delegation rules and storage IOPS utilization on MySQL Flexible Server.`,
+                        `Perform safe server parameter optimization and flush stagnant client connections.`
+                    ],
+                    azureCliCommands: [
+                        `az mysql flexible-server show --name ${actualResourceName} --resource-group ${actualRg} --subscription ${actualSubId}`,
+                        `az mysql flexible-server restart --name ${actualResourceName} --resource-group ${actualRg} --subscription ${actualSubId}`
+                    ],
+                    powerShellCommands: [
+                        `Get-AzMySqlFlexibleServer -ResourceGroupName "${actualRg}" -Name "${actualResourceName}"`,
+                        `Restart-AzMySqlFlexibleServer -ResourceGroupName "${actualRg}" -Name "${actualResourceName}"`
+                    ],
+                    preventiveAction: `Enable Read Replicas and set up Connection Pooling (ProxySQL) for high-frequency microservice queries.`
+                };
+            } else if (cat === 'CRITICAL_OUTAGE' || cat === 'HEALTH_CHECK_FAILURE') {
+                aiResult = {
+                    diagnosis: `Critical service unavailability detected on Container App ${actualResourceName} (${actualRg}). Revision health check probes failed due to unresponsive HTTP endpoints.`,
+                    steps: [
+                        `Inspect Azure Container App revision status for ${actualResourceName} in Resource Group ${actualRg}.`,
+                        `Check container stdout/stderr log stream for uncaught runtime crashes or startup errors.`,
+                        `Restart container revision and scale replica count to restore service availability.`
+                    ],
+                    azureCliCommands: [
+                        `az containerapp revision list --name ${actualResourceName} --resource-group ${actualRg} --subscription ${actualSubId}`,
+                        `az containerapp logs show --name ${actualResourceName} --resource-group ${actualRg} --subscription ${actualSubId} --follow`
+                    ],
+                    powerShellCommands: [
+                        `Get-AzContainerAppRevision -ContainerAppName "${actualResourceName}" -ResourceGroupName "${actualRg}"`,
+                        `Get-AzContainerApp -Name "${actualResourceName}" -ResourceGroupName "${actualRg}"`
                     ],
                     preventiveAction: `Configure automated liveness/readiness health probes with a 15-second grace period and set up auto-healing rules.`
                 };
             } else if (cat === 'HIGH_RESOURCE_PRESSURE') {
                 aiResult = {
-                    diagnosis: `Sustained high CPU/Memory utilization (${snapshot.cpu_percent || 88.5}% CPU, ${snapshot.memory_mb || 512} MB RAM) on ${app} (${env}).`,
+                    diagnosis: `Sustained high CPU/Memory utilization (${snapshot.cpu_percent || 88.5}% CPU, ${snapshot.memory_mb || 512} MB RAM) on Container App ${actualResourceName} (${actualRg}).`,
                     steps: [
-                        `Verify worker process memory allocation and check for potential memory leaks in event listeners or database connections.`,
-                        `Adjust KEDA scaling rule thresholds or increase container CPU/RAM resource limits from 0.5 CPU / 1.0 GiB to 1.0 CPU / 2.0 GiB.`,
-                        `Trigger container revision restart to purge transient heap memory allocation.`
+                        `Verify worker process memory allocation and check for potential memory leaks in event listeners or database connection pools.`,
+                        `Adjust KEDA scaling rule thresholds or increase container CPU/RAM limits from 0.5 CPU / 1.0 GiB to 1.0 CPU / 2.0 GiB.`,
+                        `Trigger container revision update to scale resources and purge transient heap allocations.`
                     ],
                     azureCliCommands: [
-                        `az containerapp update --name ca-${app}-${env.toLowerCase()} --resource-group Estevia-Platform-RG --cpu 1.0 --memory 2.0Gi`,
-                        `az containerapp revision list --name ca-${app}-${env.toLowerCase()} --resource-group Estevia-Platform-RG`
+                        `az containerapp update --name ${actualResourceName} --resource-group ${actualRg} --subscription ${actualSubId} --cpu 1.0 --memory 2.0Gi`,
+                        `az containerapp revision list --name ${actualResourceName} --resource-group ${actualRg} --subscription ${actualSubId}`
+                    ],
+                    powerShellCommands: [
+                        `Update-AzContainerApp -Name "${actualResourceName}" -ResourceGroupName "${actualRg}" -Cpu 1.0 -Memory "2.0Gi"`,
+                        `Get-AzContainerApp -Name "${actualResourceName}" -ResourceGroupName "${actualRg}"`
                     ],
                     preventiveAction: `Set up KEDA CPU target scaling rule at 75% utilization threshold to proactively scale replicas.`
                 };
             } else {
                 aiResult = {
-                    diagnosis: `Telemetry degradation detected on ${app} (${env}). P95 latency spike (${snapshot.p95_latency_ms || 450}ms) and network queue backlog.`,
+                    diagnosis: `Telemetry latency degradation detected on Container App ${actualResourceName} (${actualRg}). P95 latency spike (${snapshot.p95_latency_ms || 450}ms).`,
                     steps: [
                         `Check MySQL database connection pool usage and active slow query locks.`,
                         `Inspect network throughput and ingress proxy TLS handshake delays.`,
-                        `Purge application cache or restart background worker queues.`
+                        `Execute container diagnostics command to inspect open socket connections.`
                     ],
                     azureCliCommands: [
-                        `az containerapp exec --name ca-${app}-${env.toLowerCase()} --resource-group Estevia-Platform-RG --command "netstat -an"`
+                        `az containerapp exec --name ${actualResourceName} --resource-group ${actualRg} --subscription ${actualSubId} --command "netstat -an"`,
+                        `az containerapp show --name ${actualResourceName} --resource-group ${actualRg} --subscription ${actualSubId}`
+                    ],
+                    powerShellCommands: [
+                        `Get-AzContainerApp -Name "${actualResourceName}" -ResourceGroupName "${actualRg}"`
                     ],
                     preventiveAction: `Implement Redis cache layer for frequently queried database schema tables.`
                 };
