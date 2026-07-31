@@ -151,6 +151,13 @@ async function completeLoginSession(user, loginMethod, req, res, mfaVerified = f
             { expiresIn }
         );
 
+        // Record last login timestamp for audit tracking
+        const nowIso = new Date().toISOString().slice(0, 19).replace('T', ' ');
+        await db.query('UPDATE users SET last_login_at = ? WHERE id = ?', [nowIso, user.id]).catch(err => {
+            console.warn('[authController] Failed to update last_login_at:', err.message);
+        });
+        user.last_login_at = nowIso;
+
         req.user = user;
         return res.json({
             token,
@@ -634,7 +641,7 @@ const getLoginUrl = (req, res) => {
 const listUsers = async (req, res) => {
     try {
         const [rows] = await db.query(
-            "SELECT id, email, name, role, mfa_enabled, created_at FROM users WHERE organization_id = ? AND id NOT LIKE 'dev-bypass-%' AND id NOT LIKE 'admin-override-%' AND id <> 'dev-bypass-user-id' ORDER BY name ASC",
+            "SELECT id, email, name, role, mfa_enabled, created_at, last_login_at FROM users WHERE organization_id = ? AND id NOT LIKE 'dev-bypass-%' AND id NOT LIKE 'admin-override-%' AND id <> 'dev-bypass-user-id' ORDER BY name ASC",
             [req.user.organization_id]
         );
         return res.json(rows);
