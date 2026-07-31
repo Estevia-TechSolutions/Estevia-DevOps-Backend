@@ -2638,8 +2638,8 @@ const appController = {
                         return true;
                     }
                     if (
-                        (cleanAppName.includes('evaops') || cleanAppName.includes('devops') || cleanAppName.includes('api-evaops')) &&
-                        (pName.includes('evaops') || pName.includes('devops') || pName.includes('evaops-backend'))
+                        (cleanAppName.includes('evaops') || cleanAppName.includes('api-evaops')) &&
+                        (pName.includes('api-evaops') || pName.includes('evaops-backend'))
                     ) {
                         return true;
                     }
@@ -3920,12 +3920,9 @@ const appController = {
                             return true;
                         }
                         if (
-                            (cleanAppName.includes('evaops') || cleanAppName.includes('devops') || cleanAppName.includes('api-evaops')) &&
-                            (pName.includes('evaops') || pName.includes('devops') || pName.includes('backend-api') || pName.includes('evaops-backend'))
+                            (cleanAppName.includes('evaops') || cleanAppName.includes('api-evaops')) &&
+                            (pName.includes('api-evaops') || pName.includes('evaops-backend'))
                         ) {
-                            return true;
-                        }
-                        if (cleanAppName.includes(`${ownerPrefix}-api`) && pName.includes('backend-api')) {
                             return true;
                         }
                         if (cleanAppName.includes('marketing') && pName.includes('marketing-web')) {
