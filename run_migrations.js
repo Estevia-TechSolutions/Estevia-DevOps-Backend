@@ -462,6 +462,96 @@ async function main() {
             await connection.query("ALTER TABLE users ADD COLUMN mfa_backup_codes TEXT NULL");
         }
 
+        // 5.98 Create EvaOps Native CI/CD Pipeline Tables
+        console.log('Creating EvaOps Native CI/CD Pipeline tables...');
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS pipelines (
+                id VARCHAR(255) PRIMARY KEY,
+                organization_id VARCHAR(50) NOT NULL,
+                project_name VARCHAR(255) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                target_type VARCHAR(50) DEFAULT 'static_web_app',
+                auto_provision_infra TINYINT(1) DEFAULT 0,
+                iac_template_type VARCHAR(50) DEFAULT 'bicep',
+                provider VARCHAR(50) DEFAULT 'evaops_native',
+                yaml_config TEXT NOT NULL,
+                trigger_type VARCHAR(50) DEFAULT 'git_push',
+                is_active TINYINT(1) DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS pipeline_runs (
+                id VARCHAR(255) PRIMARY KEY,
+                pipeline_id VARCHAR(255) NOT NULL,
+                run_number INT NOT NULL,
+                status VARCHAR(50) NOT NULL DEFAULT 'queued',
+                commit_sha VARCHAR(100),
+                commit_message TEXT,
+                branch VARCHAR(255),
+                triggered_by VARCHAR(255),
+                agent_pool VARCHAR(100) DEFAULT 'EvaOps Hosted Linux Pool',
+                duration_seconds INT DEFAULT 0,
+                started_at TIMESTAMP NULL,
+                completed_at TIMESTAMP NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS pipeline_stages (
+                id VARCHAR(255) PRIMARY KEY,
+                run_id VARCHAR(255) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                stage_order INT NOT NULL,
+                status VARCHAR(50) NOT NULL DEFAULT 'pending',
+                started_at TIMESTAMP NULL,
+                completed_at TIMESTAMP NULL
+            )
+        `);
+
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS pipeline_jobs (
+                id VARCHAR(255) PRIMARY KEY,
+                stage_id VARCHAR(255) NOT NULL,
+                run_id VARCHAR(255) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                runner_id VARCHAR(255) NULL,
+                status VARCHAR(50) NOT NULL DEFAULT 'pending',
+                matrix_params JSON NULL,
+                duration_seconds INT DEFAULT 0,
+                started_at TIMESTAMP NULL,
+                completed_at TIMESTAMP NULL
+            )
+        `);
+
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS pipeline_steps (
+                id VARCHAR(255) PRIMARY KEY,
+                job_id VARCHAR(255) NOT NULL,
+                step_order INT NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                status VARCHAR(50) NOT NULL DEFAULT 'pending',
+                duration_seconds INT DEFAULT 0,
+                log_url TEXT NULL,
+                log_content LONGTEXT NULL,
+                started_at TIMESTAMP NULL,
+                completed_at TIMESTAMP NULL
+            )
+        `);
+
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS pipeline_artifacts (
+                id VARCHAR(255) PRIMARY KEY,
+                run_id VARCHAR(255) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                file_path TEXT NOT NULL,
+                file_size_bytes BIGINT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
         const masterOrgId = process.env.MASTER_ORGANIZATION_ID || 'estevia';
         const masterOrgName = process.env.MASTER_ORGANIZATION_NAME || 'Estevia Tech Solutions';
         const defaultSubId = process.env.AZURE_SUBSCRIPTION_ID || 'a812e8e3-34f9-4773-82ee-6398869533b0';

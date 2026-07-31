@@ -60,6 +60,9 @@ const observabilityRoutes = require('./routes/observabilityRoutes');
 app.use('/api/observability', observabilityRoutes);
 app.use('/api/auth/observability', observabilityRoutes);
 
+const pipelineRoutes = require('./routes/pipelineRoutes');
+app.use('/api/pipelines', pipelineRoutes);
+
 const schedulerRoutes = require('./routes/schedulerRoutes');
 app.use('/api/scheduler', schedulerRoutes);
 
