@@ -2428,6 +2428,22 @@ const appController = {
         }
 
         await Promise.all(categoryApps.map(async (app) => {
+            const [existingScanned] = await db.query(
+                'SELECT id, branch, pipeline_id FROM scanned_apps WHERE organization_id = ? AND name = ?',
+                [organizationId, app.name]
+            );
+
+            // Clean up any stale mismatched pipeline_id in the database
+            if (existingScanned.length > 0 && existingScanned[0].pipeline_id) {
+                const pipeIdLow = String(existingScanned[0].pipeline_id).toLowerCase();
+                const appNameLow = app.name.toLowerCase();
+                const isFrontendApp = appNameLow.includes('frontend') || appNameLow.endsWith('-swa') || app.type === 'frontend';
+                if (isFrontendApp && (pipeIdLow.includes('backend') || pipeIdLow.includes('api'))) {
+                    await db.query('UPDATE scanned_apps SET pipeline_id = NULL WHERE id = ?', [existingScanned[0].id]);
+                    existingScanned[0].pipeline_id = null;
+                }
+            }
+
             const normalizedUrl = app.repositoryUrl ? app.repositoryUrl.toLowerCase().replace(/\/$/, '').replace(/\.git$/, '') : '';
             app.branches = repoBranchesMap.get(normalizedUrl) || [];
 
@@ -2629,6 +2645,14 @@ const appController = {
                 matchingPipeline = devopsPipelines.find(p => {
                     const pName = p.name.toLowerCase();
                     const cleanAppName = app.name.toLowerCase();
+
+                    // Strict rule: Never map a frontend cloud resource to a backend pipeline, or vice versa!
+                    if ((cleanAppName.includes('frontend') || app.type === 'frontend' || cleanAppName.endsWith('-swa')) && pName.includes('backend')) {
+                        return false;
+                    }
+                    if ((cleanAppName.includes('backend') || app.type === 'backend') && pName.includes('frontend')) {
+                        return false;
+                    }
 
                     const ownerPrefix = githubOwner.toLowerCase().replace('-techsolutions', '').replace('-solutions', '').split('-')[0];
                     const baseApp = cleanAppName.replace(new RegExp(`^${ownerPrefix}-`), '').replace('-swa', '').replace('-dev', '').replace('-qa', '').replace('-prod', '').replace('-api', '').replace('-frontend', '');
@@ -3911,6 +3935,14 @@ const appController = {
                     matchingPipeline = devopsPipelines.find(p => {
                         const pName = p.name.toLowerCase();
                         const cleanAppName = app.name.toLowerCase();
+
+                        // Strict rule: Never map a frontend cloud resource to a backend pipeline, or vice versa!
+                        if ((cleanAppName.includes('frontend') || app.type === 'frontend' || cleanAppName.endsWith('-swa')) && pName.includes('backend')) {
+                            return false;
+                        }
+                        if ((cleanAppName.includes('backend') || app.type === 'backend') && pName.includes('frontend')) {
+                            return false;
+                        }
 
                         const ownerPrefix = githubOwner.toLowerCase().replace('-techsolutions', '').replace('-solutions', '').split('-')[0];
                         const baseApp = cleanAppName.replace(new RegExp(`^${ownerPrefix}-`), '').replace('-swa', '').replace('-dev', '').replace('-qa', '').replace('-prod', '').replace('-api', '').replace('-frontend', '');
