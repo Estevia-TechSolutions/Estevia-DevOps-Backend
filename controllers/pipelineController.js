@@ -218,7 +218,7 @@ const listPipelineRuns = async (req, res) => {
                 const [existing] = await db.query('SELECT id FROM pipelines WHERE project_name = ? AND organization_id = ?', [app.name, orgId]);
                 if (existing.length === 0) {
                     const newPipeId = `pipe-${uuidv4().slice(0, 8)}`;
-                    const prov = app.type === 'frontend' ? 'github_actions' : app.name.includes('API') || app.name.includes('Processor') ? 'azure_devops' : 'evaops_native';
+                    const prov = app.provider || app.build_provider || 'unconfigured';
                     const targetT = app.type === 'frontend' ? 'static_web_app' : app.type === 'database' ? 'database' : 'container_app';
                     
                     await db.query(`
