@@ -754,6 +754,11 @@ exports.getAIRemediation = async (req, res) => {
             return res.status(404).json({ error: 'Incident record not found.' });
         }
 
+        // Parse telemetry snapshot
+        const snapshot = typeof incident.telemetry_snapshot === 'string'
+            ? JSON.parse(incident.telemetry_snapshot || '{}')
+            : (incident.telemetry_snapshot || {});
+
         // Extract actual Azure resource parameters from snapshot or app key
         const rawAppKey = (incident.app_key || 'cloud-service').toLowerCase();
         const cleanSlug = rawAppKey
