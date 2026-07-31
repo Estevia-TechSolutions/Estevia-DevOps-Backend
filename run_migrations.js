@@ -195,6 +195,10 @@ async function main() {
             console.log('Adding column theme to users...');
             await connection.query("ALTER TABLE users ADD COLUMN theme VARCHAR(20) DEFAULT 'light'");
         }
+        if (!userColNames.includes('last_login_at')) {
+            console.log('Adding column last_login_at to users...');
+            await connection.query("ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP NULL DEFAULT NULL");
+        }
 
         // 3. Create integration_credentials table
         console.log('Creating integration_credentials table...');
