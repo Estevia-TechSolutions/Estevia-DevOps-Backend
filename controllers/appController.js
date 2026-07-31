@@ -2433,13 +2433,19 @@ const appController = {
                 [organizationId, app.name]
             );
 
-            // Clean up any stale mismatched pipeline_id in the database
-            if (existingScanned.length > 0 && existingScanned[0].pipeline_id) {
-                const pipeIdLow = String(existingScanned[0].pipeline_id).toLowerCase();
+            // Comprehensive self-healing: Clean up any stale mismatched pipeline_id or stored pipelineName in the database
+            if (existingScanned.length > 0) {
+                const pipeIdLow = String(existingScanned[0].pipeline_id || '').toLowerCase();
                 const appNameLow = app.name.toLowerCase();
                 const isFrontendApp = appNameLow.includes('frontend') || appNameLow.endsWith('-swa') || app.type === 'frontend';
-                if (isFrontendApp && (pipeIdLow.includes('backend') || pipeIdLow.includes('api'))) {
-                    await db.query('UPDATE scanned_apps SET pipeline_id = NULL WHERE id = ?', [existingScanned[0].id]);
+                const isBackendApp = appNameLow.includes('backend') || appNameLow.includes('api') || app.type === 'backend';
+
+                if (
+                    (isFrontendApp && (pipeIdLow.includes('backend') || pipeIdLow.includes('api'))) ||
+                    (isBackendApp && pipeIdLow.includes('frontend')) ||
+                    (appNameLow.includes('api-evaops') && pipeIdLow.includes('estevia-backend-api'))
+                ) {
+                    await db.query('UPDATE scanned_apps SET pipeline_id = NULL, pipeline_name = NULL WHERE id = ?', [existingScanned[0].id]);
                     existingScanned[0].pipeline_id = null;
                 }
             }
@@ -2637,6 +2643,17 @@ const appController = {
                 const cleanAppRepo = app.repositoryUrl.replace('https://github.com/', '').replace(/\/$/, '').toLowerCase();
                 matchingPipeline = devopsPipelines.find(p => {
                     const repoFullName = p.configuration?.repository?.fullName;
+                    const pName = (p.name || '').toLowerCase();
+                    const cleanAppName = (app.name || '').toLowerCase();
+
+                    // Strict Component Role Guard: Reject cross-role matching even if repository URLs match!
+                    if ((cleanAppName.includes('frontend') || app.type === 'frontend' || cleanAppName.endsWith('-swa')) && (pName.includes('backend') || pName.includes('api'))) {
+                        return false;
+                    }
+                    if ((cleanAppName.includes('backend') || app.type === 'backend') && (pName.includes('frontend') || pName.includes('web'))) {
+                        return false;
+                    }
+
                     return repoFullName && repoFullName.toLowerCase() === cleanAppRepo;
                 });
             }
@@ -3915,6 +3932,17 @@ const appController = {
                     const cleanAppRepo = app.repositoryUrl.replace('https://github.com/', '').replace(/\/$/, '').toLowerCase();
                     matchingPipeline = devopsPipelines.find(p => {
                         const repoFullName = p.configuration?.repository?.fullName;
+                        const pName = (p.name || '').toLowerCase();
+                        const cleanAppName = (app.name || '').toLowerCase();
+
+                        // Strict Component Role Guard: Reject cross-role matching even if repository URLs match!
+                        if ((cleanAppName.includes('frontend') || app.type === 'frontend' || cleanAppName.endsWith('-swa')) && (pName.includes('backend') || pName.includes('api'))) {
+                            return false;
+                        }
+                        if ((cleanAppName.includes('backend') || app.type === 'backend') && (pName.includes('frontend') || pName.includes('web'))) {
+                            return false;
+                        }
+
                         return repoFullName && repoFullName.toLowerCase() === cleanAppRepo;
                     });
                 }
