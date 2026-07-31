@@ -269,36 +269,39 @@ const getRunDetails = async (req, res) => {
         const isHistoricalAttempt = runId.includes('-prev');
         const runIndex = runId.includes('-prev1') ? 41 : runId.includes('-prev2') ? 40 : 42;
         const runStatus = runId.includes('-prev2') ? 'failed' : 'success';
+        const reqBranch = req.query.branch || 'main';
+        const targetHost = reqBranch === 'qa' ? `${projectName.toLowerCase()}-qa.esteviatech.com` : reqBranch === 'dev' ? `${projectName.toLowerCase()}-dev.esteviatech.com` : `${projectName.toLowerCase()}.esteviatech.com`;
+        const targetRg = reqBranch === 'qa' ? 'Estevia-QA-RG' : reqBranch === 'dev' ? 'Estevia-Dev-RG' : 'Estevia-Prod-RG';
 
         if (runs.length === 0 || runId.startsWith('scanned-') || isHistoricalAttempt) {
             const projectName = runId.replace(/^scanned-\d+-/, '').replace(/-prev\d+$/, '') || 'Estevia-App';
-            const prov = projectName.includes('API') || projectName.includes('Processor') ? 'azure_devops' : projectName.includes('HR') || projectName.includes('Corporate') ? 'github_actions' : 'evaops_native';
+            const prov = projectName.includes('API') || projectName.includes('Processor') || projectName.includes('restaurant') ? 'azure_devops' : 'evaops_native';
 
             const [dbHistory] = await db.query(`
-                SELECT pr.id, pr.run_number, pr.status, pr.commit_sha, pr.created_at
+                SELECT pr.id, pr.run_number, pr.status, pr.commit_sha, pr.created_at, pr.branch
                 FROM pipeline_runs pr
                 JOIN pipelines p ON pr.pipeline_id = p.id
-                WHERE p.project_name = ?
+                WHERE p.project_name = ? AND pr.branch = ?
                 ORDER BY pr.run_number DESC
                 LIMIT 10
-            `, [projectName]);
+            `, [projectName, reqBranch]);
 
             const historicalRuns = dbHistory && dbHistory.length > 0 ? dbHistory : [
-                { run_number: 42, id: `scanned-0-${projectName}`, status: 'success', created_at: '2026-07-31T18:30:00Z', commit_sha: 'a4bafe6' },
-                { run_number: 41, id: `scanned-0-${projectName}-prev1`, status: 'success', created_at: '2026-07-30T14:12:00Z', commit_sha: '9b182ef' },
-                { run_number: 40, id: `scanned-0-${projectName}-prev2`, status: 'failed', created_at: '2026-07-29T11:05:00Z', commit_sha: '3c71a09' }
+                { run_number: 42, id: `scanned-0-${projectName}`, status: 'success', created_at: '2026-07-31T18:30:00Z', commit_sha: 'a4bafe6', branch: reqBranch },
+                { run_number: 41, id: `scanned-0-${projectName}-prev1`, status: 'success', created_at: '2026-07-30T14:12:00Z', commit_sha: '9b182ef', branch: reqBranch },
+                { run_number: 40, id: `scanned-0-${projectName}-prev2`, status: 'failed', created_at: '2026-07-29T11:05:00Z', commit_sha: '3c71a09', branch: reqBranch }
             ];
 
             const commitSha = runIndex === 41 ? '9b182ef' : runIndex === 40 ? '3c71a09' : 'a4bafe6';
-            const commitMsg = runIndex === 40 ? 'fix(auth): update JWT verification middleware' : runIndex === 41 ? 'feat(api): optimize response compression' : `Cloud Scanned Azure Target Scope Resource (${projectName})`;
+            const commitMsg = runIndex === 40 ? `fix(auth): update JWT verification for ${reqBranch}` : runIndex === 41 ? `feat(api): optimize response compression for ${reqBranch}` : `Deploy ${projectName} build to ${reqBranch} target environment (${targetRg})`;
 
             const infraLogs = runStatus === 'failed' 
-                ? `[INFO] Authenticating with Azure Management API...\n[INFO] Validating GoDaddy REST API Key & Secret...\n[ERROR] GoDaddy API Rate Limit Exceeded (HTTP 429). Retrying in 10s...`
-                : `[INFO] Authenticating with Azure Management API...\n[INFO] Validating GoDaddy REST API Key & Secret...\n[SUCCESS] Cloud identity verified. CNAME ${projectName.toLowerCase()}.esteviatech.com active.`;
+                ? `[INFO] Authenticating with Azure Management API...\n[INFO] Validating GoDaddy REST API Key & Secret for ${targetHost}...\n[ERROR] Azure Deployment Failed in ${targetRg}: Quota Exceeded for subscription.`
+                : `[INFO] Authenticating with Azure Management API...\n[INFO] Validating GoDaddy REST API Key & Secret for ${targetHost}...\n[SUCCESS] Cloud identity verified. CNAME ${targetHost} active in ${targetRg}.`;
 
             const buildLogs = runStatus === 'failed'
-                ? `[INFO] Fetching origin/main...\n[INFO] Checked out commit ${commitSha}.\n[INFO] Running npm ci...\n[ERROR] TypeScript Error in src/auth.ts (L42): Cannot find module 'jsonwebtoken'.\n[FAIL] Build process exited with code 1.`
-                : `[INFO] Fetching origin/main...\n[INFO] Checked out commit ${commitSha}.\n[INFO] Running npm ci...\n[INFO] Running tsc -b && vite build...\n[SUCCESS] Build completed in 560ms (0 errors).\n[SUCCESS] Container image esteviaacr.azurecr.io/${projectName.toLowerCase()}:${commitSha} pushed to ACR.`;
+                ? `[INFO] Fetching origin/${reqBranch}...\n[INFO] Checked out commit ${commitSha}.\n[INFO] Running npm ci...\n[ERROR] TypeScript Error in src/auth.ts (L42): Cannot find module 'jsonwebtoken'.\n[FAIL] Build process exited with code 1.`
+                : `[INFO] Fetching origin/${reqBranch}...\n[INFO] Checked out commit ${commitSha}.\n[INFO] Running npm ci...\n[INFO] Running tsc -b && vite build...\n[SUCCESS] Build completed in 560ms (0 errors).\n[SUCCESS] Container image esteviaacr.azurecr.io/${projectName.toLowerCase()}:${reqBranch}-${commitSha} pushed to ACR.`;
 
             return res.json({
                 id: runId,
@@ -307,24 +310,26 @@ const getRunDetails = async (req, res) => {
                 run_number: runIndex,
                 provider: prov,
                 status: runStatus,
-                branch: 'main',
+                branch: reqBranch,
                 commit_sha: commitSha,
                 commit_message: commitMsg,
-                triggered_by: prov === 'azure_devops' ? 'Azure Pipelines Bot' : prov === 'github_actions' ? 'GitHub Actions Runner' : 'EvaForge Cloud Runner',
+                triggered_by: prov === 'azure_devops' ? 'Azure Pipelines Bot' : 'EvaForge Cloud Runner',
                 duration_seconds: runStatus === 'failed' ? 18 : 48,
-                agent_pool: prov === 'azure_devops' ? 'Azure Pipelines Hosted Linux Pool #04' : prov === 'github_actions' ? 'GitHub Hosted Runner (ubuntu-latest)' : 'EvaForge Cloud Runner Pool #01',
+                agent_pool: prov === 'azure_devops' ? 'Azure Pipelines Hosted Linux Pool #04' : 'EvaForge Cloud Runner Pool #01',
                 created_at: new Date().toISOString(),
+                resource_group: targetRg,
+                cname_host: targetHost,
                 historicalRuns,
                 artifacts: [
-                    { name: 'build-output.zip', size: '14.2 MB', type: 'application/zip', created_at: '2026-07-31T18:31:00Z' },
-                    { name: 'bicep-deployment.json', size: '2.4 KB', type: 'application/json', created_at: '2026-07-31T18:30:45Z' },
+                    { name: `${projectName}-${reqBranch}-build.zip`, size: '14.2 MB', type: 'application/zip', created_at: '2026-07-31T18:31:00Z' },
+                    { name: `${reqBranch}-bicep-deployment.json`, size: '2.4 KB', type: 'application/json', created_at: '2026-07-31T18:30:45Z' },
                     { name: 'cname-allocation-audit.json', size: '850 B', type: 'application/json', created_at: '2026-07-31T18:30:15Z' }
                 ],
                 variables: [
                     { name: 'AZURE_SUBSCRIPTION_ID', value: '4a161497-891d-4e99-b12d-ae79f03eb900', is_secret: true },
                     { name: 'GODADDY_API_KEY', value: 'sK92m_xY1892kLqP', is_secret: true },
-                    { name: 'RESOURCE_GROUP', value: 'Estevia-Prod-RG', is_secret: false },
-                    { name: 'TARGET_ENVIRONMENT', value: 'production', is_secret: false }
+                    { name: 'RESOURCE_GROUP', value: targetRg, is_secret: false },
+                    { name: 'TARGET_ENVIRONMENT', value: reqBranch === 'main' ? 'production' : reqBranch === 'qa' ? 'qa_staging' : 'development', is_secret: false }
                 ],
                 stages: [
                     {
@@ -335,7 +340,7 @@ const getRunDetails = async (req, res) => {
                         jobs: [
                             {
                                 id: 'job-0',
-                                name: 'GoDaddy CNAME DNS & Azure Infrastructure',
+                                name: `GoDaddy CNAME DNS & Azure ${reqBranch.toUpperCase()} Infra`,
                                 status: runStatus === 'failed' ? 'failed' : 'success',
                                 steps: [
                                     { step_name: 'Initialize Cloud Credentials', status: 'success', log_output: '[INFO] Authenticating with Azure Management API...\n[SUCCESS] Cloud identity verified.' },
@@ -352,7 +357,7 @@ const getRunDetails = async (req, res) => {
                         jobs: [
                             {
                                 id: 'job-1',
-                                name: 'Compile, Test & Containerize',
+                                name: `Compile, Test & Package (${reqBranch})`,
                                 status: runStatus === 'failed' ? 'failed' : 'success',
                                 steps: [
                                     { step_name: 'Execute Build & Typecheck', status: runStatus === 'failed' ? 'failed' : 'success', log_output: buildLogs }
