@@ -60,8 +60,11 @@ const observabilityRoutes = require('./routes/observabilityRoutes');
 app.use('/api/observability', observabilityRoutes);
 app.use('/api/auth/observability', observabilityRoutes);
 
+const optionalAuth = require('./middleware/optionalAuth');
 const pipelineRoutes = require('./routes/pipelineRoutes');
-app.use('/api/pipelines', pipelineRoutes);
+app.use('/api/pipelines', optionalAuth, pipelineRoutes);
+app.use('/api/apps/pipelines', optionalAuth, pipelineRoutes);
+app.use('/api/pipeline', optionalAuth, pipelineRoutes);
 
 const schedulerRoutes = require('./routes/schedulerRoutes');
 app.use('/api/scheduler', schedulerRoutes);
