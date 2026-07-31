@@ -37,34 +37,20 @@ const auditLogger = require('./middlewares/auditLogger');
 app.use(auditLogger);
 
 // Routes
+const optionalAuth = fs.existsSync(path.join(__dirname, 'middlewares/optionalAuth.js'))
+    ? require('./middlewares/optionalAuth')
+    : require('./middleware/optionalAuth');
+
+const pipelineRoutes = require('./routes/pipelineRoutes');
+app.use('/api/pipelines', optionalAuth, pipelineRoutes);
+app.use('/api/apps/pipelines', optionalAuth, pipelineRoutes);
+app.use('/api/pipeline', optionalAuth, pipelineRoutes);
+
 const authRoutes = require('./routes/authRoutes');
 const { protect } = require('./middlewares/authMiddleware');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/mfa', authRoutes);
-app.use('/api', authRoutes);
-
-const crmRoutes = require('./routes/crmRoutes');
-app.use('/api/crm', crmRoutes);
-
-const credentialRoutes = require('./routes/credentialRoutes');
-app.use('/api/credentials', protect, credentialRoutes);
-
-const appRoutes = require('./routes/appRoutes');
-app.use('/api/apps', appRoutes);
-
-const orgRoutes = require('./routes/orgRoutes');
-app.use('/api/org', orgRoutes);
-
-const observabilityRoutes = require('./routes/observabilityRoutes');
-app.use('/api/observability', observabilityRoutes);
-app.use('/api/auth/observability', observabilityRoutes);
-
-const optionalAuth = require('./middleware/optionalAuth');
-const pipelineRoutes = require('./routes/pipelineRoutes');
-app.use('/api/pipelines', optionalAuth, pipelineRoutes);
-app.use('/api/apps/pipelines', optionalAuth, pipelineRoutes);
-app.use('/api/pipeline', optionalAuth, pipelineRoutes);
 
 const schedulerRoutes = require('./routes/schedulerRoutes');
 app.use('/api/scheduler', schedulerRoutes);
