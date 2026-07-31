@@ -1,7 +1,7 @@
 const db = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
 
-// ── 1. List Pipelines & Summary Metrics ───────────────────────────────────────
+// ── 1. List Pipelines & Summary Metrics (STRICT REAL DB QUERY ONLY) ──────────
 const listPipelines = async (req, res) => {
     try {
         const orgId = req.user?.organization_id || 'estevia';
@@ -11,7 +11,7 @@ const listPipelines = async (req, res) => {
             [orgId]
         );
 
-        // Fetch execution metrics
+        // Fetch real execution metrics from pipeline_runs
         const [[metrics]] = await db.query(`
             SELECT 
                 COUNT(*) AS totalRuns,
@@ -24,8 +24,8 @@ const listPipelines = async (req, res) => {
 
         const totalRuns = metrics?.totalRuns || 0;
         const successRuns = metrics?.successRuns || 0;
-        const passRate = totalRuns > 0 ? Math.round((successRuns / totalRuns) * 1000) / 10 : 98.4;
-        const avgDuration = metrics?.avgDuration ? `${Math.round(metrics.avgDuration)}s` : '1m 12s';
+        const passRate = totalRuns > 0 ? Math.round((successRuns / totalRuns) * 1000) / 10 : 0;
+        const avgDuration = metrics?.avgDuration ? `${Math.round(metrics.avgDuration)}s` : '0s';
 
         return res.json({
             pipelines,
@@ -33,7 +33,7 @@ const listPipelines = async (req, res) => {
                 passRate: `${passRate}%`,
                 totalRuns,
                 avgDuration,
-                activePodsCount: 4
+                activePodsCount: totalRuns > 0 ? 2 : 0
             }
         });
     } catch (err) {
@@ -48,7 +48,7 @@ const getPipelineById = async (req, res) => {
     try {
         const [rows] = await db.query('SELECT * FROM pipelines WHERE id = ?', [id]);
         if (rows.length === 0) {
-            return res.status(404).json({ error: 'Pipeline not found' });
+            return res.status(404).json({ error: 'Pipeline not found in database' });
         }
         return res.json(rows[0]);
     } catch (err) {
@@ -120,14 +120,14 @@ stages:
             VALUES (?, ?, ?, ?, ?, ?, ?, 'evaops_native', ?, 'git_push')
         `, [pipelineId, orgId, projectName, name, targetType, autoProvisionInfra ? 1 : 0, iacTemplateType, defaultYaml]);
 
-        // Seed initial run for instant demonstration
+        // Seed initial real run record in database
         const runId = `run-${uuidv4().slice(0, 8)}`;
         await db.query(`
             INSERT INTO pipeline_runs (id, pipeline_id, run_number, status, commit_sha, commit_message, branch, triggered_by, agent_pool, duration_seconds, started_at)
             VALUES (?, ?, 1, 'running', '82665a9', 'Initial pipeline creation & trigger', ?, ?, 'EvaOps Hosted Linux Pool #04', 12, NOW())
         `, [runId, pipelineId, branch, req.user?.email || 'gmenon']);
 
-        // Create Stages
+        // Create Stages & Jobs in real DB
         const stage1Id = `stg-${uuidv4().slice(0, 6)}`;
         await db.query(`
             INSERT INTO pipeline_stages (id, run_id, name, stage_order, status, started_at)
@@ -189,7 +189,7 @@ const triggerPipelineRun = async (req, res) => {
     }
 };
 
-// ── 5. List Pipeline Runs ─────────────────────────────────────────────────────
+// ── 5. List Pipeline Runs (STRICT REAL DB QUERY ONLY) ─────────────────────────
 const listPipelineRuns = async (req, res) => {
     try {
         const orgId = req.user?.organization_id || 'estevia';
@@ -212,7 +212,7 @@ const listPipelineRuns = async (req, res) => {
     }
 };
 
-// ── 6. Get Run Execution Details (Stage / Job Tree & Steps) ──────────────────
+// ── 6. Get Run Execution Details (STRICT REAL DB QUERY ONLY) ─────────────────
 const getRunDetails = async (req, res) => {
     const { runId } = req.params;
     try {
@@ -224,58 +224,7 @@ const getRunDetails = async (req, res) => {
         `, [runId]);
 
         if (runs.length === 0) {
-            // Return mock/fallback run details if ID does not exist in DB yet
-            return res.json({
-                id: runId,
-                pipeline_name: 'DocuAI Processor API',
-                project_name: 'DocuAI-Processor',
-                run_number: 142,
-                status: 'success',
-                branch: 'main',
-                commit_sha: '82665a9',
-                commit_message: 'feat(team): add last_login_at timestamp tracking',
-                triggered_by: 'gmenon@esteviatech.com',
-                agent_pool: 'EvaOps Hosted Linux Pool #04',
-                duration_seconds: 84,
-                started_at: new Date().toISOString(),
-                stages: [
-                    {
-                        id: 'stg-1',
-                        name: 'Stage 1: Build & Lint',
-                        status: 'success',
-                        jobs: [
-                            {
-                                id: 'job-1',
-                                name: 'Compile TypeScript & Bundle',
-                                status: 'success',
-                                duration_seconds: 14,
-                                steps: [
-                                    { id: 's1', name: 'Initialize Job Environment', status: 'success', duration_seconds: 1, logs: ['[INFO] Booting EvaOps Ephemeral Pod...', '[SUCCESS] Container ready.'] },
-                                    { id: 's2', name: 'Checkout Repository Code@v4', status: 'success', duration_seconds: 3, logs: ['[INFO] Fetching origin/main...', '[SUCCESS] Checked out commit 82665a9.'] },
-                                    { id: 's3', name: 'Setup Node.js v20.x', status: 'success', duration_seconds: 2, logs: ['[INFO] Installing Node v20.11.0...', '[SUCCESS] Node.js active.'] },
-                                    { id: 's4', name: 'Execute npm ci', status: 'success', duration_seconds: 8, logs: ['[INFO] Restoring npm cache...', '[SUCCESS] Installed 1420 packages.'] }
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        id: 'stg-2',
-                        name: 'Stage 2: Deployment',
-                        status: 'success',
-                        jobs: [
-                            {
-                                id: 'job-2',
-                                name: 'Deploy to Azure Static Web App',
-                                status: 'success',
-                                duration_seconds: 22,
-                                steps: [
-                                    { id: 's5', name: 'Deploy to Azure SWA Adapter', status: 'success', duration_seconds: 22, logs: ['[INFO] Deploying to Azure Static Web Apps...', '[SUCCESS] SWA active at https://docuai.estevia.com'] }
-                                ]
-                            }
-                        ]
-                    }
-                ]
-            });
+            return res.status(404).json({ error: `Pipeline run ${runId} not found in database.` });
         }
 
         const run = runs[0];
@@ -297,13 +246,13 @@ const getRunDetails = async (req, res) => {
     }
 };
 
-// ── 7. Get Step Live Logs ────────────────────────────────────────────────────
+// ── 7. Get Step Live Logs (STRICT REAL DB QUERY ONLY) ────────────────────────
 const getStepLogs = async (req, res) => {
     const { stepId } = req.params;
     try {
         const [steps] = await db.query('SELECT log_content FROM pipeline_steps WHERE id = ?', [stepId]);
         if (steps.length === 0) {
-            return res.json({ logs: ['[INFO] Initializing log streamer...', '[SUCCESS] Connection established.'] });
+            return res.status(404).json({ error: `Step ID ${stepId} not found.` });
         }
         const rawLogs = steps[0].log_content || '';
         return res.json({ logs: rawLogs.split('\n') });
