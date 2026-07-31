@@ -307,6 +307,7 @@ const getRunDetails = async (req, res) => {
                 id: runId,
                 pipeline_name: `${projectName} CI/CD Pipeline`,
                 project_name: projectName,
+                pipeline_url: prov === 'azure_devops' ? `https://dev.azure.com/esteviatech/${projectName}/_build` : prov === 'github_actions' ? `https://github.com/Estevia-TechSolutions/${projectName}/actions` : null,
                 run_number: runIndex,
                 provider: prov,
                 status: runStatus,
