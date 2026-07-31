@@ -2704,11 +2704,12 @@ const appController = {
                 if (hasGithubActions) {
                     const githubRepo = normalizedUrl.replace('https://github.com/', '');
                     matchedPipelineId = 'github-actions:' + githubRepo;
-                    matchedPipelineName = 'GitHub Actions';
+                    matchedPipelineName = `GitHub Actions (${githubRepo.split('/')[1] || githubRepo})`;
                 }
             } else if (!matchedPipelineId && existing.length > 0 && existing[0].pipeline_id && String(existing[0].pipeline_id).startsWith('github-actions')) {
                 matchedPipelineId = existing[0].pipeline_id;
-                matchedPipelineName = 'GitHub Actions';
+                const githubRepo = String(existing[0].pipeline_id).replace('github-actions:', '');
+                matchedPipelineName = `GitHub Actions (${githubRepo.split('/')[1] || githubRepo})`;
             }
 
             app.pipelineId = matchedPipelineId;
