@@ -275,7 +275,11 @@ const getRunDetails = async (req, res) => {
 
         if (runs.length === 0 || runId.startsWith('scanned-') || isHistoricalAttempt) {
             const projectName = runId.replace(/^scanned-\d+-/, '').replace(/-prev\d+$/, '') || 'Estevia-App';
-            const prov = projectName.includes('API') || projectName.includes('Processor') || projectName.includes('restaurant') ? 'azure_devops' : 'evaops_native';
+            const prov = (projectName.includes('restaurant') || projectName.includes('evanet') || projectName.includes('evapay')) 
+                ? 'azure_devops' 
+                : (projectName.includes('PeopleCraft') || projectName.includes('marketing')) 
+                ? 'github_actions' 
+                : 'evaops_native';
 
             const [dbHistory] = await db.query(`
                 SELECT pr.id, pr.run_number, pr.status, pr.commit_sha, pr.created_at, pr.branch
