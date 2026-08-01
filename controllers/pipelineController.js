@@ -236,7 +236,7 @@ const listPipelineRuns = async (req, res) => {
         }
 
         // 3. Query all pipeline execution runs joined with pipeline metadata
-        const [runs] = await db.query(`
+        const [allRuns] = await db.query(`
             SELECT 
                 pr.*,
                 p.name AS pipeline_name,
@@ -249,7 +249,7 @@ const listPipelineRuns = async (req, res) => {
             LIMIT 50
         `, [orgId]);
 
-        return res.json(runs);
+        return res.json(allRuns);
     } catch (err) {
         return res.status(500).json({ error: 'Failed to list pipeline runs', details: err.message });
     }
