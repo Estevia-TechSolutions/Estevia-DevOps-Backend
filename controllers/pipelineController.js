@@ -309,22 +309,24 @@ const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, target
                             {
                                 step_name: 'Checkout Source Code',
                                 status: 'success',
-                                log_output: `[2026-08-01T10:15:00Z] [INFO] Initializing agent job 'Build_Job'...\n[2026-08-01T10:15:01Z] [INFO] Fetching repository https://dev.azure.com/esteviatech/Estevia-Platform/_git/${pName} (commit ${commitSha || 'a4bafe6'})...\n[2026-08-01T10:15:02Z] [SUCCESS] Checked out commit ${commitSha || 'a4bafe6'} on branch ${activeBranch}.`
+                                log_output: `[2026-08-01T10:15:00Z] [INFO] Starting Agent Job: Build_Job (Pool: Azure Pipelines Hosted Linux Pool #04)\n[2026-08-01T10:15:01Z] [INFO] Agent Environment: Linux x64 Ubuntu 22.04 LTS (Kernel 6.2.0)\n[2026-08-01T10:15:02Z] [INFO] Fetching Git repository: https://dev.azure.com/esteviatech/Estevia-Platform/_git/${pName}\n[2026-08-01T10:15:03Z] [INFO] Checking out commit ${commitSha || 'a4bafe6'} on target branch ${activeBranch}...\n[2026-08-01T10:15:04Z] [INFO] Initializing Git LFS submodules...\n[2026-08-01T10:15:05Z] [SUCCESS] Checked out commit ${commitSha || 'a4bafe6'} cleanly (Author: Estevia DevOps Engine).`
                             },
                             {
                                 step_name: 'Initialize Node Environment',
                                 status: 'success',
-                                log_output: `[2026-08-01T10:15:03Z] [INFO] Using Node.js v20.20.2 and npm v10.8.2\n[2026-08-01T10:15:04Z] [INFO] Running npm ci...\n[2026-08-01T10:15:08Z] [SUCCESS] Restored 1783 npm packages from package-lock.json.`
+                                log_output: `[2026-08-01T10:15:06Z] [INFO] Task: Use Node v20.x (Version 20.20.2)\n[2026-08-01T10:15:07Z] [INFO] Found Node.js toolcache at /opt/hostedtoolcache/node/20.20.2/x64\n[2026-08-01T10:15:08Z] [INFO] Exporting PATH="/opt/hostedtoolcache/node/20.20.2/x64/bin:$PATH"\n[2026-08-01T10:15:09Z] [INFO] Running npm ci --prefer-offline --no-audit...\n[2026-08-01T10:15:12Z] [SUCCESS] Restored 1,783 packages from package-lock.json in 3.42s (0 vulnerabilities found).`
                             },
                             {
                                 step_name: 'Compile & Typecheck Project',
                                 status: status || 'success',
-                                log_output: `[2026-08-01T10:15:09Z] [INFO] Running tsc -b && vite build...\n[2026-08-01T10:15:12Z] [INFO] vite v8.0.16 building client environment for production...\n[2026-08-01T10:15:13Z] [SUCCESS] Built dist/index.html (0.68 kB), dist/assets/index.css (25.45 kB), dist/assets/index.js (1.68 MB).`
+                                log_output: status === 'failed'
+                                    ? `[2026-08-01T10:15:13Z] [INFO] Executing build script: tsc -b && vite build\n[2026-08-01T10:15:14Z] [INFO] Running TypeScript compiler (v5.4.5)...\n[2026-08-01T10:15:15Z] [ERROR] src/auth/token.ts(42,18): error TS2307: Cannot find module 'jsonwebtoken' or its corresponding type declarations.\n[2026-08-01T10:15:16Z] [ERROR] Process completed with exit code 1.`
+                                    : `[2026-08-01T10:15:13Z] [INFO] Executing build script: tsc -b && vite build\n[2026-08-01T10:15:14Z] [INFO] TypeScript typecheck passed with 0 errors.\n[2026-08-01T10:15:15Z] [INFO] vite v8.0.16 building client bundle for production...\n[2026-08-01T10:15:16Z] [INFO] dist/index.html (0.68 kB)\n[2026-08-01T10:15:17Z] [INFO] dist/assets/index.css (25.45 kB)\n[2026-08-01T10:15:18Z] [INFO] dist/assets/index.js (1,686.62 kB)\n[2026-08-01T10:15:19Z] [SUCCESS] Production client build completed successfully in 516ms.`
                             },
                             {
                                 step_name: 'Publish Build Artifacts',
                                 status: status || 'success',
-                                log_output: `[2026-08-01T10:15:14Z] [INFO] Creating artifact bundle drop.zip (14.2 MB)...\n[2026-08-01T10:15:15Z] [SUCCESS] Published artifact drop.zip to Azure DevOps Artifact Store.`
+                                log_output: `[2026-08-01T10:15:20Z] [INFO] Packaging directory ./dist into drop.zip archive...\n[2026-08-01T10:15:21Z] [INFO] Archive size: 14.2 MB (Compression ratio: 68%)\n[2026-08-01T10:15:22Z] [INFO] Uploading drop.zip to Azure DevOps Artifact Feed 'esteviatech-drop'...\n[2026-08-01T10:15:23Z] [SUCCESS] Uploaded artifact drop.zip cleanly. Artifact ID: art-98042.`
                             }
                         ]
                     }
@@ -344,17 +346,21 @@ const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, target
                             {
                                 step_name: 'Download Build Artifact',
                                 status: 'success',
-                                log_output: `[2026-08-01T10:15:15Z] [INFO] Downloading drop.zip from Azure DevOps Artifact Store...\n[2026-08-01T10:15:17Z] [SUCCESS] Artifact downloaded cleanly.`
+                                log_output: `[2026-08-01T10:15:24Z] [INFO] Downloading drop.zip from Azure DevOps Artifact Feed 'esteviatech-drop'...\n[2026-08-01T10:15:26Z] [SUCCESS] Downloaded 14.2 MB archive to agent working folder.`
                             },
                             {
                                 step_name: 'Deploy to Azure Cloud Environment',
                                 status: status || 'success',
-                                log_output: `[2026-08-01T10:15:18Z] [INFO] Target Environment Scope: ${targetRg} (${targetHost})\n[2026-08-01T10:15:20Z] [INFO] Deploying drop.zip to Azure Container Apps / Static Web Apps...\n[2026-08-01T10:15:21Z] [SUCCESS] Deployment completed successfully.`
+                                log_output: status === 'failed'
+                                    ? `[2026-08-01T10:15:27Z] [INFO] Target Azure Resource Group: ${targetRg} (${targetHost})\n[2026-08-01T10:15:28Z] [INFO] Authenticating with Azure ARM Management API...\n[2026-08-01T10:15:29Z] [ERROR] Deployment failed in ${targetRg}: Quota Exceeded for subscription.`
+                                    : `[2026-08-01T10:15:27Z] [INFO] Target Azure Resource Group: ${targetRg} (${targetHost})\n[2026-08-01T10:15:28Z] [INFO] Authenticating with Azure ARM Management API...\n[2026-08-01T10:15:29Z] [INFO] Deploying container app revision / static web app build package...\n[2026-08-01T10:15:31Z] [SUCCESS] Deployment completed successfully.`
                             },
                             {
                                 step_name: 'Post-Deployment Health Verification',
                                 status: status || 'success',
-                                log_output: `[2026-08-01T10:15:22Z] [INFO] Dispatching HTTP GET health check probe to https://${targetHost}/api/health...\n[2026-08-01T10:15:23Z] [SUCCESS] Health check returned HTTP 200 OK. CNAME target verified active in ${targetRg}.`
+                                log_output: status === 'failed'
+                                    ? `[2026-08-01T10:15:32Z] [INFO] Dispatching HTTP GET health check probe to https://${targetHost}/api/health...\n[2026-08-01T10:15:33Z] [FAIL] Health check failed: HTTP 503 Service Unavailable.`
+                                    : `[2026-08-01T10:15:32Z] [INFO] Dispatching HTTP GET health check probe to https://${targetHost}/api/health...\n[2026-08-01T10:15:33Z] [SUCCESS] Health check returned HTTP 200 OK. CNAME target verified active in ${targetRg}.`
                             }
                         ]
                     }
@@ -374,9 +380,23 @@ const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, target
                         name: 'build',
                         status: status || 'success',
                         steps: [
-                            { step_name: 'Set up Node.js', status: 'success', log_output: '[INFO] Setting up Node.js 20.x environment...\n[SUCCESS] Node.js 20.x ready.' },
-                            { step_name: 'Install dependencies & build', status: status || 'success', log_output: `[INFO] Running npm ci...\n[INFO] Running npm run build...\n[SUCCESS] Vite build completed in 560ms.` },
-                            { step_name: 'Upload artifact', status: status || 'success', log_output: '[INFO] Uploading build artifact...\n[SUCCESS] Artifact uploaded.' }
+                            {
+                                step_name: 'Set up Node.js',
+                                status: 'success',
+                                log_output: `[2026-08-01T10:15:00Z] [INFO] Setup Node.js 20.x environment for GitHub Actions Runner\n[2026-08-01T10:15:01Z] [INFO] Environment: ubuntu-latest (Runner ID: 41209)\n[2026-08-01T10:15:02Z] [SUCCESS] Node.js 20.20.2 active in PATH.`
+                            },
+                            {
+                                step_name: 'Install dependencies & build',
+                                status: status || 'success',
+                                log_output: status === 'failed'
+                                    ? `[2026-08-01T10:15:03Z] [INFO] Running npm ci...\n[2026-08-01T10:15:05Z] [INFO] Running npm run build...\n[2026-08-01T10:15:06Z] [ERROR] Build failed with TypeScript compiler syntax errors.`
+                                    : `[2026-08-01T10:15:03Z] [INFO] Running npm ci...\n[2026-08-01T10:15:05Z] [INFO] Running npm run build...\n[2026-08-01T10:15:07Z] [SUCCESS] Vite build completed in 528ms (0 errors).`
+                            },
+                            {
+                                step_name: 'Upload artifact',
+                                status: status || 'success',
+                                log_output: `[2026-08-01T10:15:08Z] [INFO] Uploading build artifact to GitHub Actions Artifact Storage...\n[2026-08-01T10:15:09Z] [SUCCESS] Uploaded artifact build-drop.zip.`
+                            }
                         ]
                     }
                 ]
@@ -392,8 +412,18 @@ const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, target
                         name: 'deploy',
                         status: status || 'success',
                         steps: [
-                            { step_name: 'Download artifact', status: 'success', log_output: '[INFO] Downloading build artifact...\n[SUCCESS] Artifact downloaded.' },
-                            { step_name: 'Deploy to Azure', status: status || 'success', log_output: `[INFO] Deploying to Azure Static Web Apps / Container Apps (${targetHost})...\n[SUCCESS] Deployment complete.` }
+                            {
+                                step_name: 'Download artifact',
+                                status: 'success',
+                                log_output: `[2026-08-01T10:15:10Z] [INFO] Downloading build artifact build-drop.zip...\n[2026-08-01T10:15:11Z] [SUCCESS] Artifact downloaded cleanly.`
+                            },
+                            {
+                                step_name: 'Deploy to Azure',
+                                status: status || 'success',
+                                log_output: status === 'failed'
+                                    ? `[2026-08-01T10:15:12Z] [INFO] Deploying to Azure Static Web Apps (${targetHost})...\n[2026-08-01T10:15:13Z] [ERROR] Deployment failed: Invalid deployment token.`
+                                    : `[2026-08-01T10:15:12Z] [INFO] Deploying to Azure Static Web Apps / Container Apps (${targetHost})...\n[2026-08-01T10:15:14Z] [SUCCESS] Deployment complete.`
+                            }
                         ]
                     }
                 ]
