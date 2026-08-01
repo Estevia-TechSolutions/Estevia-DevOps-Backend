@@ -1126,10 +1126,17 @@ async function main() {
                 ALTER TABLE pipelines MODIFY COLUMN yaml_config LONGTEXT NULL;
             `).catch(() => {});
             await connection.query(`
-                UPDATE pipelines SET provider = 'github_actions' WHERE project_name LIKE '%frontend%' OR project_name LIKE '%marketing%' OR project_name LIKE '%swa%';
-            `).catch(() => {});
-            await connection.query(`
-                UPDATE pipelines SET provider = 'azure_devops' WHERE (project_name LIKE '%backend%' OR project_name LIKE '%api%') AND project_name NOT LIKE '%frontend%' AND project_name NOT LIKE '%swa%';
+                UPDATE pipelines p 
+                JOIN applications a ON (
+                    LOWER(a.name) = LOWER(p.project_name) 
+                    OR LOWER(a.name) LIKE CONCAT(LOWER(p.project_name), '-%')
+                )
+                SET p.provider = CASE 
+                    WHEN a.pipeline_id LIKE 'github-actions:%' THEN 'github_actions'
+                    WHEN a.pipeline_id REGEXP '^[0-9]+$' THEN 'azure_devops'
+                    ELSE p.provider
+                END
+                WHERE a.pipeline_id IS NOT NULL;
             `).catch(() => {});
         } catch (healErr) {
             console.warn('[run_migrations] Self-healing notice:', healErr.message);

@@ -410,10 +410,10 @@ const getRunDetails = async (req, res) => {
             LIMIT 10
         `, [run.pipeline_id]);
 
-        const reqBranch = req.query.branch || run.branch || 'main';
+        const activeBranch = req.query.branch || run.branch || 'main';
         const pName = run.project_name || 'Estevia-App';
-        const targetHost = reqBranch === 'qa' ? `${pName.toLowerCase()}-qa.esteviatech.com` : reqBranch === 'dev' ? `${pName.toLowerCase()}-dev.esteviatech.com` : `${pName.toLowerCase()}.esteviatech.com`;
-        const targetRg = reqBranch === 'qa' ? 'Estevia-QA-RG' : reqBranch === 'dev' ? 'Estevia-Dev-RG' : 'Estevia-Prod-RG';
+        const activeHost = activeBranch === 'qa' ? `${pName.toLowerCase()}-qa.esteviatech.com` : activeBranch === 'dev' ? `${pName.toLowerCase()}-dev.esteviatech.com` : `${pName.toLowerCase()}.esteviatech.com`;
+        const activeRg = activeBranch === 'qa' ? 'Estevia-QA-RG' : activeBranch === 'dev' ? 'Estevia-Dev-RG' : 'Estevia-Prod-RG';
 
         if (!stages || stages.length === 0) {
             stages = [
@@ -425,11 +425,11 @@ const getRunDetails = async (req, res) => {
                     jobs: [
                         {
                             id: 'job-0',
-                            name: `GoDaddy CNAME DNS & Azure ${reqBranch.toUpperCase()} Infra`,
+                            name: `GoDaddy CNAME DNS & Azure ${activeBranch.toUpperCase()} Infra`,
                             status: run.status || 'success',
                             steps: [
                                 { step_name: 'Initialize Cloud Credentials', status: 'success', log_output: '[INFO] Authenticating with Azure Management API...\n[SUCCESS] Cloud identity verified.' },
-                                { step_name: 'Allocate GoDaddy CNAME Record', status: run.status || 'success', log_output: `[INFO] Authenticating with Azure Management API...\n[INFO] Validating GoDaddy REST API Key & Secret for ${targetHost}...\n[SUCCESS] Cloud identity verified. CNAME ${targetHost} active in ${targetRg}.` }
+                                { step_name: 'Allocate GoDaddy CNAME Record', status: run.status || 'success', log_output: `[INFO] Authenticating with Azure Management API...\n[INFO] Validating GoDaddy REST API Key & Secret for ${activeHost}...\n[SUCCESS] Cloud identity verified. CNAME ${activeHost} active in ${activeRg}.` }
                             ]
                         }
                     ]
@@ -442,10 +442,10 @@ const getRunDetails = async (req, res) => {
                     jobs: [
                         {
                             id: 'job-1',
-                            name: `Compile, Test & Package (${reqBranch})`,
+                            name: `Compile, Test & Package (${activeBranch})`,
                             status: run.status || 'success',
                             steps: [
-                                { step_name: 'Execute Build & Typecheck', status: 'success', log_output: `[INFO] Fetching origin/${reqBranch}...\n[INFO] Checked out commit ${run.commit_sha || 'a4bafe6'}.\n[INFO] Running npm ci...\n[INFO] Running tsc -b && vite build...\n[SUCCESS] Build completed in 560ms (0 errors).\n[SUCCESS] Container image esteviaacr.azurecr.io/${pName.toLowerCase()}:${reqBranch}-${run.commit_sha || 'a4bafe6'} pushed to ACR.` }
+                                { step_name: 'Execute Build & Typecheck', status: 'success', log_output: `[INFO] Fetching origin/${activeBranch}...\n[INFO] Checked out commit ${run.commit_sha || 'a4bafe6'}.\n[INFO] Running npm ci...\n[INFO] Running tsc -b && vite build...\n[SUCCESS] Build completed in 560ms (0 errors).\n[SUCCESS] Container image esteviaacr.azurecr.io/${pName.toLowerCase()}:${activeBranch}-${run.commit_sha || 'a4bafe6'} pushed to ACR.` }
                             ]
                         }
                     ]
@@ -453,20 +453,20 @@ const getRunDetails = async (req, res) => {
             ];
         }
 
-        run.cname_host = run.cname_host || targetHost;
-        run.resource_group = run.resource_group || targetRg;
+        run.cname_host = run.cname_host || activeHost;
+        run.resource_group = run.resource_group || activeRg;
         run.stages = stages;
         run.historicalRuns = historicalRuns;
         run.artifacts = run.artifacts || [
-            { name: `${pName}-${reqBranch}-build.zip`, size: '14.2 MB', type: 'application/zip', created_at: '2026-07-31T18:31:00Z' },
-            { name: `${reqBranch}-bicep-deployment.json`, size: '2.4 KB', type: 'application/json', created_at: '2026-07-31T18:30:45Z' },
+            { name: `${pName}-${activeBranch}-build.zip`, size: '14.2 MB', type: 'application/zip', created_at: '2026-07-31T18:31:00Z' },
+            { name: `${activeBranch}-bicep-deployment.json`, size: '2.4 KB', type: 'application/json', created_at: '2026-07-31T18:30:45Z' },
             { name: 'cname-allocation-audit.json', size: '850 B', type: 'application/json', created_at: '2026-07-31T18:30:15Z' }
         ];
         run.variables = run.variables || [
             { name: 'AZURE_SUBSCRIPTION_ID', value: '4a161497-891d-4e99-b12d-ae79f03eb900', is_secret: true },
             { name: 'GODADDY_API_KEY', value: 'sK92m_xY1892kLqP', is_secret: true },
-            { name: 'RESOURCE_GROUP', value: targetRg, is_secret: false },
-            { name: 'TARGET_ENVIRONMENT', value: reqBranch === 'main' ? 'production' : reqBranch === 'qa' ? 'qa_staging' : 'development', is_secret: false }
+            { name: 'RESOURCE_GROUP', value: activeRg, is_secret: false },
+            { name: 'TARGET_ENVIRONMENT', value: activeBranch === 'main' ? 'production' : activeBranch === 'qa' ? 'qa_staging' : 'development', is_secret: false }
         ];
 
         return res.json(run);
