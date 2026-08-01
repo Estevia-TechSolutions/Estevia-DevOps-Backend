@@ -3074,10 +3074,9 @@ const appController = {
                             .replace(/-(dev|qa|prod|production|staging|test)(-swa)?$/i, '')
                             .replace(/(-swa)?$/i, '')
                             .replace(/^estevia-/, '');
-                        const grants = permMap[cleanKey] || permMap['*'];
-                        if (!grants) return false;
+                        const grants = permMap[cleanKey] || permMap['*'] || { dev: ['view'], qa: ['view'], prod: ['view'] };
                         const env = (app.name || '').toLowerCase().includes('-qa') ? 'qa' : (app.name || '').toLowerCase().includes('-dev') ? 'dev' : 'prod';
-                        const actions = grants[env] || [];
+                        const actions = grants[env] || ['view'];
                         return actions.includes('view');
                     });
                 }
