@@ -1126,7 +1126,7 @@ async function main() {
                 UPDATE pipelines SET provider = 'github_actions' WHERE project_name LIKE '%frontend%' OR project_name LIKE '%marketing%' OR project_name LIKE '%swa%';
             `).catch(() => {});
             await connection.query(`
-                UPDATE pipelines SET provider = 'azure_devops' WHERE (project_name LIKE '%backend%' OR project_name LIKE '%api%' OR project_name = 'api-evaops') AND project_name NOT LIKE '%frontend%';
+                UPDATE pipelines SET provider = 'azure_devops' WHERE (project_name LIKE '%backend%' OR project_name LIKE '%api%') AND project_name NOT LIKE '%frontend%' AND project_name NOT LIKE '%swa%';
             `).catch(() => {});
         } catch (healErr) {
             console.warn('[run_migrations] Self-healing notice:', healErr.message);
