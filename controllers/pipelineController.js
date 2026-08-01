@@ -454,19 +454,12 @@ const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, target
 const getRunDetails = async (req, res) => {
     const { runId } = req.params;
     try {
-        const [runs] = await db.query(`
-            SELECT pr.*, p.name AS pipeline_name, p.project_name, p.provider, p.yaml_config
-            FROM pipeline_runs pr
-            JOIN pipelines p ON pr.pipeline_id = p.id
-            WHERE pr.id = ?
-        `, [runId]);
-
         const isHistoricalAttempt = runId.includes('-prev');
         const prevMatch = runId.match(/-prev(\d+)$/);
         const prevOffset = prevMatch ? parseInt(prevMatch[1], 10) : 0;
         const baseDbId = runId.replace(/-prev\d+$/, '');
 
-        let [runs] = await db.query(`
+        const [runs] = await db.query(`
             SELECT pr.*, p.name AS pipeline_name, p.project_name, p.provider, p.yaml_config
             FROM pipeline_runs pr
             JOIN pipelines p ON pr.pipeline_id = p.id
