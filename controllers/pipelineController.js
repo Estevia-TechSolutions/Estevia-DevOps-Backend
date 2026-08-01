@@ -235,8 +235,8 @@ const listPipelineRuns = async (req, res) => {
                     const targetT = app.type === 'frontend' ? 'static_web_app' : app.type === 'database' ? 'database' : 'container_app';
                     
                     await db.query(`
-                        INSERT INTO pipelines (id, organization_id, project_name, name, provider, target_type, auto_provision_infra)
-                        VALUES (?, ?, ?, ?, ?, ?, 1)
+                        INSERT INTO pipelines (id, organization_id, project_name, name, provider, target_type, auto_provision_infra, yaml_config, trigger_type)
+                        VALUES (?, ?, ?, ?, ?, ?, 1, '', 'push')
                     `, [newPipeId, orgId, app.name, `${app.name} CI/CD Pipeline`, prov, targetT]);
 
                     const newRunId = `run-${uuidv4().slice(0, 8)}`;
