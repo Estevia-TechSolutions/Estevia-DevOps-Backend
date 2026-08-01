@@ -3061,48 +3061,6 @@ const appController = {
                     if (rgFiltered.length > 0) filteredApps = rgFiltered;
                 }
 
-                let userRole = (req.user?.role || '').toLowerCase();
-                if (req.user?.id) {
-                    const [uRows] = await db.query('SELECT role FROM users WHERE id = ?', [req.user.id]).catch(() => [[]]);
-                    if (uRows.length > 0 && uRows[0].role) {
-                        userRole = uRows[0].role.toLowerCase();
-                    }
-                }
-
-                if (req.user && !['owner', 'admin'].includes(userRole)) {
-                    const [permRows] = await db.query(
-                        'SELECT app_key, environment, actions FROM user_resource_permissions WHERE user_id = ? AND organization_id = ?',
-                        [req.user.id, organizationId]
-                    ).catch(() => [[]]);
-
-                    const permMap = {};
-                    for (const r of permRows) {
-                        if (!permMap[r.app_key]) permMap[r.app_key] = {};
-                        let acts = [];
-                        try { acts = typeof r.actions === 'string' ? JSON.parse(r.actions) : (r.actions || []); } catch (e) { acts = []; }
-                        permMap[r.app_key][r.environment] = acts;
-                    }
-
-                    filteredApps = filteredApps.filter(app => {
-                        const cleanKey = (app.name || '').toLowerCase()
-                            .replace(/^api-/, '')
-                            .replace(/^estevia-/, '')
-                            .replace(/-(frontend|backend|api|web|db|database)(-swa)?$/i, '')
-                            .replace(/-(dev|qa|prod|production|staging|test)(-swa)?$/i, '')
-                            .replace(/(-swa)?$/i, '');
-
-                        const rawCleanKey = (app.name || '').toLowerCase()
-                            .replace(/-(dev|qa|prod|production|staging|test)(-swa)?$/i, '')
-                            .replace(/(-swa)?$/i, '')
-                            .replace(/^estevia-/, '');
-
-                        const grants = permMap[cleanKey] || permMap[rawCleanKey] || permMap['*'] || { dev: ['view'], qa: ['view'], prod: ['view'] };
-                        const env = (app.name || '').toLowerCase().includes('-qa') ? 'qa' : (app.name || '').toLowerCase().includes('-dev') ? 'dev' : 'prod';
-                        const actions = grants[env] || ['view'];
-                        return Array.isArray(actions) && actions.includes('view');
-                    });
-                }
-
                 return res.json({
                     success: true,
                     count: filteredApps.length,
