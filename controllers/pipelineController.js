@@ -207,9 +207,9 @@ const listPipelineRuns = async (req, res) => {
             LIMIT 50
         `, [orgId]);
 
-        // 1. Fetch real scanned Azure resources from scanned_apps table
+        // 1. Fetch real scanned Azure resources from applications table
         const [scannedApps] = await db.query(
-            'SELECT name, type, repo_url, azure_resource_id FROM scanned_apps WHERE organization_id = ? LIMIT 20',
+            'SELECT name, app_type AS type, repo_url, azure_resource_details FROM applications WHERE organization_id = ? LIMIT 20',
             [orgId]
         );
 
@@ -271,11 +271,11 @@ const getRunDetails = async (req, res) => {
         const runIndex = runId.includes('-prev1') ? 41 : runId.includes('-prev2') ? 40 : 42;
         const runStatus = runId.includes('-prev2') ? 'failed' : 'success';
         const reqBranch = req.query.branch || 'main';
+        const projectName = runId.replace(/^scanned-\d+-/, '').replace(/-prev\d+$/, '') || 'Estevia-App';
         const targetHost = reqBranch === 'qa' ? `${projectName.toLowerCase()}-qa.esteviatech.com` : reqBranch === 'dev' ? `${projectName.toLowerCase()}-dev.esteviatech.com` : `${projectName.toLowerCase()}.esteviatech.com`;
         const targetRg = reqBranch === 'qa' ? 'Estevia-QA-RG' : reqBranch === 'dev' ? 'Estevia-Dev-RG' : 'Estevia-Prod-RG';
 
         if (runs.length === 0 || runId.startsWith('scanned-') || isHistoricalAttempt) {
-            const projectName = runId.replace(/^scanned-\d+-/, '').replace(/-prev\d+$/, '') || 'Estevia-App';
             const projLow = projectName.toLowerCase();
             const prov = (projLow.includes('restaurant') || projLow.includes('evanet') || projLow.includes('evapay') || projLow.includes('evaops') || projLow.includes('backend') || projLow.includes('api')) 
                 ? 'azure_devops' 
