@@ -2728,11 +2728,25 @@ const appController = {
                 });
             }
 
-            // Compare execution timestamps if both exist
+            // ── Smart Active Execution Signal Engine (Zero Hardcoding) ────────────
             const isSwaApp = app.type === 'frontend' || app.name.toLowerCase().endsWith('-swa') || app.type === 'static_web_app';
 
+            let azLastRunTime = 0;
+            if (matchingPipeline && devopsSecrets?.pat) {
+                const cachedRun = pipelineRunCache.get(String(matchingPipeline.id));
+                if (cachedRun && cachedRun.timestamp) {
+                    azLastRunTime = cachedRun.timestamp;
+                }
+            }
+
             if (hasGithubActions && matchingPipeline) {
-                if (isSwaApp || ghLastRunTime > 0) {
+                if (azLastRunTime > 0 && azLastRunTime >= ghLastRunTime) {
+                    matchedPipelineId = String(matchingPipeline.id);
+                    matchedPipelineName = matchingPipeline.name;
+                } else if (ghLastRunTime > 0 && ghLastRunTime > azLastRunTime) {
+                    matchedPipelineId = 'github-actions:' + ghRepoPath;
+                    matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
+                } else if (isSwaApp) {
                     matchedPipelineId = 'github-actions:' + ghRepoPath;
                     matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
                 } else {
