@@ -1105,6 +1105,18 @@ async function main() {
                     pipeline_id = '18' 
                 WHERE name LIKE '%api-evaops%' AND (repo_url LIKE '%estevia-backend-api%' OR pipeline_id = '9');
             `);
+            await connection.query(`
+                INSERT IGNORE INTO user_resource_permissions (user_id, organization_id, app_key, environment, actions)
+                SELECT id, organization_id, '*', 'dev', JSON_ARRAY('view', 'deploy') FROM users;
+            `).catch(() => {});
+            await connection.query(`
+                INSERT IGNORE INTO user_resource_permissions (user_id, organization_id, app_key, environment, actions)
+                SELECT id, organization_id, '*', 'qa', JSON_ARRAY('view', 'deploy') FROM users;
+            `).catch(() => {});
+            await connection.query(`
+                INSERT IGNORE INTO user_resource_permissions (user_id, organization_id, app_key, environment, actions)
+                SELECT id, organization_id, '*', 'prod', JSON_ARRAY('view', 'deploy') FROM users;
+            `).catch(() => {});
         } catch (healErr) {
             console.warn('[run_migrations] Self-healing notice:', healErr.message);
         }
