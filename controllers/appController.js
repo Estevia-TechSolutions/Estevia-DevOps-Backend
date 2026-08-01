@@ -652,8 +652,8 @@ function deduceRepoUrl(appName, reposList, githubOwner) {
         }
 
         for (const token of appTokens) {
-            if (repoName.includes(token)) {
-                score += 50;
+            if (repoName.includes(token) || (token === 'evaops' && (repoName.includes('devops') || repoName.includes('evaops'))) || (token === 'devops' && repoName.includes('evaops'))) {
+                score += 80;
             }
         }
 
@@ -2459,7 +2459,11 @@ const appController = {
                 [organizationId, app.name]
             );
             if (existing.length > 0) {
-                if (existing[0].repo_url && !app.repositoryUrl) {
+                const deduced = deduceRepoUrl(app.name, reposList, githubOwner);
+                if (deduced && (existing[0].repo_url !== deduced || !app.repositoryUrl)) {
+                    app.repositoryUrl = deduced;
+                    await db.query('UPDATE applications SET repo_url = ? WHERE id = ?', [deduced, existing[0].id]);
+                } else if (existing[0].repo_url && !app.repositoryUrl) {
                     app.repositoryUrl = existing[0].repo_url;
                 }
                 if (existing[0].azure_resource_details) {
