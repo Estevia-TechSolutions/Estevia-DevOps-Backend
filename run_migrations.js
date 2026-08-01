@@ -1091,6 +1091,24 @@ async function main() {
             FROM users u LIMIT 1;
         `);
 
+        // 15. Self-Healing Migration: Fix legacy misassignments in applications table
+        console.log('Running auto-migration self-healing for pipeline_id & repo_url...');
+        try {
+            await connection.query(`
+                UPDATE applications 
+                SET pipeline_id = 'github-actions:Estevia-TechSolutions/Peoplecraft-v1-reactfrontend' 
+                WHERE (name LIKE '%peoplecraft-frontend%' OR name LIKE '%peoplecraft%react%') AND pipeline_id = '19';
+            `);
+            await connection.query(`
+                UPDATE applications 
+                SET repo_url = 'https://github.com/Estevia-TechSolutions/Estevia-DevOps-Backend', 
+                    pipeline_id = '18' 
+                WHERE name LIKE '%api-evaops%' AND (repo_url LIKE '%estevia-backend-api%' OR pipeline_id = '9');
+            `);
+        } catch (healErr) {
+            console.warn('[run_migrations] Self-healing notice:', healErr.message);
+        }
+
         console.log('\n================================================================');
         console.log('SUCCESS: Database migration and seeding completed successfully!');
         console.log('================================================================');
