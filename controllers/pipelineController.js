@@ -224,14 +224,11 @@ const listPipelineRuns = async (req, res) => {
                     prov = 'azure_devops';
                 }
 
-                let targetRunNum = 42;
-                if (pLow.includes('evaops-frontend')) targetRunNum = 312;
-                else if (pLow.includes('api-evaops')) targetRunNum = 6158;
-                else if (pLow.includes('marketing')) targetRunNum = 6158;
-                else if (pLow.includes('restaurant-frontend')) targetRunNum = 234;
-                else if (pLow.includes('restaurant-backend')) targetRunNum = 187;
-                else if (pLow.includes('peoplecraft-frontend')) targetRunNum = 142;
-                else if (pLow.includes('api-peoplecraft')) targetRunNum = 89;
+                const azureDetails = typeof app.azure_resource_details === 'string'
+                    ? JSON.parse(app.azure_resource_details || '{}')
+                    : (app.azure_resource_details || {});
+                
+                const dynamicRunNum = Number(azureDetails.buildNumber || app.buildNumber || app.run_number) || 1;
 
                 const [existing] = await db.query('SELECT id FROM pipelines WHERE project_name = ? AND organization_id = ?', [app.name, orgId]);
                 
@@ -248,11 +245,13 @@ const listPipelineRuns = async (req, res) => {
                     await db.query(`
                         INSERT INTO pipeline_runs (id, pipeline_id, run_number, status, commit_sha, commit_message, branch, triggered_by, duration_seconds)
                         VALUES (?, ?, ?, 'success', 'a4bafe6', 'Sync deployment from scanned Azure resource', 'main', 'Azure Cloud Sync', 65)
-                    `, [newRunId, newPipeId, targetRunNum]);
+                    `, [newRunId, newPipeId, dynamicRunNum]);
                 } else {
                     const existingPipeId = existing[0].id;
                     await db.query(`UPDATE pipelines SET provider = ? WHERE id = ?`, [prov, existingPipeId]);
-                    await db.query(`UPDATE pipeline_runs SET run_number = ? WHERE pipeline_id = ? AND run_number != ?`, [targetRunNum, existingPipeId, targetRunNum]);
+                    if (dynamicRunNum > 1) {
+                        await db.query(`UPDATE pipeline_runs SET run_number = ? WHERE pipeline_id = ?`, [dynamicRunNum, existingPipeId]);
+                    }
                 }
             }
         }
