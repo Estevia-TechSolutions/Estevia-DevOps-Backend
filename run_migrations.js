@@ -1139,10 +1139,12 @@ async function main() {
                 WHERE a.pipeline_id IS NOT NULL;
             `).catch(() => {});
             await connection.query(`
-                UPDATE pipeline_runs pr 
-                JOIN pipelines p ON pr.pipeline_id = p.id 
-                SET pr.run_number = 6264 
-                WHERE p.project_name LIKE '%evaops%';
+                UPDATE pipelines 
+                SET provider = CASE 
+                    WHEN LOWER(project_name) LIKE '%marketing%' OR LOWER(project_name) LIKE '%peoplecraft%' THEN 'github_actions'
+                    WHEN LOWER(project_name) LIKE '%evaops%' OR LOWER(project_name) LIKE '%restaurant%' THEN 'azure_devops'
+                    ELSE provider
+                END;
             `).catch(() => {});
         } catch (healErr) {
             console.warn('[run_migrations] Self-healing notice:', healErr.message);
