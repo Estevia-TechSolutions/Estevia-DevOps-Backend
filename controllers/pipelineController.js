@@ -391,7 +391,7 @@ const getRunDetails = async (req, res) => {
         }
 
         const run = runs[0];
-        const [stages] = await db.query('SELECT * FROM pipeline_stages WHERE run_id = ? ORDER BY stage_order ASC', [runId]);
+        let [stages] = await db.query('SELECT * FROM pipeline_stages WHERE run_id = ? ORDER BY stage_order ASC', [runId]);
         
         for (const stage of stages) {
             const [jobs] = await db.query('SELECT * FROM pipeline_jobs WHERE stage_id = ? ORDER BY id ASC', [stage.id]);
