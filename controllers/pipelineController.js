@@ -226,7 +226,7 @@ const listPipelineRuns = async (req, res) => {
 
                 let targetRunNum = 42;
                 if (pLow.includes('evaops-frontend')) targetRunNum = 312;
-                else if (pLow.includes('api-evaops')) targetRunNum = 6264;
+                else if (pLow.includes('api-evaops')) targetRunNum = 6158;
                 else if (pLow.includes('marketing')) targetRunNum = 6158;
                 else if (pLow.includes('restaurant-frontend')) targetRunNum = 234;
                 else if (pLow.includes('restaurant-backend')) targetRunNum = 187;
