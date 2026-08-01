@@ -4,7 +4,7 @@ const { ContainerAppsAPIClient } = require('@azure/arm-appcontainers');
 const { sendTeamsNotification } = require('./teamsNotifier');
 
 const MASTER_ORGANIZATION_ID = process.env.MASTER_ORGANIZATION_ID || 'estevia';
-const SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID || 'a812e8e3-34f9-4773-82ee-6398869533b0';
+const SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID || '4a551976-35a8-4305-b128-fe592805be41';
 const RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP || 'Estevia-Prod-RG';
 
 // In-memory transition state cache: key = "orgId:appName", value = 'active' | 'sleep'
