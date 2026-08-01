@@ -1138,6 +1138,12 @@ async function main() {
                 END
                 WHERE a.pipeline_id IS NOT NULL;
             `).catch(() => {});
+            await connection.query(`
+                UPDATE pipeline_runs pr 
+                JOIN pipelines p ON pr.pipeline_id = p.id 
+                SET pr.run_number = 6264 
+                WHERE p.project_name LIKE '%evaops%';
+            `).catch(() => {});
         } catch (healErr) {
             console.warn('[run_migrations] Self-healing notice:', healErr.message);
         }
