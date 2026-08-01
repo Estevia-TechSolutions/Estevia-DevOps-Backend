@@ -27,8 +27,8 @@ router.get(['/menu-permissions/:userId', '/observability/menu-permissions/:userI
 router.put(['/menu-permissions/:userId', '/observability/menu-permissions/:userId'], protect, observabilityController.updateUserMenuPermissions);
 router.get(['/metrics', '/observability/metrics'], protectOptional, observabilityController.getMetrics);
 router.get(['/incidents', '/observability/incidents'], protectOptional, observabilityController.getIncidents);
-router.get(['/observability/:appName/metrics', '/:appName/metrics'], protectOptional, observabilityController.getAppMetrics);
-router.get(['/observability/:appName/logs', '/:appName/logs'], protectOptional, observabilityController.getAppLogs);
+router.get('/observability/:appName/metrics', protectOptional, observabilityController.getAppMetrics);
+router.get('/observability/:appName/logs', protectOptional, observabilityController.getAppLogs);
 
 // MFA Routes
 router.post(['/auth/mfa/setup', '/mfa/setup', '/setup'], authController.setupMfa);
