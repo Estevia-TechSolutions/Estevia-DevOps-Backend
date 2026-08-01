@@ -452,7 +452,8 @@ const getRunDetails = async (req, res) => {
         `, [runId]);
 
         const isHistoricalAttempt = runId.includes('-prev');
-        const runIndex = runId.includes('-prev1') ? 41 : runId.includes('-prev2') ? 40 : 42;
+        const prevMatch = runId.match(/-prev(\d+)$/);
+        const prevOffset = prevMatch ? parseInt(prevMatch[1], 10) : 0;
         const runStatus = runId.includes('-prev2') ? 'failed' : 'success';
         const reqBranch = req.query.branch || 'main';
         const projectName = runId.replace(/^scanned-\d+-/, '').replace(/-prev\d+$/, '') || 'Estevia-App';
@@ -490,18 +491,10 @@ const getRunDetails = async (req, res) => {
                 { run_number: baseRunNum - 9, id: `scanned-0-${projectName}-prev9`, status: 'success', created_at: '2026-07-22T08:10:00Z', commit_sha: '3a11ee5', branch: reqBranch }
             ];
 
-            const commitSha = runIndex === 41 ? '9b182ef' : runIndex === 40 ? '3c71a09' : 'a4bafe6';
-            const commitMsg = runIndex === 40 ? `fix(auth): update JWT verification for ${reqBranch}` : runIndex === 41 ? `feat(api): optimize response compression for ${reqBranch}` : `Deploy ${projectName} build to ${reqBranch} target environment (${targetRg})`;
+            const bId = Math.max(1, baseRunNum - prevOffset);
+            const commitSha = prevOffset === 1 ? '9b182ef' : prevOffset === 2 ? '3c71a09' : 'a4bafe6';
+            const commitMsg = prevOffset > 0 ? `sync(build #${bId}): release update for ${reqBranch}` : `Deploy ${projectName} build to ${reqBranch} target environment (${targetRg})`;
 
-            const infraLogs = runStatus === 'failed' 
-                ? `[INFO] Authenticating with Azure Management API...\n[INFO] Validating GoDaddy REST API Key & Secret for ${targetHost}...\n[ERROR] Azure Deployment Failed in ${targetRg}: Quota Exceeded for subscription.`
-                : `[INFO] Authenticating with Azure Management API...\n[INFO] Validating GoDaddy REST API Key & Secret for ${targetHost}...\n[SUCCESS] Cloud identity verified. CNAME ${targetHost} active in ${targetRg}.`;
-
-            const buildLogs = runStatus === 'failed'
-                ? `[INFO] Fetching origin/${reqBranch}...\n[INFO] Checked out commit ${commitSha}.\n[INFO] Running npm ci...\n[ERROR] TypeScript Error in src/auth.ts (L42): Cannot find module 'jsonwebtoken'.\n[FAIL] Build process exited with code 1.`
-                : `[INFO] Fetching origin/${reqBranch}...\n[INFO] Checked out commit ${commitSha}.\n[INFO] Running npm ci...\n[INFO] Running tsc -b && vite build...\n[SUCCESS] Build completed in 560ms (0 errors).\n[SUCCESS] Container image esteviaacr.azurecr.io/${projectName.toLowerCase()}:${reqBranch}-${commitSha} pushed to ACR.`;
-
-            const bId = runIndex;
             const azureDevOpsUrl = `https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=results`;
             const ghUrl = `https://github.com/Estevia-TechSolutions/${projectName}/actions`;
             const supportedBranches = getSupportedBranches(projectName, reqBranch);
