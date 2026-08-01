@@ -276,7 +276,7 @@ const listPipelineRuns = async (req, res) => {
                 else if (projLow.includes('peoplecraft')) dynamicBuildNum = 89;
                 else if (projLow.includes('restaurant-frontend')) dynamicBuildNum = 234;
                 else if (projLow.includes('restaurant-backend')) dynamicBuildNum = 187;
-                else if (projLow.includes('evaops')) dynamicBuildNum = 312;
+                else if (projLow.includes('evaops')) dynamicBuildNum = 6264;
                 else dynamicBuildNum = 42 + i * 7;
             }
             return {
