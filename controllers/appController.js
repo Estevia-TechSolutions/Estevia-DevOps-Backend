@@ -2636,64 +2636,12 @@ const appController = {
             }
             app.dnsDetails = matchedDns;
 
-            // Find matching Azure DevOps Pipeline ID
-            let matchedPipelineId = null;
-            let matchedPipelineName = null;
+            // ── Smart Active Execution Signal Engine (Zero Hardcoding) ────────────
+            let hasGithubActions = false;
+            let ghLastRunTime = 0;
+            let ghRepoPath = null;
 
-            const isDevVm = app.type === 'vm' && (app.name.toLowerCase().includes('-dev') || app.name.toLowerCase().includes('dev'));
-
-            let matchingPipeline = null;
-            if (!isDevVm && app.repositoryUrl) {
-                const cleanAppRepo = app.repositoryUrl.replace('https://github.com/', '').replace(/\/$/, '').toLowerCase();
-                matchingPipeline = devopsPipelines.find(p => {
-                    const repoFullName = p.configuration?.repository?.fullName;
-                    const pName = (p.name || '').toLowerCase();
-                    const cleanAppName = (app.name || '').toLowerCase();
-
-                    // Strict Component Role Guard: Reject cross-role matching even if repository URLs match!
-                    if ((cleanAppName.includes('frontend') || app.type === 'frontend' || cleanAppName.endsWith('-swa')) && (pName.includes('backend') || pName.includes('api'))) {
-                        return false;
-                    }
-                    if ((cleanAppName.includes('backend') || app.type === 'backend') && (pName.includes('frontend') || pName.includes('web'))) {
-                        return false;
-                    }
-
-                    return repoFullName && repoFullName.toLowerCase() === cleanAppRepo;
-                });
-            }
-
-            if (!isDevVm && !matchingPipeline) {
-                matchingPipeline = devopsPipelines.find(p => {
-                    const pName = p.name.toLowerCase();
-                    const cleanAppName = app.name.toLowerCase();
-
-                    // Strict rule: Never map a frontend cloud resource to a backend pipeline, or vice versa!
-                    if ((cleanAppName.includes('frontend') || app.type === 'frontend' || cleanAppName.endsWith('-swa')) && pName.includes('backend')) {
-                        return false;
-                    }
-                    if ((cleanAppName.includes('backend') || app.type === 'backend') && pName.includes('frontend')) {
-                        return false;
-                    }
-
-                    const ownerPrefix = githubOwner.toLowerCase().replace('-techsolutions', '').replace('-solutions', '').split('-')[0];
-                    const baseApp = cleanAppName.replace(new RegExp(`^${ownerPrefix}-`), '').replace('-swa', '').replace('-dev', '').replace('-qa', '').replace('-prod', '').replace('-api', '').replace('-frontend', '');
-                    const basePipeline = pName.replace('-pipeline', '').replace('-ci-cd', '').replace('-frontend', '').replace('-backend', '').replace('-api', '');
-
-                    if (baseApp && basePipeline && baseApp === basePipeline) {
-                        return true;
-                    }
-                    return false;
-                });
-            }
-            if (matchingPipeline) {
-                matchedPipelineId = String(matchingPipeline.id);
-                matchedPipelineName = matchingPipeline.name;
-            }
-
-            if (!matchedPipelineId && !isDevVm && app.repositoryUrl && githubToken) {
-                const cleanAppRepo = app.repositoryUrl.replace('https://github.com/', '').replace(/\/$/, '').toLowerCase();
-
-                // Check in global actionsCache first to avoid rate limiting
+            if (!isDevVm && app.repositoryUrl && githubToken) {
                 const cachedActions = actionsCache.get(normalizedUrl);
                 if (cachedActions && (Date.now() - cachedActions.timestamp < CACHE_TTL_MS)) {
                     repoHasGithubActionsMap.set(normalizedUrl, cachedActions.hasActions);
@@ -2721,16 +2669,87 @@ const appController = {
                     actionsCache.set(normalizedUrl, { timestamp: Date.now(), hasActions });
                 }
 
-                const hasGithubActions = repoHasGithubActionsMap.get(normalizedUrl) || (existing.length > 0 && existing[0].pipeline_id && String(existing[0].pipeline_id).startsWith('github-actions'));
+                hasGithubActions = repoHasGithubActionsMap.get(normalizedUrl) || (existing.length > 0 && existing[0].pipeline_id && String(existing[0].pipeline_id).startsWith('github-actions'));
                 if (hasGithubActions) {
-                    const githubRepo = normalizedUrl.replace('https://github.com/', '');
-                    matchedPipelineId = 'github-actions:' + githubRepo;
-                    matchedPipelineName = `GitHub Actions (${githubRepo.split('/')[1] || githubRepo})`;
+                    ghRepoPath = normalizedUrl.replace('https://github.com/', '');
+                    try {
+                        const branchToUse = app.branch || 'main';
+                        const runsUrl = `https://api.github.com/repos/${ghRepoPath}/actions/runs?per_page=1&branch=${encodeURIComponent(branchToUse)}`;
+                        const runsRes = await axios.get(runsUrl, {
+                            headers: {
+                                'Authorization': `token ${githubToken}`,
+                                'Accept': 'application/vnd.github.v3+json',
+                                'User-Agent': getUserAgent(organizationId)
+                            },
+                            timeout: 3000
+                        });
+                        const latestRun = runsRes.data?.workflow_runs?.[0];
+                        if (latestRun) {
+                            ghLastRunTime = new Date(latestRun.updated_at || latestRun.created_at).getTime();
+                        }
+                    } catch (err) { }
                 }
-            } else if (!matchedPipelineId && existing.length > 0 && existing[0].pipeline_id && String(existing[0].pipeline_id).startsWith('github-actions')) {
-                matchedPipelineId = existing[0].pipeline_id;
-                const githubRepo = String(existing[0].pipeline_id).replace('github-actions:', '');
-                matchedPipelineName = `GitHub Actions (${githubRepo.split('/')[1] || githubRepo})`;
+            }
+
+            // Evaluate Azure DevOps pipeline candidate
+            let matchingPipeline = null;
+
+            if (!isDevVm && app.repositoryUrl) {
+                const cleanAppRepo = app.repositoryUrl.replace('https://github.com/', '').replace(/\/$/, '').toLowerCase();
+                matchingPipeline = devopsPipelines.find(p => {
+                    const repoFullName = p.configuration?.repository?.fullName;
+                    const pName = (p.name || '').toLowerCase();
+                    const cleanAppName = (app.name || '').toLowerCase();
+
+                    // Strict Component Role Guard: Reject cross-role matching even if repository URLs match!
+                    if ((cleanAppName.includes('frontend') || app.type === 'frontend' || cleanAppName.endsWith('-swa')) && (pName.includes('backend') || pName.includes('api'))) {
+                        return false;
+                    }
+                    if ((cleanAppName.includes('backend') || app.type === 'backend') && (pName.includes('frontend') || pName.includes('web'))) {
+                        return false;
+                    }
+
+                    return repoFullName && repoFullName.toLowerCase() === cleanAppRepo;
+                });
+            }
+
+            if (!isDevVm && !matchingPipeline) {
+                matchingPipeline = devopsPipelines.find(p => {
+                    const pName = p.name.toLowerCase();
+                    const cleanAppName = app.name.toLowerCase();
+
+                    if ((cleanAppName.includes('frontend') || app.type === 'frontend' || cleanAppName.endsWith('-swa')) && pName.includes('backend')) {
+                        return false;
+                    }
+                    if ((cleanAppName.includes('backend') || app.type === 'backend') && pName.includes('frontend')) {
+                        return false;
+                    }
+
+                    const ownerPrefix = githubOwner.toLowerCase().replace('-techsolutions', '').replace('-solutions', '').split('-')[0];
+                    const baseApp = cleanAppName.replace(new RegExp(`^${ownerPrefix}-`), '').replace('-swa', '').replace('-dev', '').replace('-qa', '').replace('-prod', '').replace('-api', '').replace('-frontend', '');
+                    const basePipeline = pName.replace('-pipeline', '').replace('-ci-cd', '').replace('-frontend', '').replace('-backend', '').replace('-api', '');
+
+                    return baseApp && basePipeline && baseApp === basePipeline;
+                });
+            }
+
+            // Compare execution timestamps if both exist
+            const isSwaApp = app.type === 'frontend' || app.name.toLowerCase().endsWith('-swa') || app.type === 'static_web_app';
+
+            if (hasGithubActions && matchingPipeline) {
+                if (isSwaApp || ghLastRunTime > 0) {
+                    matchedPipelineId = 'github-actions:' + ghRepoPath;
+                    matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
+                } else {
+                    matchedPipelineId = String(matchingPipeline.id);
+                    matchedPipelineName = matchingPipeline.name;
+                }
+            } else if (hasGithubActions) {
+                matchedPipelineId = 'github-actions:' + ghRepoPath;
+                matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
+            } else if (matchingPipeline) {
+                matchedPipelineId = String(matchingPipeline.id);
+                matchedPipelineName = matchingPipeline.name;
             }
 
             app.pipelineId = matchedPipelineId;
