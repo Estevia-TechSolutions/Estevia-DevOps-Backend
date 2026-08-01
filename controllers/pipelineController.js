@@ -438,7 +438,7 @@ const getRunDetails = async (req, res) => {
                 LIMIT 10
             `, [projectName, reqBranch]);
 
-            const baseRunNum = (dbHistory && dbHistory[0]?.run_number) || (projectName.includes('evaops') ? 6264 : 42);
+            const baseRunNum = (dbHistory && dbHistory[0]?.run_number) || Number(runId.replace(/[^0-9]/g, '')) || 100;
             const historicalRuns = (dbHistory && dbHistory.length >= 5) ? dbHistory : [
                 { run_number: baseRunNum, id: `scanned-0-${projectName}`, status: 'success', created_at: '2026-07-31T18:30:00Z', commit_sha: 'a4bafe6', branch: reqBranch },
                 { run_number: baseRunNum - 1, id: `scanned-0-${projectName}-prev1`, status: 'success', created_at: '2026-07-30T14:12:00Z', commit_sha: '9b182ef', branch: reqBranch },
@@ -522,7 +522,7 @@ const getRunDetails = async (req, res) => {
         const activeHost = activeBranch === 'qa' ? `${pName.toLowerCase()}-qa.esteviatech.com` : activeBranch === 'dev' ? `${pName.toLowerCase()}-dev.esteviatech.com` : `${pName.toLowerCase()}.esteviatech.com`;
         const activeRg = activeBranch === 'qa' ? 'Estevia-QA-RG' : activeBranch === 'dev' ? 'Estevia-Dev-RG' : 'Estevia-Prod-RG';
 
-        const baseNum = run.run_number || 6264;
+        const baseNum = Number(run.run_number) || 100;
         const historicalRuns = (rawDbHistory && rawDbHistory.length >= 5) ? rawDbHistory : [
             { run_number: baseNum, id: run.id, status: 'success', created_at: run.created_at || '2026-07-31T18:30:00Z', commit_sha: run.commit_sha || 'a4bafe6', branch: activeBranch },
             { run_number: baseNum - 1, id: `${run.id}-prev1`, status: 'success', created_at: '2026-07-30T14:12:00Z', commit_sha: '9b182ef', branch: activeBranch },
