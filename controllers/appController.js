@@ -3019,6 +3019,12 @@ const appController = {
                         ? JSON.parse(app.godaddy_dns_details || '{}')
                         : (app.godaddy_dns_details || {});
 
+                    let computedPipelineName = details.pipelineName || null;
+                    if (app.pipeline_id && String(app.pipeline_id).startsWith('github-actions:')) {
+                        const repoPath = String(app.pipeline_id).replace('github-actions:', '');
+                        computedPipelineName = `GitHub Actions (${repoPath.split('/')[1] || repoPath})`;
+                    }
+
                     return {
                         name: app.name,
                         type: app.app_type,
@@ -3032,7 +3038,7 @@ const appController = {
                         branches: [],
                         dnsDetails,
                         pipelineId: app.pipeline_id,
-                        pipelineName: details.pipelineName || null,
+                        pipelineName: computedPipelineName,
                         pipelineRun: details.pipelineRun || null,
                         azureResourceDetails: details,
                         license_frozen: app.license_frozen || 0
@@ -3079,13 +3085,21 @@ const appController = {
 
                     filteredApps = apps.filter(app => {
                         const cleanKey = (app.name || '').toLowerCase()
+                            .replace(/^api-/, '')
+                            .replace(/^estevia-/, '')
+                            .replace(/-(frontend|backend|api|web|db|database)(-swa)?$/i, '')
+                            .replace(/-(dev|qa|prod|production|staging|test)(-swa)?$/i, '')
+                            .replace(/(-swa)?$/i, '');
+
+                        const rawCleanKey = (app.name || '').toLowerCase()
                             .replace(/-(dev|qa|prod|production|staging|test)(-swa)?$/i, '')
                             .replace(/(-swa)?$/i, '')
                             .replace(/^estevia-/, '');
-                        const grants = permMap[cleanKey] || permMap['*'] || { dev: ['view'], qa: ['view'], prod: ['view'] };
+
+                        const grants = permMap[cleanKey] || permMap[rawCleanKey] || permMap['*'] || { dev: ['view'], qa: ['view'], prod: ['view'] };
                         const env = (app.name || '').toLowerCase().includes('-qa') ? 'qa' : (app.name || '').toLowerCase().includes('-dev') ? 'dev' : 'prod';
                         const actions = grants[env] || ['view'];
-                        return actions.includes('view');
+                        return Array.isArray(actions) && actions.includes('view');
                     });
                 }
 
@@ -3131,6 +3145,12 @@ const appController = {
                         ? JSON.parse(dbApp.godaddy_dns_details || '{}')
                         : (dbApp.godaddy_dns_details || {});
 
+                    let computedPipelineName = details.pipelineName || null;
+                    if (dbApp.pipeline_id && String(dbApp.pipeline_id).startsWith('github-actions:')) {
+                        const repoPath = String(dbApp.pipeline_id).replace('github-actions:', '');
+                        computedPipelineName = `GitHub Actions (${repoPath.split('/')[1] || repoPath})`;
+                    }
+
                     const app = {
                         name: dbApp.name,
                         type: dbApp.app_type,
@@ -3144,7 +3164,7 @@ const appController = {
                         branches: [],
                         dnsDetails,
                         pipelineId: dbApp.pipeline_id,
-                        pipelineName: details.pipelineName || null,
+                        pipelineName: computedPipelineName,
                         pipelineRun: details.pipelineRun || null,
                         azureResourceDetails: details,
                         license_frozen: dbApp.license_frozen || 0
