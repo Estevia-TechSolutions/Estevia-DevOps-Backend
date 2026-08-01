@@ -228,7 +228,7 @@ const listPipelineRuns = async (req, res) => {
                     ? JSON.parse(app.azure_resource_details || '{}')
                     : (app.azure_resource_details || {});
                 
-                const dynamicRunNum = Number(azureDetails.buildNumber || app.buildNumber || app.run_number) || 1;
+                const dynamicRunNum = Number(azureDetails.pipelineRun?.id || azureDetails.buildNumber || app.buildNumber || app.run_number) || 1;
 
                 const [existing] = await db.query('SELECT id FROM pipelines WHERE project_name = ? AND organization_id = ?', [app.name, orgId]);
                 
