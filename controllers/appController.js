@@ -1006,7 +1006,7 @@ const appController = {
         ).catch(() => [[]]);
 
         const [scannedDbApps] = await db.query(
-            'SELECT name, type, azure_resource_id FROM scanned_apps WHERE organization_id = ?',
+            'SELECT name, app_type AS type, azure_resource_details FROM applications WHERE organization_id = ?',
             [organizationId]
         ).catch(() => [[]]);
 
@@ -2168,7 +2168,7 @@ const appController = {
 
         try {
             const [scannedDbs] = await db.query(
-                `SELECT name, azure_resource_id, azure_resource_details FROM scanned_apps WHERE organization_id = ? AND (type = 'database' OR name LIKE '%db%' OR name LIKE '%mysql%' OR azure_resource_id LIKE '%DBforMySQL%')`,
+                `SELECT name, azure_resource_details FROM applications WHERE organization_id = ? AND (app_type = 'database' OR name LIKE '%db%' OR name LIKE '%mysql%')`,
                 [organizationId]
             );
             for (const row of (scannedDbs || [])) {
@@ -2238,7 +2238,7 @@ const appController = {
         }
         try {
             const [scanned] = await db.query(
-                'SELECT env_vars FROM scanned_apps WHERE organization_id = ? AND env_vars IS NOT NULL',
+                'SELECT azure_resource_details FROM applications WHERE organization_id = ?',
                 [organizationId]
             ).catch(() => [[]]);
 
@@ -2429,7 +2429,7 @@ const appController = {
 
         await Promise.all(categoryApps.map(async (app) => {
             const [existingScanned] = await db.query(
-                'SELECT id, branch, pipeline_id FROM scanned_apps WHERE organization_id = ? AND name = ?',
+                'SELECT id, repo_url, pipeline_id FROM applications WHERE organization_id = ? AND name = ?',
                 [organizationId, app.name]
             );
 
@@ -2445,7 +2445,7 @@ const appController = {
                     (isBackendApp && pipeIdLow.includes('frontend')) ||
                     (appNameLow.includes('api-evaops') && pipeIdLow.includes('estevia-backend-api'))
                 ) {
-                    await db.query('UPDATE scanned_apps SET pipeline_id = NULL, pipeline_name = NULL WHERE id = ?', [existingScanned[0].id]);
+                    await db.query('UPDATE applications SET pipeline_id = NULL WHERE id = ?', [existingScanned[0].id]);
                     existingScanned[0].pipeline_id = null;
                 }
             }
