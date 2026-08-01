@@ -11,5 +11,6 @@ router.get('/steps/:stepId/logs', pipelineController.getStepLogs);
 router.get('/:id', pipelineController.getPipelineById);
 router.post('/:pipelineId/trigger', pipelineController.triggerPipelineRun);
 router.put('/:pipelineId/migrate-provider', pipelineController.migratePipelineProvider);
+router.delete('/:id', pipelineController.deletePipeline);
 
 module.exports = router;
