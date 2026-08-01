@@ -2732,12 +2732,6 @@ const appController = {
             const isSwaApp = app.type === 'frontend' || app.name.toLowerCase().endsWith('-swa') || app.type === 'static_web_app';
 
             let azLastRunTime = 0;
-            if (matchingPipeline && devopsSecrets?.pat) {
-                const cachedRun = pipelineRunCache.get(String(matchingPipeline.id));
-                if (cachedRun && cachedRun.timestamp) {
-                    azLastRunTime = cachedRun.timestamp;
-                }
-            }
 
             if (hasGithubActions && matchingPipeline) {
                 if (azLastRunTime > 0 && azLastRunTime >= ghLastRunTime) {
