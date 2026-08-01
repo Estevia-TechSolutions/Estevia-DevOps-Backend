@@ -3083,7 +3083,7 @@ const appController = {
                         permMap[r.app_key][r.environment] = acts;
                     }
 
-                    filteredApps = apps.filter(app => {
+                    filteredApps = filteredApps.filter(app => {
                         const cleanKey = (app.name || '').toLowerCase()
                             .replace(/^api-/, '')
                             .replace(/^estevia-/, '')
@@ -3467,13 +3467,15 @@ const appController = {
                 }
             }
             if (targets.length === 0) {
-                const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
-                if (discovered && discovered.length > 0) {
-                    targets.push(...discovered);
-                } else if (req.query.subscriptionId && req.query.resourceGroup && req.query.resourceGroup.toLowerCase() !== 'all') {
+                if (req.query.subscriptionId && req.query.resourceGroup && req.query.resourceGroup.toLowerCase() !== 'all') {
                     targets.push({ subscriptionId: req.query.subscriptionId, resourceGroup: req.query.resourceGroup });
                 } else {
-                    targets.push({ subscriptionId, resourceGroup });
+                    const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
+                    if (discovered && discovered.length > 0) {
+                        targets.push(...discovered);
+                    } else {
+                        targets.push({ subscriptionId, resourceGroup });
+                    }
                 }
             }
 
