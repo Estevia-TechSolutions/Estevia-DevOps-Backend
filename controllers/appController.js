@@ -2352,15 +2352,9 @@ const appController = {
                 if (rgs.length > 0) {
                     targets.push(...rgs);
                     console.log(`[AppController] _discoverScanTargets: Found ${rgs.length} RG(s) on sub ${subId}: ${rgs.map(r => r.resourceGroup).join(', ')}`);
-                } else if (subId === primarySubId && primaryRG) {
-                    // No Estevia RGs found on primary sub — fall back to configured RG
-                    targets.push({ subscriptionId: subId, resourceGroup: primaryRG });
                 }
             } catch (err) {
-                console.warn(`[AppController] _discoverScanTargets: Failed to list RGs for sub ${subId}:`, err.message);
-                if (subId === primarySubId && primaryRG) {
-                    targets.push({ subscriptionId: subId, resourceGroup: primaryRG });
-                }
+                console.warn(`[AppController] _discoverScanTargets: Ignored unauthorized/invalid sub ${subId}:`, err.message);
             }
         }));
 

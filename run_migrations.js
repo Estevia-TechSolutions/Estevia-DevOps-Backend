@@ -554,7 +554,7 @@ async function main() {
 
         const masterOrgId = process.env.MASTER_ORGANIZATION_ID || 'estevia';
         const masterOrgName = process.env.MASTER_ORGANIZATION_NAME || 'Estevia Tech Solutions';
-        const defaultSubId = process.env.AZURE_SUBSCRIPTION_ID || 'a812e8e3-34f9-4773-82ee-6398869533b0';
+        const defaultSubId = process.env.AZURE_SUBSCRIPTION_ID || '4a551976-35a8-4305-b128-fe592805be41';
         const defaultRg = process.env.AZURE_RESOURCE_GROUP || 'Estevia-Prod-RG';
         const defaultDomain = process.env.DEFAULT_DOMAIN || 'esteviatech.com';
         const defaultDevopsUrl = process.env.AZURE_DEVOPS_ORG_URL || 'https://dev.azure.com/esteviatech';
