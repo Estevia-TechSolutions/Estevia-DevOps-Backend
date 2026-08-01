@@ -3048,7 +3048,7 @@ const appController = {
                     });
                     if (subFiltered.length > 0) filteredApps = subFiltered;
                 }
-                if (req.query.resourceGroup) {
+                if (req.query.resourceGroup && req.query.resourceGroup.toLowerCase() !== 'all') {
                     const rgFiltered = filteredApps.filter(app => {
                         return (app.resourceGroup || '').toLowerCase() === req.query.resourceGroup.toLowerCase();
                     });
@@ -3450,7 +3450,7 @@ const appController = {
                 const discovered = await appController._discoverScanTargets(organizationId, orgSettings);
                 if (discovered && discovered.length > 0) {
                     targets.push(...discovered);
-                } else if (req.query.subscriptionId && req.query.resourceGroup) {
+                } else if (req.query.subscriptionId && req.query.resourceGroup && req.query.resourceGroup.toLowerCase() !== 'all') {
                     targets.push({ subscriptionId: req.query.subscriptionId, resourceGroup: req.query.resourceGroup });
                 } else {
                     targets.push({ subscriptionId, resourceGroup });
