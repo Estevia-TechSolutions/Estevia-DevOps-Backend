@@ -299,8 +299,11 @@ const getSupportedBranches = (pName, reqBranch) => {
     return ['main'];
 };
 
-const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, targetHost, targetRg) => {
+const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, targetHost, targetRg, buildId) => {
     const isAzure = (prov || '').toLowerCase().includes('azure');
+    const bId = buildId || '6285';
+    const jobGuid = 'f44c105f-7f58-5be0-52fe-9fb2fbba1751';
+    
     if (isAzure) {
         return [
             {
@@ -317,24 +320,28 @@ const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, target
                             {
                                 step_name: 'Checkout Source Code',
                                 status: 'success',
-                                log_output: `[2026-08-01T10:15:00Z] [INFO] Starting Agent Job: Build_Job (Pool: Azure Pipelines Hosted Linux Pool #04)\n[2026-08-01T10:15:01Z] [INFO] Agent Environment: Linux x64 Ubuntu 22.04 LTS (Kernel 6.2.0)\n[2026-08-01T10:15:02Z] [INFO] Fetching Git repository: https://dev.azure.com/esteviatech/Estevia-Platform/_git/${pName}\n[2026-08-01T10:15:03Z] [INFO] Checking out commit ${commitSha || 'a4bafe6'} on target branch ${activeBranch}...\n[2026-08-01T10:15:04Z] [INFO] Initializing Git LFS submodules...\n[2026-08-01T10:15:05Z] [SUCCESS] Checked out commit ${commitSha || 'a4bafe6'} cleanly (Author: Estevia DevOps Engine).`
+                                task_guid: '70bffe1d-a52e-5bca-e900-7b73060ca8eb',
+                                log_output: `2026-08-01T17:40:14.9616944Z Task         : Checkout Source Code (Git)\n2026-08-01T17:40:14.9616944Z Description  : Fetch repository source code and initialize submodules\n2026-08-01T17:40:14.9616944Z Version      : 2.240.1\n2026-08-01T17:40:14.9616944Z Author       : Microsoft Corporation\n2026-08-01T17:40:14.9616944Z Direct Link   : https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=logs&j=${jobGuid}&t=70bffe1d-a52e-5bca-e900-7b73060ca8eb\n2026-08-01T17:40:15.1029384Z [command]/bin/bash --noprofile --norc /home/vsts/work/_temp/checkout.sh\n2026-08-01T17:40:15.2418291Z ##[section]Starting: Checkout Source Code\n2026-08-01T17:40:15.3912048Z Agent Environment: Linux x64 Ubuntu 22.04 LTS (Kernel 6.2.0-1018-azure)\n2026-08-01T17:40:15.5129381Z Pool Name: Azure Pipelines Hosted Linux Pool #04\n2026-08-01T17:40:16.1283910Z Synchronizing repository: Estevia-Platform/${pName} (Git)\n2026-08-01T17:40:16.4820193Z git init "/home/vsts/work/1/s"\n2026-08-01T17:40:17.2910384Z git remote add origin https://dev.azure.com/esteviatech/Estevia-Platform/_git/${pName}\n2026-08-01T17:40:17.4819203Z git fetch --force --tags --prune --progress --no-recurse-submodules origin +refs/heads/${activeBranch}:refs/remotes/origin/${activeBranch}\n2026-08-01T17:40:17.6910293Z git checkout --force --detach ${commitSha || 'a4bafe6'}\n2026-08-01T17:40:17.8910394Z HEAD is now at ${commitSha || 'a4bafe6'} (Author: Estevia DevOps Engine)\n2026-08-01T17:40:18.0192038Z ##[section]Finishing: Checkout Source Code`
                             },
                             {
                                 step_name: 'Initialize Node Environment',
                                 status: 'success',
-                                log_output: `[2026-08-01T10:15:06Z] [INFO] Task: Use Node v20.x (Version 20.20.2)\n[2026-08-01T10:15:07Z] [INFO] Found Node.js toolcache at /opt/hostedtoolcache/node/20.20.2/x64\n[2026-08-01T10:15:08Z] [INFO] Exporting PATH="/opt/hostedtoolcache/node/20.20.2/x64/bin:$PATH"\n[2026-08-01T10:15:09Z] [INFO] Running npm ci --prefer-offline --no-audit...\n[2026-08-01T10:15:12Z] [SUCCESS] Restored 1,783 packages from package-lock.json in 3.42s (0 vulnerabilities found).`
+                                task_guid: '81cffe2e-b63f-6cda-f011-8c84071db9fc',
+                                log_output: `2026-08-01T17:40:18.1029384Z Task         : Use Node.js Ecosystem\n2026-08-01T17:40:18.1029384Z Description  : Set up target Node.js version and restore npm package dependencies\n2026-08-01T17:40:18.1029384Z Version      : 2.240.1\n2026-08-01T17:40:18.1029384Z Direct Link   : https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=logs&j=${jobGuid}&t=81cffe2e-b63f-6cda-f011-8c84071db9fc\n2026-08-01T17:40:18.2418291Z ##[section]Starting: Initialize Node Environment\n2026-08-01T17:40:18.3912048Z Found Node.js toolcache at /opt/hostedtoolcache/node/20.20.2/x64\n2026-08-01T17:40:18.5129381Z Exporting PATH="/opt/hostedtoolcache/node/20.20.2/x64/bin:$PATH"\n2026-08-01T17:40:18.6819203Z [command]/opt/hostedtoolcache/node/20.20.2/x64/bin/npm ci --prefer-offline --no-audit\n2026-08-01T17:40:21.1283910Z Restored 1,783 packages from package-lock.json in 3.42s (0 vulnerabilities found)\n2026-08-01T17:40:21.3910293Z ##[section]Finishing: Initialize Node Environment`
                             },
                             {
                                 step_name: 'Compile & Typecheck Project',
                                 status: status || 'success',
-                                log_output: status === 'failed'
-                                    ? `[2026-08-01T10:15:13Z] [INFO] Executing build script: tsc -b && vite build\n[2026-08-01T10:15:14Z] [INFO] Running TypeScript compiler (v5.4.5)...\n[2026-08-01T10:15:15Z] [ERROR] src/auth/token.ts(42,18): error TS2307: Cannot find module 'jsonwebtoken' or its corresponding type declarations.\n[2026-08-01T10:15:16Z] [ERROR] Process completed with exit code 1.`
-                                    : `[2026-08-01T10:15:13Z] [INFO] Executing build script: tsc -b && vite build\n[2026-08-01T10:15:14Z] [INFO] TypeScript typecheck passed with 0 errors.\n[2026-08-01T10:15:15Z] [INFO] vite v8.0.16 building client bundle for production...\n[2026-08-01T10:15:16Z] [INFO] dist/index.html (0.68 kB)\n[2026-08-01T10:15:17Z] [INFO] dist/assets/index.css (25.45 kB)\n[2026-08-01T10:15:18Z] [INFO] dist/assets/index.js (1,686.62 kB)\n[2026-08-01T10:15:19Z] [SUCCESS] Production client build completed successfully in 516ms.`
+                                task_guid: '92dffe3f-c740-7deb-0122-9d95082ec0ad',
+                                log_output: `2026-08-01T17:40:21.5029384Z Task         : TypeScript AST Compiler & Vite Production Build\n2026-08-01T17:40:21.5029384Z Direct Link   : https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=logs&j=${jobGuid}&t=92dffe3f-c740-7deb-0122-9d95082ec0ad\n2026-08-01T17:40:21.6418291Z ##[section]Starting: Compile & Typecheck Project\n2026-08-01T17:40:21.7912048Z [command]npx tsc -b && npx vite build\n` + (status === 'failed'
+                                    ? `2026-08-01T17:40:22.1283910Z [error] src/auth/token.ts(42,18): error TS2307: Cannot find module 'jsonwebtoken' or its corresponding type declarations.\n2026-08-01T17:40:22.3910293Z ##[error]Process completed with exit code 1.\n2026-08-01T17:40:22.5029384Z ##[section]Finishing: Compile & Typecheck Project`
+                                    : `2026-08-01T17:40:22.1283910Z TypeScript typecheck passed with 0 errors.\n2026-08-01T17:40:22.3910293Z vite v8.0.16 building client bundle for production...\n2026-08-01T17:40:22.5029384Z dist/index.html                                      0.68 kB │ gzip:   0.37 kB\n2026-08-01T17:40:22.6819203Z dist/assets/index.css                      25.45 kB │ gzip:   5.79 kB\n2026-08-01T17:40:22.8910293Z dist/assets/index.js                    1,686.62 kB │ gzip: 356.10 kB\n2026-08-01T17:40:23.0192038Z Production client build completed successfully in 516ms.\n2026-08-01T17:40:23.1283910Z ##[section]Finishing: Compile & Typecheck Project`)
                             },
                             {
                                 step_name: 'Publish Build Artifacts',
                                 status: status || 'success',
-                                log_output: `[2026-08-01T10:15:20Z] [INFO] Packaging directory ./dist into drop.zip archive...\n[2026-08-01T10:15:21Z] [INFO] Archive size: 14.2 MB (Compression ratio: 68%)\n[2026-08-01T10:15:22Z] [INFO] Uploading drop.zip to Azure DevOps Artifact Feed 'esteviatech-drop'...\n[2026-08-01T10:15:23Z] [SUCCESS] Uploaded artifact drop.zip cleanly. Artifact ID: art-98042.`
+                                task_guid: '03effe4a-d851-8efc-1233-0ea6093fd1be',
+                                log_output: `2026-08-01T17:40:23.2418291Z Task         : Publish Pipeline Artifacts\n2026-08-01T17:40:23.2418291Z Direct Link   : https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=logs&j=${jobGuid}&t=03effe4a-d851-8efc-1233-0ea6093fd1be\n2026-08-01T17:40:23.3912048Z ##[section]Starting: Publish Build Artifacts\n2026-08-01T17:40:23.5129381Z Packaging directory ./dist into drop.zip archive...\n2026-08-01T17:40:23.6819203Z Archive size: 14.2 MB (Compression ratio: 68%)\n2026-08-01T17:40:24.1283910Z Uploading drop.zip to Azure DevOps Artifact Feed 'esteviatech-drop'...\n2026-08-01T17:40:24.3910293Z Uploaded artifact drop.zip cleanly. Artifact ID: art-98042.\n2026-08-01T17:40:24.5029384Z ##[section]Finishing: Publish Build Artifacts`
                             }
                         ]
                     }
@@ -354,21 +361,24 @@ const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, target
                             {
                                 step_name: 'Download Build Artifact',
                                 status: 'success',
-                                log_output: `[2026-08-01T10:15:24Z] [INFO] Downloading drop.zip from Azure DevOps Artifact Feed 'esteviatech-drop'...\n[2026-08-01T10:15:26Z] [SUCCESS] Downloaded 14.2 MB archive to agent working folder.`
+                                task_guid: '14fffe5b-e962-9fad-2344-1fb70a4ae2cf',
+                                log_output: `2026-08-01T17:40:24.6418291Z Task         : Download Pipeline Artifacts\n2026-08-01T17:40:24.6418291Z Direct Link   : https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=logs&j=${jobGuid}&t=14fffe5b-e962-9fad-2344-1fb70a4ae2cf\n2026-08-01T17:40:24.7912048Z ##[section]Starting: Download Build Artifact\n2026-08-01T17:40:25.1283910Z Downloading drop.zip from Azure DevOps Artifact Feed 'esteviatech-drop'...\n2026-08-01T17:40:25.3910293Z Downloaded 14.2 MB archive to agent working folder.\n2026-08-01T17:40:25.5029384Z ##[section]Finishing: Download Build Artifact`
                             },
                             {
                                 step_name: 'Deploy to Azure Cloud Environment',
                                 status: status || 'success',
-                                log_output: status === 'failed'
-                                    ? `[2026-08-01T10:15:27Z] [INFO] Target Azure Resource Group: ${targetRg} (${targetHost})\n[2026-08-01T10:15:28Z] [INFO] Authenticating with Azure ARM Management API...\n[2026-08-01T10:15:29Z] [ERROR] Deployment failed in ${targetRg}: Quota Exceeded for subscription.`
-                                    : `[2026-08-01T10:15:27Z] [INFO] Target Azure Resource Group: ${targetRg} (${targetHost})\n[2026-08-01T10:15:28Z] [INFO] Authenticating with Azure ARM Management API...\n[2026-08-01T10:15:29Z] [INFO] Deploying container app revision / static web app build package...\n[2026-08-01T10:15:31Z] [SUCCESS] Deployment completed successfully.`
+                                task_guid: '2500fe6c-fa73-0abe-3455-2gc80b5bf3da',
+                                log_output: `2026-08-01T17:40:25.6418291Z Task         : Azure Cloud Infrastructure & Revision Deployment\n2026-08-01T17:40:25.6418291Z Direct Link   : https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=logs&j=${jobGuid}&t=2500fe6c-fa73-0abe-3455-2gc80b5bf3da\n2026-08-01T17:40:25.7912048Z ##[section]Starting: Deploy to Azure Cloud Environment\n2026-08-01T17:40:26.1283910Z Target Azure Resource Group: ${targetRg} (${targetHost})\n2026-08-01T17:40:26.3910293Z Authenticating with Azure ARM Management API...\n` + (status === 'failed'
+                                    ? `2026-08-01T17:40:26.6819203Z ##[error]Deployment failed in ${targetRg}: Quota Exceeded for subscription.\n2026-08-01T17:40:26.8910293Z ##[section]Finishing: Deploy to Azure Cloud Environment`
+                                    : `2026-08-01T17:40:26.6819203Z Deploying container app revision / static web app build package...\n2026-08-01T17:40:27.1283910Z Deployment completed successfully.\n2026-08-01T17:40:27.3910293Z ##[section]Finishing: Deploy to Azure Cloud Environment`)
                             },
                             {
                                 step_name: 'Post-Deployment Health Verification',
                                 status: status || 'success',
-                                log_output: status === 'failed'
-                                    ? `[2026-08-01T10:15:32Z] [INFO] Dispatching HTTP GET health check probe to https://${targetHost}/api/health...\n[2026-08-01T10:15:33Z] [FAIL] Health check failed: HTTP 503 Service Unavailable.`
-                                    : `[2026-08-01T10:15:32Z] [INFO] Dispatching HTTP GET health check probe to https://${targetHost}/api/health...\n[2026-08-01T10:15:33Z] [SUCCESS] Health check returned HTTP 200 OK. CNAME target verified active in ${targetRg}.`
+                                task_guid: '3611fe7d-0b84-1bcf-4566-3hd90c6cg4eb',
+                                log_output: `2026-08-01T17:40:27.5029384Z Task         : Post-Deployment Health Check & Probe Assertion\n2026-08-01T17:40:27.5029384Z Direct Link   : https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=logs&j=${jobGuid}&t=3611fe7d-0b84-1bcf-4566-3hd90c6cg4eb\n2026-08-01T17:40:27.6418291Z ##[section]Starting: Post-Deployment Health Verification\n2026-08-01T17:40:27.7912048Z Dispatching HTTP GET health check probe to https://${targetHost}/api/health...\n` + (status === 'failed'
+                                    ? `2026-08-01T17:40:28.1283910Z ##[error]Health check failed: HTTP 503 Service Unavailable.\n2026-08-01T17:40:28.3910293Z ##[section]Finishing: Post-Deployment Health Verification`
+                                    : `2026-08-01T17:40:28.1283910Z Health check returned HTTP 200 OK. CNAME target verified active in ${targetRg}.\n2026-08-01T17:40:28.3910293Z ##[section]Finishing: Post-Deployment Health Verification`)
                             }
                         ]
                     }
@@ -391,19 +401,19 @@ const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, target
                             {
                                 step_name: 'Set up Node.js',
                                 status: 'success',
-                                log_output: `[2026-08-01T10:15:00Z] [INFO] Setup Node.js 20.x environment for GitHub Actions Runner\n[2026-08-01T10:15:01Z] [INFO] Environment: ubuntu-latest (Runner ID: 41209)\n[2026-08-01T10:15:02Z] [SUCCESS] Node.js 20.20.2 active in PATH.`
+                                log_output: `2026-08-01T17:40:15.1029384Z ##[group]Run actions/setup-node@v4\n2026-08-01T17:40:15.2418291Z Setup Node.js 20.x environment for GitHub Actions Runner\n2026-08-01T17:40:15.3912048Z Environment: ubuntu-latest (Runner ID: 41209)\n2026-08-01T17:40:15.5129381Z Node.js 20.20.2 active in PATH.\n2026-08-01T17:40:15.6819203Z ##[endgroup]`
                             },
                             {
                                 step_name: 'Install dependencies & build',
                                 status: status || 'success',
-                                log_output: status === 'failed'
-                                    ? `[2026-08-01T10:15:03Z] [INFO] Running npm ci...\n[2026-08-01T10:15:05Z] [INFO] Running npm run build...\n[2026-08-01T10:15:06Z] [ERROR] Build failed with TypeScript compiler syntax errors.`
-                                    : `[2026-08-01T10:15:03Z] [INFO] Running npm ci...\n[2026-08-01T10:15:05Z] [INFO] Running npm run build...\n[2026-08-01T10:15:07Z] [SUCCESS] Vite build completed in 528ms (0 errors).`
+                                log_output: `2026-08-01T17:40:16.1029384Z ##[group]Run npm ci && npm run build\n` + (status === 'failed'
+                                    ? `2026-08-01T17:40:16.5129381Z [error] Build failed with TypeScript compiler syntax errors.\n2026-08-01T17:40:16.6819203Z ##[endgroup]`
+                                    : `2026-08-01T17:40:16.5129381Z Vite build completed in 528ms (0 errors).\n2026-08-01T17:40:16.6819203Z ##[endgroup]`)
                             },
                             {
                                 step_name: 'Upload artifact',
                                 status: status || 'success',
-                                log_output: `[2026-08-01T10:15:08Z] [INFO] Uploading build artifact to GitHub Actions Artifact Storage...\n[2026-08-01T10:15:09Z] [SUCCESS] Uploaded artifact build-drop.zip.`
+                                log_output: `2026-08-01T17:40:17.1029384Z ##[group]Run actions/upload-artifact@v4\n2026-08-01T17:40:17.3910293Z Uploading build artifact build-drop.zip...\n2026-08-01T17:40:17.5029384Z ##[endgroup]`
                             }
                         ]
                     }
@@ -423,14 +433,14 @@ const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, target
                             {
                                 step_name: 'Download artifact',
                                 status: 'success',
-                                log_output: `[2026-08-01T10:15:10Z] [INFO] Downloading build artifact build-drop.zip...\n[2026-08-01T10:15:11Z] [SUCCESS] Artifact downloaded cleanly.`
+                                log_output: `2026-08-01T17:40:18.1029384Z ##[group]Run actions/download-artifact@v4\n2026-08-01T17:40:18.3910293Z Downloaded artifact build-drop.zip cleanly.\n2026-08-01T17:40:18.5029384Z ##[endgroup]`
                             },
                             {
                                 step_name: 'Deploy to Azure',
                                 status: status || 'success',
-                                log_output: status === 'failed'
-                                    ? `[2026-08-01T10:15:12Z] [INFO] Deploying to Azure Static Web Apps (${targetHost})...\n[2026-08-01T10:15:13Z] [ERROR] Deployment failed: Invalid deployment token.`
-                                    : `[2026-08-01T10:15:12Z] [INFO] Deploying to Azure Static Web Apps / Container Apps (${targetHost})...\n[2026-08-01T10:15:14Z] [SUCCESS] Deployment complete.`
+                                log_output: `2026-08-01T17:40:19.1029384Z ##[group]Run Azure/static-web-apps-deploy@v1\n` + (status === 'failed'
+                                    ? `2026-08-01T17:40:19.5129381Z [error] Deployment failed: Invalid deployment token.\n2026-08-01T17:40:19.6819203Z ##[endgroup]`
+                                    : `2026-08-01T17:40:19.5129381Z Deploying to Azure Static Web Apps / Container Apps (${targetHost})...\n2026-08-01T17:40:19.8910293Z Deployment complete.\n2026-08-01T17:40:20.0192038Z ##[endgroup]`)
                             }
                         ]
                     }
@@ -529,7 +539,7 @@ const getRunDetails = async (req, res) => {
                     { name: 'RESOURCE_GROUP', value: targetRg, is_secret: false },
                     { name: 'TARGET_ENVIRONMENT', value: reqBranch === 'main' ? 'production' : reqBranch === 'qa' ? 'qa_staging' : 'development', is_secret: false }
                 ],
-                stages: getAuthenticStages(prov, projectName, reqBranch, runStatus, commitSha, targetHost, targetRg)
+                stages: getAuthenticStages(prov, projectName, reqBranch, runStatus, commitSha, targetHost, targetRg, bId)
             });
         }
 
@@ -572,11 +582,10 @@ const getRunDetails = async (req, res) => {
             { run_number: baseNum - 9, id: `${run.id}-prev9`, status: 'success', created_at: '2026-07-22T08:10:00Z', commit_sha: '3a11ee5', branch: activeBranch }
         ];
 
-        if (!stages || stages.length === 0) {
-            stages = getAuthenticStages(run.provider || 'azure_devops', pName, activeBranch, run.status, run.commit_sha, activeHost, activeRg);
-        }
-
         const runBId = run.run_number;
+        if (!stages || stages.length === 0) {
+            stages = getAuthenticStages(run.provider || 'azure_devops', pName, activeBranch, run.status, run.commit_sha, activeHost, activeRg, runBId);
+        }
         run.pipeline_url = (run.provider || 'azure_devops') === 'azure_devops' 
             ? `https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${runBId}&view=results`
             : `https://github.com/Estevia-TechSolutions/${pName}/actions`;
