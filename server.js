@@ -52,6 +52,22 @@ const { protect } = require('./middlewares/authMiddleware');
 app.use('/api/auth', authRoutes);
 app.use('/api/mfa', authRoutes);
 
+const crmRoutes = require('./routes/crmRoutes');
+app.use('/api/crm', crmRoutes);
+
+const credentialRoutes = require('./routes/credentialRoutes');
+app.use('/api/credentials', protect, credentialRoutes);
+
+const appRoutes = require('./routes/appRoutes');
+app.use('/api/apps', appRoutes);
+
+const orgRoutes = require('./routes/orgRoutes');
+app.use('/api/org', orgRoutes);
+
+const observabilityRoutes = require('./routes/observabilityRoutes');
+app.use('/api/observability', observabilityRoutes);
+app.use('/api/auth/observability', observabilityRoutes);
+
 const schedulerRoutes = require('./routes/schedulerRoutes');
 app.use('/api/scheduler', schedulerRoutes);
 
