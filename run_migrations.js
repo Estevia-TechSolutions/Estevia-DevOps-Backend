@@ -1123,6 +1123,9 @@ async function main() {
                 WHERE azure_resource_details LIKE '%Estevia-Client-Projects-RG%';
             `).catch(() => {});
             await connection.query(`
+                ALTER TABLE pipelines MODIFY COLUMN yaml_config LONGTEXT NULL;
+            `).catch(() => {});
+            await connection.query(`
                 UPDATE pipelines SET provider = 'github_actions' WHERE project_name LIKE '%frontend%' OR project_name LIKE '%marketing%' OR project_name LIKE '%swa%';
             `).catch(() => {});
             await connection.query(`
