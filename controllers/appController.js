@@ -3055,7 +3055,15 @@ const appController = {
                     if (rgFiltered.length > 0) filteredApps = rgFiltered;
                 }
 
-                if (req.user && !['owner', 'admin'].includes(req.user.role?.toLowerCase())) {
+                let userRole = (req.user?.role || '').toLowerCase();
+                if (req.user?.id) {
+                    const [uRows] = await db.query('SELECT role FROM users WHERE id = ?', [req.user.id]).catch(() => [[]]);
+                    if (uRows.length > 0 && uRows[0].role) {
+                        userRole = uRows[0].role.toLowerCase();
+                    }
+                }
+
+                if (req.user && !['owner', 'admin'].includes(userRole)) {
                     const [permRows] = await db.query(
                         'SELECT app_key, environment, actions FROM user_resource_permissions WHERE user_id = ? AND organization_id = ?',
                         [req.user.id, organizationId]
