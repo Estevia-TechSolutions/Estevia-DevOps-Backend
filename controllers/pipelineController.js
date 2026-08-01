@@ -1,5 +1,6 @@
 const db = require('../config/db');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('crypto');
+const uuidv4 = randomUUID;
 
 // ── 1. List Pipelines & Summary Metrics (STRICT REAL DB QUERY ONLY) ──────────
 const listPipelines = async (req, res) => {
