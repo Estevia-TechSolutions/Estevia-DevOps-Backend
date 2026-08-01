@@ -235,9 +235,9 @@ const listPipelineRuns = async (req, res) => {
                     const targetT = app.type === 'frontend' ? 'static_web_app' : app.type === 'database' ? 'database' : 'container_app';
                     
                     await db.query(`
-                        INSERT INTO pipelines (id, organization_id, project_name, name, repo_url, branch, provider, target_type, auto_provision_infra)
-                        VALUES (?, ?, ?, ?, ?, 'main', ?, ?, 1)
-                    `, [newPipeId, orgId, app.name, `${app.name} CI/CD Pipeline`, app.repo_url || `https://github.com/Estevia-TechSolutions/${app.name}`, prov, targetT]);
+                        INSERT INTO pipelines (id, organization_id, project_name, name, provider, target_type, auto_provision_infra)
+                        VALUES (?, ?, ?, ?, ?, ?, 1)
+                    `, [newPipeId, orgId, app.name, `${app.name} CI/CD Pipeline`, prov, targetT]);
 
                     const newRunId = `run-${uuidv4().slice(0, 8)}`;
                     await db.query(`
@@ -255,9 +255,10 @@ const listPipelineRuns = async (req, res) => {
                 p.name AS pipeline_name,
                 p.project_name,
                 p.provider,
-                p.repo_url
+                COALESCE(a.repo_url, CONCAT('https://github.com/Estevia-TechSolutions/', p.project_name)) AS repo_url
             FROM pipeline_runs pr
             JOIN pipelines p ON pr.pipeline_id = p.id
+            LEFT JOIN applications a ON (LOWER(a.name) = LOWER(p.project_name) AND a.organization_id = p.organization_id)
             WHERE p.organization_id = ?
             ORDER BY pr.created_at DESC
             LIMIT 50
