@@ -1123,10 +1123,10 @@ async function main() {
                 WHERE azure_resource_details LIKE '%Estevia-Client-Projects-RG%';
             `).catch(() => {});
             await connection.query(`
-                UPDATE pipelines SET provider = 'github_actions' WHERE project_name LIKE '%frontend%' OR project_name LIKE '%marketing%';
+                UPDATE pipelines SET provider = 'github_actions' WHERE project_name LIKE '%frontend%' OR project_name LIKE '%marketing%' OR project_name LIKE '%swa%';
             `).catch(() => {});
             await connection.query(`
-                UPDATE pipelines SET provider = 'azure_devops' WHERE project_name LIKE '%backend%' OR project_name LIKE '%api%' OR project_name LIKE '%evaops%';
+                UPDATE pipelines SET provider = 'azure_devops' WHERE (project_name LIKE '%backend%' OR project_name LIKE '%api%' OR project_name = 'api-evaops') AND project_name NOT LIKE '%frontend%';
             `).catch(() => {});
         } catch (healErr) {
             console.warn('[run_migrations] Self-healing notice:', healErr.message);
