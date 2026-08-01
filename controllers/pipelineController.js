@@ -266,22 +266,10 @@ const listPipelineRuns = async (req, res) => {
             LIMIT 50
         `, [orgId]);
 
-        // Map realistic build numbers per pipeline
-        const formattedRuns = allRuns.map((r, i) => {
-            const projLow = (r.project_name || '').toLowerCase();
-            let dynamicBuildNum = r.run_number;
-            if (dynamicBuildNum === 1) {
-                if (projLow.includes('marketing')) dynamicBuildNum = 6158;
-                else if (projLow.includes('peoplecraft-frontend')) dynamicBuildNum = 142;
-                else if (projLow.includes('peoplecraft')) dynamicBuildNum = 89;
-                else if (projLow.includes('restaurant-frontend')) dynamicBuildNum = 234;
-                else if (projLow.includes('restaurant-backend')) dynamicBuildNum = 187;
-                else if (projLow.includes('evaops')) dynamicBuildNum = 6264;
-                else dynamicBuildNum = 42 + i * 7;
-            }
+        const formattedRuns = allRuns.map((r) => {
             return {
                 ...r,
-                run_number: dynamicBuildNum,
+                run_number: r.run_number || 1,
                 supported_branches: getSupportedBranches(r.project_name, r.branch)
             };
         });
@@ -535,7 +523,7 @@ const getRunDetails = async (req, res) => {
             stages = getAuthenticStages(run.provider || 'azure_devops', pName, activeBranch, run.status, run.commit_sha, activeHost, activeRg);
         }
 
-        const runBId = run.run_number || 6158;
+        const runBId = run.run_number;
         run.pipeline_url = (run.provider || 'azure_devops') === 'azure_devops' 
             ? `https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${runBId}&view=results`
             : `https://github.com/Estevia-TechSolutions/${pName}/actions`;
