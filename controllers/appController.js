@@ -2631,6 +2631,7 @@ const appController = {
             app.dnsDetails = matchedDns;
 
             // ── Smart Active Execution Signal Engine (Zero Hardcoding) ────────────
+            const isDevVm = app.type === 'vm' && ((app.name || '').toLowerCase().includes('-dev') || (app.name || '').toLowerCase().includes('dev'));
             let hasGithubActions = false;
             let ghLastRunTime = 0;
             let ghRepoPath = null;
