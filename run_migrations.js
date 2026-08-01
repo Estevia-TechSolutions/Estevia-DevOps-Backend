@@ -1122,6 +1122,12 @@ async function main() {
                 SET azure_resource_details = REPLACE(azure_resource_details, 'a812e8e3-34f9-4773-82ee-6398869533b0', '40070b3e-38c4-4c4e-89d5-dd601f9f7622')
                 WHERE azure_resource_details LIKE '%Estevia-Client-Projects-RG%';
             `).catch(() => {});
+            await connection.query(`
+                UPDATE pipelines SET provider = 'github_actions' WHERE project_name LIKE '%frontend%' OR project_name LIKE '%marketing%';
+            `).catch(() => {});
+            await connection.query(`
+                UPDATE pipelines SET provider = 'azure_devops' WHERE project_name LIKE '%backend%' OR project_name LIKE '%api%' OR project_name LIKE '%evaops%';
+            `).catch(() => {});
         } catch (healErr) {
             console.warn('[run_migrations] Self-healing notice:', healErr.message);
         }

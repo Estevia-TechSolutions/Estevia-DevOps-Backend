@@ -219,13 +219,25 @@ const listPipelineRuns = async (req, res) => {
                 const [existing] = await db.query('SELECT id FROM pipelines WHERE project_name = ? AND organization_id = ?', [app.name, orgId]);
                 if (existing.length === 0) {
                     const newPipeId = `pipe-${uuidv4().slice(0, 8)}`;
-                    const prov = app.provider || app.build_provider || 'unconfigured';
+                    const azureDetails = typeof app.azure_resource_details === 'string'
+                        ? JSON.parse(app.azure_resource_details || '{}')
+                        : (app.azure_resource_details || {});
+                    const pipeIdStr = String(azureDetails.pipelineId || app.pipeline_id || '');
+                    let prov = 'azure_devops';
+                    if (pipeIdStr.startsWith('github-actions:')) {
+                        prov = 'github_actions';
+                    } else if (pipeIdStr && !isNaN(pipeIdStr)) {
+                        prov = 'azure_devops';
+                    } else if (app.provider) {
+                        prov = app.provider;
+                    }
+
                     const targetT = app.type === 'frontend' ? 'static_web_app' : app.type === 'database' ? 'database' : 'container_app';
                     
                     await db.query(`
                         INSERT INTO pipelines (id, organization_id, project_name, name, repo_url, branch, provider, target_type, auto_provision_infra)
                         VALUES (?, ?, ?, ?, ?, 'main', ?, ?, 1)
-                    `, [newPipeId, orgId, app.name, `${app.name} CI/CD Pipeline`, app.repo_url || `Estevia-TechSolutions/${app.name}`, prov, targetT]);
+                    `, [newPipeId, orgId, app.name, `${app.name} CI/CD Pipeline`, app.repo_url || `https://github.com/Estevia-TechSolutions/${app.name}`, prov, targetT]);
 
                     const newRunId = `run-${uuidv4().slice(0, 8)}`;
                     await db.query(`
@@ -242,7 +254,8 @@ const listPipelineRuns = async (req, res) => {
                 pr.*,
                 p.name AS pipeline_name,
                 p.project_name,
-                p.provider
+                p.provider,
+                p.repo_url
             FROM pipeline_runs pr
             JOIN pipelines p ON pr.pipeline_id = p.id
             WHERE p.organization_id = ?
