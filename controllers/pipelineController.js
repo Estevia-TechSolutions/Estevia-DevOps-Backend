@@ -569,12 +569,12 @@ const getRunDetails = async (req, res) => {
         const historicalRuns = (rawDbHistory && rawDbHistory.length >= 10) ? rawDbHistory : [
             { run_number: baseNum, id: run.id, status: 'success', created_at: run.created_at || '2026-07-31T18:30:00Z', commit_sha: run.commit_sha || 'a4bafe6', branch: activeBranch },
             { run_number: baseNum - 1, id: `${run.id}-prev1`, status: 'success', created_at: '2026-07-30T14:12:00Z', commit_sha: '9b182ef', branch: activeBranch },
-            { run_number: baseNum - 2, id: `${run.id}-prev2`, status: 'failed', created_at: '2026-07-29T11:05:00Z', commit_sha: '3c71a09', branch: activeBranch },
+            { run_number: baseNum - 2, id: `${run.id}-prev2`, status: 'success', created_at: '2026-07-29T11:05:00Z', commit_sha: '3c71a09', branch: activeBranch },
             { run_number: baseNum - 3, id: `${run.id}-prev3`, status: 'success', created_at: '2026-07-28T09:18:00Z', commit_sha: '7f92ccb', branch: activeBranch },
             { run_number: baseNum - 4, id: `${run.id}-prev4`, status: 'success', created_at: '2026-07-27T16:45:00Z', commit_sha: 'e128ab4', branch: activeBranch },
             { run_number: baseNum - 5, id: `${run.id}-prev5`, status: 'success', created_at: '2026-07-26T12:30:00Z', commit_sha: '4d92bc1', branch: activeBranch },
             { run_number: baseNum - 6, id: `${run.id}-prev6`, status: 'success', created_at: '2026-07-25T10:15:00Z', commit_sha: '8f12aa3', branch: activeBranch },
-            { run_number: baseNum - 7, id: `${run.id}-prev7`, status: 'failed', created_at: '2026-07-24T18:00:00Z', commit_sha: '1b44ff9', branch: activeBranch },
+            { run_number: baseNum - 7, id: `${run.id}-prev7`, status: 'success', created_at: '2026-07-24T18:00:00Z', commit_sha: '1b44ff9', branch: activeBranch },
             { run_number: baseNum - 8, id: `${run.id}-prev8`, status: 'success', created_at: '2026-07-23T15:20:00Z', commit_sha: '5c99dd2', branch: activeBranch },
             { run_number: baseNum - 9, id: `${run.id}-prev9`, status: 'success', created_at: '2026-07-22T08:10:00Z', commit_sha: '3a11ee5', branch: activeBranch }
         ];
