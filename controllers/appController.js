@@ -3022,16 +3022,18 @@ const appController = {
 
                 let filteredApps = apps;
                 if (req.query.subscriptionId) {
-                    filteredApps = filteredApps.filter(app => {
+                    const subFiltered = filteredApps.filter(app => {
                         const resId = app.resourceId || '';
                         const subIdMatch = resId.match(/\/subscriptions\/([^\/]+)/i);
                         return subIdMatch && subIdMatch[1].toLowerCase() === req.query.subscriptionId.toLowerCase();
                     });
+                    if (subFiltered.length > 0) filteredApps = subFiltered;
                 }
                 if (req.query.resourceGroup) {
-                    filteredApps = filteredApps.filter(app => {
+                    const rgFiltered = filteredApps.filter(app => {
                         return (app.resourceGroup || '').toLowerCase() === req.query.resourceGroup.toLowerCase();
                     });
+                    if (rgFiltered.length > 0) filteredApps = rgFiltered;
                 }
 
                 if (req.user && !['owner', 'admin'].includes(req.user.role?.toLowerCase())) {
@@ -3769,8 +3771,7 @@ const appController = {
             }
 
 
-            // Redundant integration discovery blocks removed (already resolved at start of scanApps)
-            // 4.3. Resolve repositoryUrl from DB for scanned apps that lack one
+            // 4.3. Resolve repositoryUrl using dynamic deduction first, then DB fallback
             try {
                 const [dbApps] = await db.query(
                     'SELECT name, repo_url FROM applications WHERE organization_id = ?',
@@ -3779,23 +3780,23 @@ const appController = {
                 const dbRepoMap = new Map(dbApps.map(r => [r.name.toLowerCase(), r.repo_url]));
                 let reposList = null;
                 for (const app of apps) {
-                    if (!app.repositoryUrl) {
+                    let deducedUrl = null;
+                    if (githubToken && githubOwner) {
+                        if (!reposList) {
+                            try {
+                                reposList = await getGithubReposList(organizationId, githubOwner, githubToken);
+                            } catch (e) {
+                                reposList = [];
+                            }
+                        }
+                        deducedUrl = deduceRepoUrl(app.name, reposList, githubOwner);
+                    }
+                    if (deducedUrl) {
+                        app.repositoryUrl = deducedUrl;
+                    } else if (!app.repositoryUrl) {
                         const dbRepo = dbRepoMap.get(app.name.toLowerCase());
                         if (dbRepo) {
                             app.repositoryUrl = dbRepo;
-                        } else if (githubToken && githubOwner) {
-                            if (!reposList) {
-                                try {
-                                    reposList = await getGithubReposList(organizationId, githubOwner, githubToken);
-                                } catch (e) {
-                                    reposList = [];
-                                }
-                            }
-                            const deducedUrl = deduceRepoUrl(app.name, reposList, githubOwner);
-                            if (deducedUrl) {
-                                app.repositoryUrl = deducedUrl;
-                                console.log(`[AppController] scanApps: Deduced repository URL for ${app.name}: ${deducedUrl}`);
-                            }
                         }
                     }
                 }
