@@ -1139,6 +1139,12 @@ async function main() {
                 WHERE a.pipeline_id IS NOT NULL;
             `).catch(() => {});
             await connection.query(`
+                ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS azure_definition_id VARCHAR(100) DEFAULT NULL;
+            `).catch(() => {});
+            await connection.query(`
+                ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS github_workflow_id VARCHAR(100) DEFAULT NULL;
+            `).catch(() => {});
+            await connection.query(`
                 UPDATE pipelines 
                 SET provider = CASE 
                     WHEN LOWER(project_name) LIKE '%marketing%' OR LOWER(project_name) LIKE '%peoplecraft%' THEN 'github_actions'
