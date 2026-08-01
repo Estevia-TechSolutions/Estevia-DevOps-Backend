@@ -1117,6 +1117,11 @@ async function main() {
                 INSERT IGNORE INTO user_resource_permissions (user_id, organization_id, app_key, environment, actions)
                 SELECT id, organization_id, '*', 'prod', JSON_ARRAY('view', 'deploy') FROM users;
             `).catch(() => {});
+            await connection.query(`
+                UPDATE applications
+                SET azure_resource_details = REPLACE(azure_resource_details, 'a812e8e3-34f9-4773-82ee-6398869533b0', '40070b3e-38c4-4c4e-89d5-dd601f9f7622')
+                WHERE azure_resource_details LIKE '%Estevia-Client-Projects-RG%';
+            `).catch(() => {});
         } catch (healErr) {
             console.warn('[run_migrations] Self-healing notice:', healErr.message);
         }
