@@ -2729,26 +2729,17 @@ const appController = {
             }
 
             // ── Smart Active Execution Signal Engine ──────────────────────────────
-            const isSwaApp = app.type === 'frontend' || app.name.toLowerCase().endsWith('-swa') || app.type === 'static_web_app';
             let matchedPipelineId = null;
             let matchedPipelineName = null;
 
-            if (hasGithubActions && matchingPipeline) {
-                if (isSwaApp) {
-                    // SWAs deploy via GitHub Actions by default
-                    matchedPipelineId = 'github-actions:' + ghRepoPath;
-                    matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
-                } else {
-                    // Non-SWA: Azure DevOps takes priority if a definition exists
-                    matchedPipelineId = String(matchingPipeline.id);
-                    matchedPipelineName = matchingPipeline.name;
-                }
-            } else if (hasGithubActions) {
-                matchedPipelineId = 'github-actions:' + ghRepoPath;
-                matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
-            } else if (matchingPipeline) {
+            if (matchingPipeline) {
+                // If an authoritative Azure DevOps pipeline definition exists for this app, use it as ground truth
                 matchedPipelineId = String(matchingPipeline.id);
                 matchedPipelineName = matchingPipeline.name;
+            } else if (hasGithubActions) {
+                // No AzDO definition found — fall back to detected GitHub Actions workflow
+                matchedPipelineId = 'github-actions:' + ghRepoPath;
+                matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
             }
 
             // ── Provider Guard: If the DB already has an integer AzDO pipeline_id, never overwrite with github-actions: ──
