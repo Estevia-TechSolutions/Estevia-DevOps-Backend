@@ -2,7 +2,7 @@
  * GitHub Webhook Controller for EvaForge Auto-Deployments on Branch Push
  */
 const crypto = require('crypto');
-const { v4: uuidv4 } = require('uuid');
+const uuidv4 = crypto.randomUUID;
 const db = require('../config/db');
 const runnerEngine = require('../services/runnerEngine');
 
