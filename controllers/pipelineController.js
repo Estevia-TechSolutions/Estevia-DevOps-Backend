@@ -444,7 +444,21 @@ const listPipelineRuns = async (req, res) => {
             };
         });
 
-        return res.json(formattedRuns);
+        // Deduplicate formattedRuns by project_name so each application codebase gets exactly 1 entry in the grid
+        const uniqueFormattedRunsMap = new Map();
+        formattedRuns.forEach(fr => {
+            const key = (fr.project_name || '').toLowerCase();
+            if (!uniqueFormattedRunsMap.has(key)) {
+                uniqueFormattedRunsMap.set(key, fr);
+            } else {
+                const existing = uniqueFormattedRunsMap.get(key);
+                if (fr.has_cicd_conflict) {
+                    existing.has_cicd_conflict = true;
+                }
+            }
+        });
+
+        return res.json(Array.from(uniqueFormattedRunsMap.values()));
     } catch (err) {
         return res.status(500).json({ error: 'Failed to list pipeline runs', details: err.message });
     }
