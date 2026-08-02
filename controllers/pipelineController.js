@@ -269,9 +269,9 @@ const listPipelineRuns = async (req, res) => {
             for (const app of scannedApps) {
                 const pLow = (app.name || '').toLowerCase();
                 let prov = 'azure_devops';
-                if (pLow.includes('marketing') || pLow.includes('peoplecraft')) {
+                if (pLow.includes('peoplecraft-frontend')) {
                     prov = 'github_actions';
-                } else if (pLow.includes('evaops') || pLow.includes('restaurant')) {
+                } else {
                     prov = 'azure_devops';
                 }
 
