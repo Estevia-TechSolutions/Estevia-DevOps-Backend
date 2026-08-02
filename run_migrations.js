@@ -1144,14 +1144,9 @@ async function main() {
             await connection.query(`
                 ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS github_workflow_id VARCHAR(100) DEFAULT NULL;
             `).catch(() => {});
-            await connection.query(`
-                UPDATE pipelines 
-                SET provider = CASE 
-                    WHEN LOWER(project_name) LIKE '%marketing%' OR LOWER(project_name) LIKE '%peoplecraft%' THEN 'github_actions'
-                    WHEN LOWER(project_name) LIKE '%evaops%' OR LOWER(project_name) LIKE '%restaurant%' THEN 'azure_devops'
-                    ELSE provider
-                END;
-            `).catch(() => {});
+            // Note: Avoid hardcoding global provider values by project_name keyword here,
+            // as api-peoplecraft-* backends use Azure DevOps while peoplecraft-frontend-* frontends use GitHub Actions.
+
         } catch (healErr) {
             console.warn('[run_migrations] Self-healing notice:', healErr.message);
         }
