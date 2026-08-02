@@ -3050,24 +3050,21 @@ const appController = {
                         : (app.godaddy_dns_details || {});
 
                     const pLow = (app.name || '').toLowerCase();
-                    const isFrontendSwa = app.app_type === 'frontend' || pLow.endsWith('-swa');
                     const rawPipelineId = app.app_pipeline_id ? String(app.app_pipeline_id) : null;
-                    const hasConflict = Number(app.provider_count) > 1 || (isFrontendSwa && rawPipelineId && /^\d+$/.test(rawPipelineId));
+                    const hasConflict = Number(app.provider_count) > 1;
 
                     // Provider ground truth: applications.pipeline_id (integer = AzDO, github-actions: = GHA)
-                    // Fall back to pipelines.provider from DB, then frontend/repo heuristic.
                     let prov;
-                    const rawPipelineId = app.app_pipeline_id ? String(app.app_pipeline_id) : null;
                     if (rawPipelineId) {
                         if (rawPipelineId.startsWith('github-actions:')) {
                             prov = 'github_actions';
-                        } else if (/^\d+$/.test(rawPipelineId)) {
-                            prov = isFrontendSwa ? 'github_actions' : 'azure_devops';
+                        } else if (/^\d+$/.test(rawPipelineId) || rawPipelineId.startsWith('azdev-')) {
+                            prov = 'azure_devops';
                         } else {
-                            prov = app.db_provider || (isFrontendSwa ? 'github_actions' : 'azure_devops');
+                            prov = app.db_provider || 'azure_devops';
                         }
                     } else {
-                        prov = app.db_provider || (isFrontendSwa ? 'github_actions' : 'azure_devops');
+                        prov = app.db_provider || 'azure_devops';
                     }
 
                     // pipelineId: prefer the DB pipelines.id (for conflict-capable apps), fall back to app_pipeline_id
@@ -3175,20 +3172,19 @@ const appController = {
                         : (dbApp.godaddy_dns_details || {});
 
                     const pLow = (dbApp.name || '').toLowerCase();
-                    const isFrontendSwa = dbApp.app_type === 'frontend' || pLow.endsWith('-swa');
                     const rawPId = dbApp.pipeline_id ? String(dbApp.pipeline_id) : null;
-                    const hasConflict = Number(dbApp.provider_count || 0) > 1 || (isFrontendSwa && rawPId && /^\d+$/.test(rawPId));
+                    const hasConflict = Number(dbApp.provider_count || 0) > 1;
                     let prov;
                     if (rawPId) {
                         if (rawPId.startsWith('github-actions:')) {
                             prov = 'github_actions';
-                        } else if (/^\d+$/.test(rawPId)) {
-                            prov = isFrontendSwa ? 'github_actions' : 'azure_devops';
+                        } else if (/^\d+$/.test(rawPId) || rawPId.startsWith('azdev-')) {
+                            prov = 'azure_devops';
                         } else {
-                            prov = dbApp.provider || (isFrontendSwa ? 'github_actions' : 'azure_devops');
+                            prov = dbApp.provider || 'azure_devops';
                         }
                     } else {
-                        prov = dbApp.provider || (isFrontendSwa ? 'github_actions' : 'azure_devops');
+                        prov = dbApp.provider || 'azure_devops';
                     }
 
                     let pId = dbApp.pipeline_id || dbApp.p_id;
