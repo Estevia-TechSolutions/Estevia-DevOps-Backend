@@ -244,7 +244,7 @@ const listPipelineRuns = async (req, res) => {
 
         // 1. Fetch real scanned Azure resources from applications table
         const [scannedApps] = await db.query(
-            'SELECT name, app_type AS type, repo_url, azure_resource_details FROM applications WHERE organization_id = ? LIMIT 20',
+            'SELECT id, name, app_type AS type, repo_url, azure_resource_details FROM applications WHERE organization_id = ? LIMIT 20',
             [orgId]
         );
 
@@ -265,16 +265,16 @@ const listPipelineRuns = async (req, res) => {
                 
                 const dynamicRunNum = Number(azureDetails.pipelineRun?.id || azureDetails.buildNumber || app.buildNumber || app.run_number) || 1;
 
-                const [existing] = await db.query('SELECT id FROM pipelines WHERE project_name = ? AND organization_id = ?', [app.name, orgId]);
+                const [existing] = await db.query('SELECT id, provider FROM pipelines WHERE (app_id = ? OR project_name = ?) AND organization_id = ?', [app.id, app.name, orgId]);
                 
                 if (existing.length === 0) {
                     const newPipeId = `pipe-${uuidv4().slice(0, 8)}`;
                     const targetT = app.type === 'frontend' ? 'static_web_app' : app.type === 'database' ? 'database' : 'container_app';
                     
                     await db.query(`
-                        INSERT INTO pipelines (id, organization_id, project_name, name, provider, target_type, auto_provision_infra, yaml_config, trigger_type)
-                        VALUES (?, ?, ?, ?, ?, ?, 1, '', 'push')
-                    `, [newPipeId, orgId, app.name, `${app.name} CI/CD Pipeline`, prov, targetT]);
+                        INSERT INTO pipelines (id, organization_id, app_id, project_name, name, provider, target_type, auto_provision_infra, yaml_config, trigger_type)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 1, '', 'push')
+                    `, [newPipeId, orgId, app.id || null, app.name, `${app.name} CI/CD Pipeline`, prov, targetT]);
 
                     const newRunId = `run-${uuidv4().slice(0, 8)}`;
                     await db.query(`
@@ -283,7 +283,12 @@ const listPipelineRuns = async (req, res) => {
                     `, [newRunId, newPipeId, dynamicRunNum]);
                 } else {
                     const existingPipeId = existing[0].id;
-                    await db.query(`UPDATE pipelines SET provider = ? WHERE id = ?`, [prov, existingPipeId]);
+                    const existingProvider = existing[0].provider;
+                    if (existingProvider !== 'evaops_native') {
+                        await db.query(`UPDATE pipelines SET app_id = COALESCE(app_id, ?), provider = ? WHERE id = ?`, [app.id || null, prov, existingPipeId]);
+                    } else {
+                        await db.query(`UPDATE pipelines SET app_id = COALESCE(app_id, ?) WHERE id = ?`, [app.id || null, existingPipeId]);
+                    }
                     if (dynamicRunNum > 1) {
                         await db.query(`UPDATE pipeline_runs SET run_number = ? WHERE pipeline_id = ?`, [dynamicRunNum, existingPipeId]);
                     }
