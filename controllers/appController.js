@@ -2728,24 +2728,47 @@ const appController = {
                 });
             }
 
-            // ── Provider Guard: If the DB already has an integer AzDO pipeline_id, never overwrite it with github-actions: ──
+            // ── Smart Active Execution Signal Engine ──────────────────────────────
+            const isSwaApp = app.type === 'frontend' || app.name.toLowerCase().endsWith('-swa') || app.type === 'static_web_app';
+            let matchedPipelineId = null;
+            let matchedPipelineName = null;
+
+            if (hasGithubActions && matchingPipeline) {
+                if (isSwaApp) {
+                    // SWAs deploy via GitHub Actions by default
+                    matchedPipelineId = 'github-actions:' + ghRepoPath;
+                    matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
+                } else {
+                    // Non-SWA: Azure DevOps takes priority if a definition exists
+                    matchedPipelineId = String(matchingPipeline.id);
+                    matchedPipelineName = matchingPipeline.name;
+                }
+            } else if (hasGithubActions) {
+                matchedPipelineId = 'github-actions:' + ghRepoPath;
+                matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
+            } else if (matchingPipeline) {
+                matchedPipelineId = String(matchingPipeline.id);
+                matchedPipelineName = matchingPipeline.name;
+            }
+
+            // ── Provider Guard: If the DB already has an integer AzDO pipeline_id, never overwrite with github-actions: ──
             // Integer pipeline_id = authoritative Azure DevOps definition ID set during onboarding.
-            // The GitHub Actions detection above can incorrectly win because azLastRunTime is not fetched here.
             const existingDbPipelineId = existing.length > 0 ? existing[0].pipeline_id : null;
             const isExistingAzDOInteger = existingDbPipelineId && /^\d+$/.test(String(existingDbPipelineId));
             if (isExistingAzDOInteger && String(matchedPipelineId).startsWith('github-actions:')) {
-                // The existing integer is the authoritative AzDO definition — keep it.
+                // Integer AzDO definition ID wins — it was explicitly set during onboarding
                 matchedPipelineId = existingDbPipelineId;
-                matchedPipelineName = matchedPipelineName || `Azure DevOps Pipeline #${existingDbPipelineId}`;
+                matchedPipelineName = matchedPipelineName?.includes('GitHub') ? null : matchedPipelineName;
             }
 
             app.pipelineId = matchedPipelineId;
             app.pipelineName = matchedPipelineName;
 
-            // Explicitly derive provider from pipelineId so the frontend always gets it correctly
+            // Explicitly derive provider from pipelineId so the frontend always reads it correctly
             app.provider = String(matchedPipelineId || '').startsWith('github-actions:')
                 ? 'github_actions'
                 : 'azure_devops';
+
 
             app.pipelineRun = null;
             if (matchedPipelineId && String(matchedPipelineId).startsWith('github-actions:')) {
