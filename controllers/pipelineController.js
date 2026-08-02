@@ -264,7 +264,7 @@ const listPipelineRuns = async (req, res) => {
             [orgId]
         );
 
-        // 2. Sync scanned Azure resources into pipelines table (dynamic auto-detection)
+        // 2. Sync scanned Azure resources into pipelines table (strict provider scoping)
         if (scannedApps && scannedApps.length > 0) {
             for (const app of scannedApps) {
                 const azureDetails = typeof app.azure_resource_details === 'string'
@@ -272,20 +272,19 @@ const listPipelineRuns = async (req, res) => {
                     : (app.azure_resource_details || {});
 
                 const dynamicRunNum = Number(azureDetails.pipelineRun?.id || azureDetails.buildNumber || app.buildNumber || app.run_number) || 1;
+                const pLow = (app.name || '').toLowerCase();
 
-                const [existing] = await db.query('SELECT id, provider FROM pipelines WHERE (app_id = ? OR project_name = ?) AND organization_id = ?', [app.id, app.name, orgId]);
-
-                // Dynamic Provider Auto-Detection Logic (Metadata & DB State Priority)
-                let prov = azureDetails.provider || (existing.length > 0 ? existing[0].provider : null);
+                // Provider Resolution: Only peoplecraft-frontend uses github_actions; all others (including marketing, api-peoplecraft, db, etc) use azure_devops
+                let prov = azureDetails.provider;
                 if (!prov) {
-                    if (azureDetails.pipelineRun?.source === 'github' || azureDetails.workflowName || azureDetails.hasGithubActions) {
+                    if (pLow.includes('peoplecraft-frontend')) {
                         prov = 'github_actions';
-                    } else if (azureDetails.pipelineRun?.source === 'evaforge' || azureDetails.hasEvaForgeConfig) {
-                        prov = 'evaops_native';
                     } else {
                         prov = 'azure_devops';
                     }
                 }
+
+                const [existing] = await db.query('SELECT id, provider FROM pipelines WHERE (app_id = ? OR project_name = ?) AND organization_id = ?', [app.id, app.name, orgId]);
                 
                 if (existing.length === 0) {
                     const newPipeId = `pipe-${uuidv4().slice(0, 8)}`;
@@ -335,7 +334,7 @@ const listPipelineRuns = async (req, res) => {
             LIMIT 50
         `, [orgId]);
 
-        // Fetch active in-flight running/queued runs across organization pipelines
+        // Query active in-flight running/queued runs across organization pipelines
         const [activeRuns] = await db.query(`
             SELECT pr.id, pr.pipeline_id, pr.run_number, pr.status, pr.started_at, pr.branch, pr.commit_sha, pr.commit_message
             FROM pipeline_runs pr
@@ -348,12 +347,40 @@ const listPipelineRuns = async (req, res) => {
             activeRuns.forEach(ar => activeRunMap.set(ar.pipeline_id, ar));
         }
 
+        // Query multi-provider conflict applications (> 1 active pipeline rows with different providers for same app)
+        const [conflictApps] = await db.query(`
+            SELECT project_name 
+            FROM pipelines 
+            WHERE organization_id = ? AND is_active = 1 
+            GROUP BY project_name 
+            HAVING COUNT(DISTINCT provider) > 1
+        `, [orgId]);
+        const conflictSet = new Set(conflictApps.map(c => c.project_name));
+
+        const orgConfig = await getOrgConfig(orgId);
+        const azureDevOpsOrgUrl = orgConfig.azure_devops_org_url || 'https://dev.azure.com/esteviatech';
+        const azureDevOpsProject = orgConfig.azure_devops_project || 'Estevia-Platform';
+        const ghOwner = orgConfig.github_owner || 'Estevia-TechSolutions';
+
         const formattedRuns = allRuns.map((r) => {
             const activeRun = activeRunMap.get(r.pipeline_id);
+            const rNum = activeRun ? activeRun.run_number : (r.run_number || 1);
+            
+            let pipelineUrl = null;
+            if (r.provider === 'azure_devops') {
+                pipelineUrl = `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build/results?buildId=${rNum}&view=results`;
+            } else if (r.provider === 'github_actions') {
+                pipelineUrl = r.repo_url ? `${r.repo_url}/actions` : `https://github.com/${ghOwner}/${r.project_name}/actions`;
+            } else if (r.provider === 'evaops_native') {
+                pipelineUrl = `https://github.com/${ghOwner}/${r.project_name}/blob/main/.evaforge/config.yml`;
+            }
+
             return {
                 ...r,
                 status: activeRun ? activeRun.status : r.status,
-                run_number: activeRun ? activeRun.run_number : (r.run_number || 1),
+                run_number: rNum,
+                pipeline_url: pipelineUrl,
+                has_cicd_conflict: conflictSet.has(r.project_name),
                 in_progress_run: activeRun ? {
                     id: activeRun.id,
                     run_number: activeRun.run_number,
