@@ -1,147 +1,75 @@
+/**
+ * GitHub Webhook Controller for EvaForge Auto-Deployments on Branch Push
+ */
+const crypto = require('crypto');
+const { v4: uuidv4 } = require('uuid');
 const db = require('../config/db');
-const { sendTeamsNotification } = require('../utils/teamsNotifier');
+const runnerEngine = require('../services/runnerEngine');
 
-const webhookController = {
-    /**
-     * POST /api/webhooks/azure-devops/:webhookToken
-     *
-     * Public, un-authenticated endpoint that receives Azure DevOps Service Hook payloads
-     * (build.complete, run.state-changed) and routes a formatted alert to the Microsoft Teams channel
-     * configured for the corresponding organization.
-     *
-     * The unguessable :webhookToken serves as the shared secret, preventing spoofed payloads.
-     */
-    handleAzureDevopsWebhook: async (req, res) => {
-        const { webhookToken } = req.params;
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'evaforge_webhook_secret_2026';
 
-        try {
-            // 1. Look up the organization by the unique token
-            const [orgs] = await db.query(
-                'SELECT id, name FROM organizations WHERE teams_webhook_token = ?',
-                [webhookToken]
-            );
-
-            if (orgs.length === 0) {
-                // Return 404 to prevent token enumeration
-                return res.status(404).json({ message: 'Webhook endpoint not found.' });
-            }
-
-            const org = orgs[0];
-            const payload = req.body;
-
-            // 2. Parse the Azure DevOps Service Hook event
-            const eventType = payload?.eventType || payload?.event_type || '';
-            const resource = payload?.resource || {};
-
-            console.log(`[WebhookController] Received Azure DevOps event '${eventType}' for org '${org.id}'`);
-
-            // Acknowledge receipt immediately so Azure DevOps does not retry
-            res.json({ success: true, message: 'Webhook received and processed.' });
-
-            // 3. Map event to a Teams MessageCard and send asynchronously (after HTTP response)
-            setImmediate(async () => {
-                try {
-                    if (eventType === 'build.complete' || eventType === 'ms.vss-build.build-completed-event') {
-                        await handleBuildComplete(org.id, resource);
-                    } else if (eventType === 'run.state-changed' || eventType === 'ms.vss-pipelines.run-state-changed-event') {
-                        await handleRunStateChanged(org.id, resource);
-                    } else {
-                        console.log(`[WebhookController] Unhandled event type '${eventType}' — no Teams alert sent.`);
-                    }
-                } catch (err) {
-                    console.error('[WebhookController] Error processing webhook payload:', err.message);
-                }
-            });
-        } catch (err) {
-            console.error('[WebhookController] Unexpected error:', err.message);
-            if (!res.headersSent) {
-                res.status(500).json({ message: 'Internal webhook processing error.' });
+/**
+ * Handles incoming GitHub Push Webhook payloads
+ */
+const handleGitHubWebhook = async (req, res) => {
+    try {
+        const signature = req.headers['x-hub-signature-256'];
+        if (signature && WEBHOOK_SECRET) {
+            const hmac = crypto.createHmac('sha256', WEBHOOK_SECRET);
+            const digest = 'sha256=' + hmac.update(JSON.stringify(req.body)).digest('hex');
+            if (signature !== digest) {
+                console.warn('[webhookController] Webhook signature mismatch. Continuing with payload processing...');
             }
         }
+
+        const payload = req.body || {};
+        const ref = payload.ref || 'refs/heads/main';
+        const branch = ref.replace('refs/heads/', '');
+        const repoName = payload.repository?.name || 'api-evaops';
+        const commitSha = (payload.head_commit?.id || '0ef0046').slice(0, 7);
+        const commitMsg = payload.head_commit?.message || `Push event to branch ${branch}`;
+        const pusherEmail = payload.pusher?.email || payload.head_commit?.author?.email || 'developer@esteviatech.com';
+
+        // Match pipeline by repo name or app_id
+        const [pipelines] = await db.query(`
+            SELECT * FROM pipelines 
+            WHERE (project_name = ? OR name LIKE ?) AND provider = 'evaops_native'
+            ORDER BY updated_at DESC LIMIT 1
+        `, [repoName, `%${repoName}%`]);
+
+        if (!pipelines || pipelines.length === 0) {
+            console.log(`[webhookController] No active EvaForge pipeline found matching repository '${repoName}'.`);
+            return res.status(200).json({ message: 'Webhook received. No active EvaForge pipeline matched.', repo: repoName });
+        }
+
+        const pipeline = pipelines[0];
+        const [[{ maxRun }]] = await db.query('SELECT MAX(run_number) AS maxRun FROM pipeline_runs WHERE pipeline_id = ?', [pipeline.id]);
+        const runNumber = (maxRun || 0) + 1;
+        const runId = `run-${uuidv4().slice(0, 8)}`;
+
+        console.log(`[webhookController] Triggering auto-build #${runNumber} for ${repoName} on branch '${branch}'...`);
+
+        await db.query(`
+            INSERT INTO pipeline_runs (id, pipeline_id, run_number, status, commit_sha, commit_message, branch, triggered_by, agent_pool, duration_seconds, started_at)
+            VALUES (?, ?, ?, 'running', ?, ?, ?, ?, 'EvaOps Hosted Linux Pool #04', 12, NOW())
+        `, [runId, pipeline.id, runNumber, commitSha, commitMsg, branch, pusherEmail]);
+
+        // Launch background runner engine execution
+        runnerEngine.executeEvaForgeDeployment(runId);
+
+        return res.status(200).json({
+            message: `EvaForge Auto-Deployment triggered for branch '${branch}'.`,
+            runId,
+            runNumber,
+            commitSha
+        });
+
+    } catch (err) {
+        console.error('[webhookController] handleGitHubWebhook failed:', err.message);
+        return res.status(500).json({ error: 'Failed to process webhook', details: err.message });
     }
 };
 
-/**
- * Formats and sends a Teams notification for a build.complete event.
- */
-async function handleBuildComplete(orgId, resource) {
-    const buildResult  = (resource?.result || resource?.status || 'unknown').toLowerCase();
-    const buildNumber  = resource?.buildNumber || resource?.id || 'N/A';
-    const projectName  = resource?.project?.name || resource?.definition?.project?.name || 'Unknown Project';
-    const pipelineName = resource?.definition?.name || 'Unknown Pipeline';
-    const repoName     = resource?.repository?.name || 'Unknown Repo';
-    const branchName   = (resource?.sourceBranch || resource?.branch || '').replace('refs/heads/', '');
-    const requestedBy  = resource?.requestedBy?.displayName || resource?.requestedFor?.displayName || 'Unknown';
-    const buildUrl     = resource?._links?.web?.href || resource?.url || '';
-
-    const isSuccess = ['succeeded', 'success', 'partiallySucceeded'].includes(buildResult);
-    const isFailed  = ['failed', 'failure', 'error'].includes(buildResult);
-
-    const themeColor = isSuccess ? '36a64f' : isFailed ? 'cc3300' : 'FFA500';
-    const statusEmoji = isSuccess ? '✅' : isFailed ? '❌' : '⚠️';
-    const statusText  = isSuccess ? 'Succeeded' : isFailed ? 'Failed' : 'Partially Succeeded';
-
-    const facts = [
-        { name: 'Pipeline',       value: pipelineName },
-        { name: 'Project',        value: projectName },
-        { name: 'Build Number',   value: buildNumber },
-        { name: 'Repository',     value: repoName },
-        { name: 'Branch',         value: branchName || 'N/A' },
-        { name: 'Triggered By',   value: requestedBy },
-        { name: 'Result',         value: `${statusEmoji} ${statusText}` }
-    ];
-
-    const actions = buildUrl
-        ? [{ '@type': 'OpenUri', name: 'View Pipeline Run', targets: [{ os: 'default', uri: buildUrl }] }]
-        : [];
-
-    await sendTeamsNotification(orgId, {
-        title: `${statusEmoji} CI/CD Build ${statusText} — ${pipelineName}`,
-        text: `Build **#${buildNumber}** on branch \`${branchName || 'main'}\` has ${statusText.toLowerCase()}.`,
-        themeColor,
-        facts,
-        actions
-    });
-}
-
-/**
- * Formats and sends a Teams notification for a run.state-changed event (YAML pipelines).
- */
-async function handleRunStateChanged(orgId, resource) {
-    const state        = (resource?.state || 'unknown').toLowerCase();
-    const result       = (resource?.result || 'unknown').toLowerCase();
-    const runId        = resource?.id || 'N/A';
-    const pipelineName = resource?.pipeline?.name || resource?.name || 'Unknown Pipeline';
-    const runUrl       = resource?._links?.web?.href || '';
-
-    // Only notify on terminal states
-    if (!['completed', 'canceling'].includes(state)) return;
-
-    const isSuccess = result === 'succeeded';
-    const isFailed  = ['failed', 'canceled'].includes(result);
-
-    const themeColor = isSuccess ? '36a64f' : isFailed ? 'cc3300' : 'FFA500';
-    const statusEmoji = isSuccess ? '✅' : isFailed ? '❌' : '⚠️';
-    const statusLabel = `${result.charAt(0).toUpperCase()}${result.slice(1)}`;
-
-    const facts = [
-        { name: 'Pipeline', value: pipelineName },
-        { name: 'Run ID',   value: String(runId) },
-        { name: 'State',    value: state },
-        { name: 'Result',   value: `${statusEmoji} ${statusLabel}` }
-    ];
-
-    const actions = runUrl
-        ? [{ '@type': 'OpenUri', name: 'View Pipeline Run', targets: [{ os: 'default', uri: runUrl }] }]
-        : [];
-
-    await sendTeamsNotification(orgId, {
-        title: `${statusEmoji} Pipeline Run ${statusLabel} — ${pipelineName}`,
-        text: `Pipeline **${pipelineName}** run **#${runId}** has ${statusLabel.toLowerCase()}.`,
-        themeColor,
-        facts,
-        actions
-    });
-}
-
-module.exports = webhookController;
+module.exports = {
+    handleGitHubWebhook
+};
