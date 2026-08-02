@@ -264,24 +264,28 @@ const listPipelineRuns = async (req, res) => {
             [orgId]
         );
 
-        // 2. Sync scanned Azure resources into pipelines table (always update existing)
+        // 2. Sync scanned Azure resources into pipelines table (dynamic auto-detection)
         if (scannedApps && scannedApps.length > 0) {
             for (const app of scannedApps) {
-                const pLow = (app.name || '').toLowerCase();
-                let prov = 'azure_devops';
-                if (pLow.includes('peoplecraft-frontend')) {
-                    prov = 'github_actions';
-                } else {
-                    prov = 'azure_devops';
-                }
-
                 const azureDetails = typeof app.azure_resource_details === 'string'
                     ? JSON.parse(app.azure_resource_details || '{}')
                     : (app.azure_resource_details || {});
-                
+
                 const dynamicRunNum = Number(azureDetails.pipelineRun?.id || azureDetails.buildNumber || app.buildNumber || app.run_number) || 1;
 
                 const [existing] = await db.query('SELECT id, provider FROM pipelines WHERE (app_id = ? OR project_name = ?) AND organization_id = ?', [app.id, app.name, orgId]);
+
+                // Dynamic Provider Auto-Detection Logic (Metadata & DB State Priority)
+                let prov = azureDetails.provider || (existing.length > 0 ? existing[0].provider : null);
+                if (!prov) {
+                    if (azureDetails.pipelineRun?.source === 'github' || azureDetails.workflowName || azureDetails.hasGithubActions) {
+                        prov = 'github_actions';
+                    } else if (azureDetails.pipelineRun?.source === 'evaforge' || azureDetails.hasEvaForgeConfig) {
+                        prov = 'evaops_native';
+                    } else {
+                        prov = 'azure_devops';
+                    }
+                }
                 
                 if (existing.length === 0) {
                     const newPipeId = `pipe-${uuidv4().slice(0, 8)}`;
