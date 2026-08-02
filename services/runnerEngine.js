@@ -75,7 +75,12 @@ const executeEvaForgeDeployment = async (runId) => {
             return;
         }
 
-        const orgId = run.organization_id;
+        // Fetch organization tenant configuration dynamically
+        const [orgs] = await db.query('SELECT github_owner, azure_resource_group, default_dns_domain, azure_subscription_id FROM organizations WHERE id = ?', [orgId]);
+        const orgConfig = (orgs && orgs.length > 0) ? orgs[0] : {};
+        const targetRg = orgConfig.azure_resource_group || 'Estevia-Prod-RG';
+        const targetDns = orgConfig.default_dns_domain || 'esteviatech.com';
+
         const concurrencyCheck = await checkOrgConcurrency(orgId);
 
         if (!concurrencyCheck.canRun) {
@@ -108,7 +113,7 @@ const executeEvaForgeDeployment = async (runId) => {
                 // Step logs with UTC microsecond timestamps
                 const logsStep1 = `${nowMicro()}  Task         : Checkout Source Code\n${nowMicro()}  ##[section]Starting: Checkout Repository Code@v4\n${nowMicro()}  [command] git clone -b ${run.branch || 'main'} --depth 1 origin/${run.branch || 'main'}\n${nowMicro()}  ##[section]Finishing: Checkout Repository Code@v4`;
                 const logsStep2 = `${nowMicro()}  Task         : Initialize & Build\n${nowMicro()}  ##[section]Starting: Compile Production App Bundle\n${nowMicro()}  [command] npm ci && npm run build\n${nowMicro()}  [stdout] Vite v8.0.16 compilation clean.\n${nowMicro()}  ##[section]Finishing: Compile Production App Bundle`;
-                const logsStep3 = `${nowMicro()}  Task         : Azure Cloud Deployment\n${nowMicro()}  ##[section]Starting: Deploy to Azure Cloud Infrastructure\n${nowMicro()}  [command] az ${run.target_type === 'static_web_app' ? 'staticwebapp' : 'containerapp'} deploy --name ${run.project_name}\n${nowMicro()}  [stdout] Live deployment active on https://${run.project_name}.esteviatech.com\n${nowMicro()}  ##[section]Finishing: Azure Cloud Deployment`;
+                const logsStep3 = `${nowMicro()}  Task         : Azure Cloud Deployment\n${nowMicro()}  ##[section]Starting: Deploy to Azure Cloud Infrastructure\n${nowMicro()}  [command] az ${run.target_type === 'static_web_app' ? 'staticwebapp' : 'containerapp'} deploy --name ${run.project_name} --resource-group ${targetRg}\n${nowMicro()}  [stdout] Live deployment active on https://${run.project_name}.${targetDns}\n${nowMicro()}  ##[section]Finishing: Azure Cloud Deployment`;
 
                 await db.query(`
                     INSERT INTO pipeline_steps (id, job_id, step_order, name, status, duration_seconds, log_content)
@@ -121,12 +126,12 @@ const executeEvaForgeDeployment = async (runId) => {
 
                 // Invoke live Azure Deployment Service
                 if (run.target_type === 'static_web_app') {
-                    await azureDeployService.deployStaticWebAppZip(run.project_name);
+                    await azureDeployService.deployStaticWebAppZip(run.project_name, targetRg);
                 } else {
-                    await azureDeployService.deployContainerAppRevision(run.project_name);
+                    await azureDeployService.deployContainerAppRevision(run.project_name, targetRg);
                 }
 
-                await azureDeployService.assertHealthProbe(`${run.project_name}.esteviatech.com`);
+                await azureDeployService.assertHealthProbe(`${run.project_name}.${targetDns}`);
 
                 // Mark run as success
                 await db.query(`UPDATE pipeline_runs SET status = 'success', completed_at = NOW(), duration_seconds = 12 WHERE id = ?`, [runId]);
