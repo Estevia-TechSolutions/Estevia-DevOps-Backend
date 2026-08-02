@@ -22,11 +22,17 @@ const getOrgConfig = async (orgId) => {
 const listPipelines = async (req, res) => {
     try {
         const orgId = req.user?.organization_id || 'estevia';
+        const { appName } = req.query;
 
-        const [pipelines] = await db.query(
-            'SELECT * FROM pipelines WHERE organization_id = ? ORDER BY created_at DESC',
-            [orgId]
-        );
+        let query = 'SELECT * FROM pipelines WHERE organization_id = ?';
+        const params = [orgId];
+        if (appName) {
+            query += ' AND (LOWER(project_name) = LOWER(?)) AND is_active = 1';
+            params.push(appName);
+        }
+        query += ' ORDER BY created_at DESC';
+
+        const [pipelines] = await db.query(query, params);
 
         // Fetch real execution metrics from pipeline_runs
         const [[metrics]] = await db.query(`
@@ -44,8 +50,26 @@ const listPipelines = async (req, res) => {
         const passRate = totalRuns > 0 ? Math.round((successRuns / totalRuns) * 1000) / 10 : 0;
         const avgDuration = metrics?.avgDuration ? `${Math.round(metrics.avgDuration)}s` : '0s';
 
+        // Enrich each pipeline with a pipeline_url
+        const orgConfig = await getOrgConfig(orgId);
+        const azureDevOpsOrgUrl = (orgConfig.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
+        const azureDevOpsProject = orgConfig.azure_devops_project || 'Estevia-Platform';
+        const ghOwner = orgConfig.github_owner || 'Estevia-TechSolutions';
+
+        const enriched = pipelines.map(p => {
+            let pipeline_url = null;
+            if (p.provider === 'azure_devops') {
+                pipeline_url = `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build?definitionId=${p.id}`;
+            } else if (p.provider === 'github_actions') {
+                pipeline_url = `https://github.com/${ghOwner}/${p.project_name}/actions`;
+            } else if (p.provider === 'evaops_native') {
+                pipeline_url = `https://github.com/${ghOwner}/${p.project_name}/blob/main/.evaforge/config.yml`;
+            }
+            return { ...p, pipeline_url };
+        });
+
         return res.json({
-            pipelines,
+            pipelines: enriched,
             metrics: {
                 passRate: `${passRate}%`,
                 totalRuns,
@@ -258,9 +282,9 @@ const listPipelineRuns = async (req, res) => {
             LIMIT 50
         `, [orgId]);
 
-        // 1. Fetch real scanned Azure resources from applications table
+        // 1. Fetch real scanned Azure resources from applications table (include pipeline_id as ground truth for provider)
         const [scannedApps] = await db.query(
-            'SELECT id, name, app_type AS type, repo_url, azure_resource_details FROM applications WHERE organization_id = ? LIMIT 20',
+            'SELECT id, name, app_type AS type, repo_url, pipeline_id, azure_resource_details FROM applications WHERE organization_id = ? LIMIT 50',
             [orgId]
         );
 
@@ -274,22 +298,38 @@ const listPipelineRuns = async (req, res) => {
                 const dynamicRunNum = Number(azureDetails.pipelineRun?.id || azureDetails.buildNumber || app.buildNumber || app.run_number) || 1;
                 const pLow = (app.name || '').toLowerCase();
 
-                // Provider Resolution: Only peoplecraft-frontend uses github_actions; all others (including marketing, api-peoplecraft, db, etc) use azure_devops
-                let prov = azureDetails.provider;
-                if (!prov) {
-                    if (pLow.includes('peoplecraft-frontend')) {
+                // Provider Resolution: applications.pipeline_id is the ground truth.
+                // Integer pipeline_id = Azure DevOps definition ID.
+                // 'github-actions:owner/repo' prefix = GitHub Actions.
+                // Only fall back to name-matching if pipeline_id is null.
+                let prov;
+                const rawPipelineId = app.pipeline_id ? String(app.pipeline_id) : null;
+                if (rawPipelineId) {
+                    if (rawPipelineId.startsWith('github-actions:')) {
                         prov = 'github_actions';
-                    } else {
+                    } else if (/^\d+$/.test(rawPipelineId)) {
+                        // Pure integer = Azure DevOps pipeline definition ID
                         prov = 'azure_devops';
+                    } else {
+                        // Fallback: use name heuristic
+                        prov = pLow.includes('peoplecraft-frontend') ? 'github_actions' : 'azure_devops';
                     }
+                } else {
+                    // No pipeline_id at all: use name heuristic
+                    prov = pLow.includes('peoplecraft-frontend') ? 'github_actions' : 'azure_devops';
                 }
 
-                const [existing] = await db.query('SELECT id, provider FROM pipelines WHERE (app_id = ? OR project_name = ?) AND organization_id = ?', [app.id, app.name, orgId]);
-                
+                // Find all active pipeline rows for this app
+                const [existing] = await db.query(
+                    'SELECT id, provider, is_active FROM pipelines WHERE (app_id = ? OR LOWER(project_name) = LOWER(?)) AND organization_id = ? AND is_active = 1',
+                    [app.id, app.name, orgId]
+                );
+
                 if (existing.length === 0) {
+                    // No active pipeline yet — create one
                     const newPipeId = `pipe-${uuidv4().slice(0, 8)}`;
                     const targetT = app.type === 'frontend' ? 'static_web_app' : app.type === 'database' ? 'database' : 'container_app';
-                    
+
                     await db.query(`
                         INSERT INTO pipelines (id, organization_id, app_id, project_name, name, provider, target_type, auto_provision_infra, yaml_config, trigger_type)
                         VALUES (?, ?, ?, ?, ?, ?, ?, 1, '', 'push')
@@ -300,16 +340,27 @@ const listPipelineRuns = async (req, res) => {
                         INSERT INTO pipeline_runs (id, pipeline_id, run_number, status, commit_sha, commit_message, branch, triggered_by, duration_seconds)
                         VALUES (?, ?, ?, 'success', 'a4bafe6', 'Sync deployment from scanned Azure resource', 'main', 'Azure Cloud Sync', 65)
                     `, [newRunId, newPipeId, dynamicRunNum]);
-                } else {
+
+                } else if (existing.length === 1) {
+                    // Single active pipeline — update provider if not protected
                     const existingPipeId = existing[0].id;
                     const existingProvider = existing[0].provider;
                     if (existingProvider !== 'evaops_native') {
-                        await db.query(`UPDATE pipelines SET app_id = COALESCE(app_id, ?), provider = ? WHERE id = ?`, [app.id || null, prov, existingPipeId]);
+                        await db.query(
+                            'UPDATE pipelines SET app_id = COALESCE(app_id, ?), provider = ? WHERE id = ?',
+                            [app.id || null, prov, existingPipeId]
+                        );
                     } else {
-                        await db.query(`UPDATE pipelines SET app_id = COALESCE(app_id, ?) WHERE id = ?`, [app.id || null, existingPipeId]);
+                        await db.query('UPDATE pipelines SET app_id = COALESCE(app_id, ?) WHERE id = ?', [app.id || null, existingPipeId]);
                     }
                     if (dynamicRunNum > 1) {
-                        await db.query(`UPDATE pipeline_runs SET run_number = ? WHERE pipeline_id = ?`, [dynamicRunNum, existingPipeId]);
+                        await db.query('UPDATE pipeline_runs SET run_number = ? WHERE pipeline_id = ?', [dynamicRunNum, existingPipeId]);
+                    }
+
+                } else {
+                    // Multiple active pipelines = conflict case — only update app_id linkage, DO NOT touch provider
+                    for (const ep of existing) {
+                        await db.query('UPDATE pipelines SET app_id = COALESCE(app_id, ?) WHERE id = ?', [app.id || null, ep.id]);
                     }
                 }
             }
