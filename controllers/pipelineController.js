@@ -335,10 +335,33 @@ const listPipelineRuns = async (req, res) => {
             LIMIT 50
         `, [orgId]);
 
+        // Fetch active in-flight running/queued runs across organization pipelines
+        const [activeRuns] = await db.query(`
+            SELECT pr.id, pr.pipeline_id, pr.run_number, pr.status, pr.started_at, pr.branch, pr.commit_sha, pr.commit_message
+            FROM pipeline_runs pr
+            JOIN pipelines p ON pr.pipeline_id = p.id
+            WHERE p.organization_id = ? AND pr.status IN ('running', 'queued')
+        `, [orgId]);
+
+        const activeRunMap = new Map();
+        if (activeRuns && activeRuns.length > 0) {
+            activeRuns.forEach(ar => activeRunMap.set(ar.pipeline_id, ar));
+        }
+
         const formattedRuns = allRuns.map((r) => {
+            const activeRun = activeRunMap.get(r.pipeline_id);
             return {
                 ...r,
-                run_number: r.run_number || 1,
+                status: activeRun ? activeRun.status : r.status,
+                run_number: activeRun ? activeRun.run_number : (r.run_number || 1),
+                in_progress_run: activeRun ? {
+                    id: activeRun.id,
+                    run_number: activeRun.run_number,
+                    status: activeRun.status,
+                    started_at: activeRun.started_at,
+                    branch: activeRun.branch,
+                    commit_sha: activeRun.commit_sha
+                } : null,
                 supported_branches: getSupportedBranches(r.project_name, r.branch)
             };
         });
