@@ -1094,29 +1094,30 @@ async function main() {
         // 15. Self-Healing Migration: Fix legacy misassignments in applications table
         console.log('Running auto-migration self-healing for pipeline_id & repo_url...');
         try {
-            // 15a. Fix stale Azure DevOps pipeline_id (numeric '19') on peoplecraft-frontend SWAs
-            //      Set to canonical GitHub Actions prefix so signal detection resolves github_actions correctly.
+            // 15a. Fix stale/missing pipeline_id on peoplecraft-frontend SWAs ONLY.
+            //      Sets to canonical GitHub Actions prefix so signal detection resolves github_actions correctly.
             await connection.query(`
                 UPDATE applications 
                 SET pipeline_id = 'github-actions:Estevia-TechSolutions/PeopleCraft-Frontend' 
-                WHERE (name LIKE '%peoplecraft-frontend%' OR name LIKE '%peoplecraft%react%') AND pipeline_id = '19';
-            `);
+                WHERE name LIKE '%peoplecraft-frontend%'
+                  AND (pipeline_id IS NULL OR pipeline_id REGEXP '^[0-9]+$');
+            `).catch(() => {});
 
-            // 15b. Sync pipelines table provider from applications.pipeline_id ground truth
-            //      Converts numeric (Azure DevOps) and github-actions: (GitHub Actions) prefix IDs into provider strings.
+            // 15b. Sync pipelines.provider for peoplecraft-frontend ONLY from applications.pipeline_id ground truth.
+            //      Scoped strictly to peoplecraft-frontend — does NOT touch other projects.
             await connection.query(`
                 UPDATE pipelines p 
-                JOIN applications a ON (
-                    LOWER(a.name) = LOWER(p.project_name) 
-                    OR LOWER(a.name) LIKE CONCAT(LOWER(p.project_name), '-%')
-                )
+                JOIN applications a ON LOWER(a.name) = LOWER(p.project_name)
                 SET p.provider = CASE 
                     WHEN a.pipeline_id LIKE 'github-actions:%' THEN 'github_actions'
                     WHEN a.pipeline_id REGEXP '^[0-9]+$' THEN 'azure_devops'
                     ELSE p.provider
                 END
-                WHERE a.pipeline_id IS NOT NULL;
+                WHERE p.project_name LIKE '%peoplecraft-frontend%'
+                  AND a.pipeline_id IS NOT NULL
+                  AND p.is_active = 1;
             `).catch(() => {});
+
 
             // 15c. Correct restaurant SWAs that were incorrectly written as github_actions
             //      by older heuristic. The restaurant-frontend SWAs deploy via Azure DevOps (AzureStaticWebApp@0 task).
