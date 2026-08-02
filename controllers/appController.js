@@ -2728,35 +2728,24 @@ const appController = {
                 });
             }
 
-            // ── Smart Active Execution Signal Engine (Zero Hardcoding) ────────────
-            const isSwaApp = app.type === 'frontend' || app.name.toLowerCase().endsWith('-swa') || app.type === 'static_web_app';
-
-            let azLastRunTime = 0;
-
-            if (hasGithubActions && matchingPipeline) {
-                if (azLastRunTime > 0 && azLastRunTime >= ghLastRunTime) {
-                    matchedPipelineId = String(matchingPipeline.id);
-                    matchedPipelineName = matchingPipeline.name;
-                } else if (ghLastRunTime > 0 && ghLastRunTime > azLastRunTime) {
-                    matchedPipelineId = 'github-actions:' + ghRepoPath;
-                    matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
-                } else if (isSwaApp) {
-                    matchedPipelineId = 'github-actions:' + ghRepoPath;
-                    matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
-                } else {
-                    matchedPipelineId = String(matchingPipeline.id);
-                    matchedPipelineName = matchingPipeline.name;
-                }
-            } else if (hasGithubActions) {
-                matchedPipelineId = 'github-actions:' + ghRepoPath;
-                matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
-            } else if (matchingPipeline) {
-                matchedPipelineId = String(matchingPipeline.id);
-                matchedPipelineName = matchingPipeline.name;
+            // ── Provider Guard: If the DB already has an integer AzDO pipeline_id, never overwrite it with github-actions: ──
+            // Integer pipeline_id = authoritative Azure DevOps definition ID set during onboarding.
+            // The GitHub Actions detection above can incorrectly win because azLastRunTime is not fetched here.
+            const existingDbPipelineId = existing.length > 0 ? existing[0].pipeline_id : null;
+            const isExistingAzDOInteger = existingDbPipelineId && /^\d+$/.test(String(existingDbPipelineId));
+            if (isExistingAzDOInteger && String(matchedPipelineId).startsWith('github-actions:')) {
+                // The existing integer is the authoritative AzDO definition — keep it.
+                matchedPipelineId = existingDbPipelineId;
+                matchedPipelineName = matchedPipelineName || `Azure DevOps Pipeline #${existingDbPipelineId}`;
             }
 
             app.pipelineId = matchedPipelineId;
             app.pipelineName = matchedPipelineName;
+
+            // Explicitly derive provider from pipelineId so the frontend always gets it correctly
+            app.provider = String(matchedPipelineId || '').startsWith('github-actions:')
+                ? 'github_actions'
+                : 'azure_devops';
 
             app.pipelineRun = null;
             if (matchedPipelineId && String(matchedPipelineId).startsWith('github-actions:')) {
@@ -3170,13 +3159,19 @@ const appController = {
                         : (dbApp.godaddy_dns_details || {});
 
                     const pLow = (dbApp.name || '').toLowerCase();
-                    let prov = dbApp.provider || details.provider;
-                    if (!prov) {
-                        if (pLow.includes('peoplecraft-frontend')) {
+                    // Provider ground truth: applications.pipeline_id (integer = AzDO, github-actions: = GHA)
+                    let prov;
+                    const rawPId = dbApp.pipeline_id ? String(dbApp.pipeline_id) : null;
+                    if (rawPId) {
+                        if (rawPId.startsWith('github-actions:')) {
                             prov = 'github_actions';
-                        } else {
+                        } else if (/^\d+$/.test(rawPId)) {
                             prov = 'azure_devops';
+                        } else {
+                            prov = dbApp.provider || (pLow.includes('peoplecraft-frontend') ? 'github_actions' : 'azure_devops');
                         }
+                    } else {
+                        prov = dbApp.provider || (pLow.includes('peoplecraft-frontend') ? 'github_actions' : 'azure_devops');
                     }
 
                     let pId = dbApp.pipeline_id || dbApp.p_id;
