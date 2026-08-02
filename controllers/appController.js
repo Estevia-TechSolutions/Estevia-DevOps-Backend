@@ -6913,8 +6913,35 @@ const appController = {
                 return res.status(400).json({ success: false, message: 'Missing parameter (pipelineId).' });
             }
 
-            if (String(pipelineId).startsWith('github-actions:')) {
-                const repoPath = pipelineId.split(':').slice(1).join(':');
+            let effectivePipelineId = String(pipelineId);
+
+            // DB check fallback: if pipeline is GitHub Actions or name includes peoplecraft-frontend
+            const [pipeCheck] = await db.query(
+                `SELECT p.provider, p.project_name, a.repo_url 
+                 FROM pipelines p 
+                 LEFT JOIN applications a ON (LOWER(a.name) = LOWER(p.project_name) AND a.organization_id = p.organization_id)
+                 WHERE p.id = ? OR LOWER(p.project_name) = LOWER(?) OR LOWER(a.name) = LOWER(?)
+                 LIMIT 1`,
+                [effectivePipelineId, effectivePipelineId, effectivePipelineId]
+            );
+
+            if (pipeCheck && pipeCheck.length > 0) {
+                const pRow = pipeCheck[0];
+                if (pRow.provider === 'github_actions' || (pRow.project_name || '').toLowerCase().includes('peoplecraft-frontend')) {
+                    let repoPath = 'Estevia-TechSolutions/Peoplecraft-v1-reactfrontend';
+                    if (pRow.repo_url && pRow.repo_url.includes('github.com/')) {
+                        repoPath = pRow.repo_url.replace('https://github.com/', '').replace(/\/$/, '');
+                    } else if (pRow.project_name) {
+                        repoPath = `Estevia-TechSolutions/${pRow.project_name}`;
+                    }
+                    effectivePipelineId = `github-actions:${repoPath}`;
+                }
+            } else if (effectivePipelineId.toLowerCase().includes('peoplecraft-frontend')) {
+                effectivePipelineId = `github-actions:Estevia-TechSolutions/Peoplecraft-v1-reactfrontend`;
+            }
+
+            if (effectivePipelineId.startsWith('github-actions:')) {
+                const repoPath = effectivePipelineId.split(':').slice(1).join(':');
                 const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
                 const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
                 if (!githubToken) {
