@@ -3051,7 +3051,8 @@ const appController = {
 
                     const pLow = (app.name || '').toLowerCase();
                     const isFrontendSwa = app.app_type === 'frontend' || pLow.endsWith('-swa');
-                    const hasConflict = Number(app.provider_count) > 1;
+                    const rawPipelineId = app.app_pipeline_id ? String(app.app_pipeline_id) : null;
+                    const hasConflict = Number(app.provider_count) > 1 || (isFrontendSwa && rawPipelineId && /^\d+$/.test(rawPipelineId));
 
                     // Provider ground truth: applications.pipeline_id (integer = AzDO, github-actions: = GHA)
                     // Fall back to pipelines.provider from DB, then frontend/repo heuristic.
@@ -3175,9 +3176,9 @@ const appController = {
 
                     const pLow = (dbApp.name || '').toLowerCase();
                     const isFrontendSwa = dbApp.app_type === 'frontend' || pLow.endsWith('-swa');
-                    // Provider ground truth: applications.pipeline_id (integer = AzDO, github-actions: = GHA)
-                    let prov;
                     const rawPId = dbApp.pipeline_id ? String(dbApp.pipeline_id) : null;
+                    const hasConflict = Number(dbApp.provider_count || 0) > 1 || (isFrontendSwa && rawPId && /^\d+$/.test(rawPId));
+                    let prov;
                     if (rawPId) {
                         if (rawPId.startsWith('github-actions:')) {
                             prov = 'github_actions';

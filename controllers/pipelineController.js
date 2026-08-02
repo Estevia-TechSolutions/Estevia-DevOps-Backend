@@ -464,8 +464,11 @@ const listPipelineRuns = async (req, res) => {
 
 const getSupportedBranches = (pName, reqBranch) => {
     const pLow = (pName || '').toLowerCase();
-    if (pLow.endsWith('-dev')) return ['dev'];
-    if (pLow.endsWith('-qa')) return ['qa'];
+    const match = pLow.match(/[-_](dev|qa|prod|stage|staging|test)([-_]|$)/i);
+    if (match) {
+        const env = match[1].toLowerCase();
+        return [env === 'prod' ? 'main' : env];
+    }
     if (reqBranch && reqBranch !== 'main') return Array.from(new Set(['main', reqBranch]));
     return ['main', 'qa', 'dev'];
 };
