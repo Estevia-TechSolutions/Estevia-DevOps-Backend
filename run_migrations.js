@@ -1094,11 +1094,42 @@ async function main() {
         // 15. Self-Healing Migration: Fix legacy misassignments in applications table
         console.log('Running auto-migration self-healing for pipeline_id & repo_url...');
         try {
+            // 15a. Fix stale Azure DevOps pipeline_id (numeric '19') on peoplecraft-frontend SWAs
+            //      Set to canonical GitHub Actions prefix so signal detection resolves github_actions correctly.
             await connection.query(`
                 UPDATE applications 
-                SET pipeline_id = 'github-actions:Estevia-TechSolutions/Peoplecraft-v1-reactfrontend' 
+                SET pipeline_id = 'github-actions:Estevia-TechSolutions/PeopleCraft-Frontend' 
                 WHERE (name LIKE '%peoplecraft-frontend%' OR name LIKE '%peoplecraft%react%') AND pipeline_id = '19';
             `);
+
+            // 15b. Sync pipelines table provider from applications.pipeline_id ground truth
+            //      Converts numeric (Azure DevOps) and github-actions: (GitHub Actions) prefix IDs into provider strings.
+            await connection.query(`
+                UPDATE pipelines p 
+                JOIN applications a ON (
+                    LOWER(a.name) = LOWER(p.project_name) 
+                    OR LOWER(a.name) LIKE CONCAT(LOWER(p.project_name), '-%')
+                )
+                SET p.provider = CASE 
+                    WHEN a.pipeline_id LIKE 'github-actions:%' THEN 'github_actions'
+                    WHEN a.pipeline_id REGEXP '^[0-9]+$' THEN 'azure_devops'
+                    ELSE p.provider
+                END
+                WHERE a.pipeline_id IS NOT NULL;
+            `).catch(() => {});
+
+            // 15c. Correct restaurant SWAs that were incorrectly written as github_actions
+            //      by older heuristic. The restaurant-frontend SWAs deploy via Azure DevOps (AzureStaticWebApp@0 task).
+            //      Reset provider to azure_devops where no explicit github-actions: pipeline_id exists.
+            await connection.query(`
+                UPDATE pipelines p
+                LEFT JOIN applications a ON LOWER(a.name) = LOWER(p.project_name)
+                SET p.provider = 'azure_devops'
+                WHERE p.project_name LIKE '%restaurant-frontend%'
+                  AND p.provider = 'github_actions'
+                  AND (a.pipeline_id IS NULL OR a.pipeline_id NOT LIKE 'github-actions:%');
+            `).catch(() => {});
+
             await connection.query(`
                 UPDATE applications 
                 SET repo_url = 'https://github.com/Estevia-TechSolutions/Estevia-DevOps-Backend', 
@@ -1126,26 +1157,11 @@ async function main() {
                 ALTER TABLE pipelines MODIFY COLUMN yaml_config LONGTEXT NULL;
             `).catch(() => {});
             await connection.query(`
-                UPDATE pipelines p 
-                JOIN applications a ON (
-                    LOWER(a.name) = LOWER(p.project_name) 
-                    OR LOWER(a.name) LIKE CONCAT(LOWER(p.project_name), '-%')
-                )
-                SET p.provider = CASE 
-                    WHEN a.pipeline_id LIKE 'github-actions:%' THEN 'github_actions'
-                    WHEN a.pipeline_id REGEXP '^[0-9]+$' THEN 'azure_devops'
-                    ELSE p.provider
-                END
-                WHERE a.pipeline_id IS NOT NULL;
-            `).catch(() => {});
-            await connection.query(`
                 ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS azure_definition_id VARCHAR(100) DEFAULT NULL;
             `).catch(() => {});
             await connection.query(`
                 ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS github_workflow_id VARCHAR(100) DEFAULT NULL;
             `).catch(() => {});
-            // Note: Avoid hardcoding global provider values by project_name keyword here,
-            // as api-peoplecraft-* backends use Azure DevOps while peoplecraft-frontend-* frontends use GitHub Actions.
 
         } catch (healErr) {
             console.warn('[run_migrations] Self-healing notice:', healErr.message);

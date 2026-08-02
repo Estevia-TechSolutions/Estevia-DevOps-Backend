@@ -298,23 +298,23 @@ const listPipelineRuns = async (req, res) => {
                 const dynamicRunNum = Number(azureDetails.pipelineRun?.id || azureDetails.buildNumber || app.buildNumber || app.run_number) || 1;
                 const pLow = (app.name || '').toLowerCase();
 
-                // Provider Resolution: applications.pipeline_id is the ground truth.
+                // Provider Resolution: applications.pipeline_id is the ONLY ground truth.
                 // Integer pipeline_id = Azure DevOps definition ID.
                 // 'github-actions:owner/repo' prefix = GitHub Actions.
-                // Only fall back to name-matching if pipeline_id is null.
-                const isFrontendSwa = app.type === 'frontend' || pLow.endsWith('-swa');
+                // No resource-type assumptions (SWAs can be either Azure DevOps OR GitHub Actions).
                 let prov;
                 const rawPipelineId = app.pipeline_id ? String(app.pipeline_id) : null;
                 if (rawPipelineId) {
                     if (rawPipelineId.startsWith('github-actions:')) {
                         prov = 'github_actions';
-                    } else if (/^\d+$/.test(rawPipelineId)) {
-                        prov = isFrontendSwa ? 'github_actions' : 'azure_devops';
+                    } else if (/^\d+$/.test(rawPipelineId) || rawPipelineId.startsWith('azdev-') || rawPipelineId.startsWith('azdo-')) {
+                        prov = 'azure_devops';
                     } else {
-                        prov = isFrontendSwa ? 'github_actions' : 'azure_devops';
+                        prov = app.db_provider || 'unconfigured';
                     }
                 } else {
-                    prov = isFrontendSwa ? 'github_actions' : 'azure_devops';
+                    // No pipeline_id — use explicit provider from DB scan if available
+                    prov = app.db_provider || app.provider || 'unconfigured';
                 }
 
                 // Find all active pipeline rows for this app
