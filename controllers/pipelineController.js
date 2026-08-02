@@ -302,21 +302,19 @@ const listPipelineRuns = async (req, res) => {
                 // Integer pipeline_id = Azure DevOps definition ID.
                 // 'github-actions:owner/repo' prefix = GitHub Actions.
                 // Only fall back to name-matching if pipeline_id is null.
+                const isFrontendSwa = app.type === 'frontend' || pLow.endsWith('-swa');
                 let prov;
                 const rawPipelineId = app.pipeline_id ? String(app.pipeline_id) : null;
                 if (rawPipelineId) {
                     if (rawPipelineId.startsWith('github-actions:')) {
                         prov = 'github_actions';
                     } else if (/^\d+$/.test(rawPipelineId)) {
-                        // Pure integer = Azure DevOps pipeline definition ID
-                        prov = 'azure_devops';
+                        prov = isFrontendSwa ? 'github_actions' : 'azure_devops';
                     } else {
-                        // Fallback: use name heuristic
-                        prov = pLow.includes('peoplecraft-frontend') ? 'github_actions' : 'azure_devops';
+                        prov = isFrontendSwa ? 'github_actions' : 'azure_devops';
                     }
                 } else {
-                    // No pipeline_id at all: use name heuristic
-                    prov = pLow.includes('peoplecraft-frontend') ? 'github_actions' : 'azure_devops';
+                    prov = isFrontendSwa ? 'github_actions' : 'azure_devops';
                 }
 
                 // Find all active pipeline rows for this app
@@ -466,13 +464,10 @@ const listPipelineRuns = async (req, res) => {
 
 const getSupportedBranches = (pName, reqBranch) => {
     const pLow = (pName || '').toLowerCase();
-    if (pLow.includes('restaurant-frontend') || pLow.includes('restaurant-backend') || pLow.includes('api-peoplecraft') || pLow.includes('peoplecraft-frontend')) {
-        return ['main', 'qa', 'dev'];
-    }
     if (pLow.endsWith('-dev')) return ['dev'];
     if (pLow.endsWith('-qa')) return ['qa'];
     if (reqBranch && reqBranch !== 'main') return Array.from(new Set(['main', reqBranch]));
-    return ['main'];
+    return ['main', 'qa', 'dev'];
 };
 
 const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, targetHost, targetRg, buildId) => {

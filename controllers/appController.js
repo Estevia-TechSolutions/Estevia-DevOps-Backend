@@ -3050,22 +3050,23 @@ const appController = {
                         : (app.godaddy_dns_details || {});
 
                     const pLow = (app.name || '').toLowerCase();
+                    const isFrontendSwa = app.app_type === 'frontend' || pLow.endsWith('-swa');
                     const hasConflict = Number(app.provider_count) > 1;
 
                     // Provider ground truth: applications.pipeline_id (integer = AzDO, github-actions: = GHA)
-                    // Fall back to pipelines.provider from DB, then name heuristic.
+                    // Fall back to pipelines.provider from DB, then frontend/repo heuristic.
                     let prov;
                     const rawPipelineId = app.app_pipeline_id ? String(app.app_pipeline_id) : null;
                     if (rawPipelineId) {
                         if (rawPipelineId.startsWith('github-actions:')) {
                             prov = 'github_actions';
                         } else if (/^\d+$/.test(rawPipelineId)) {
-                            prov = 'azure_devops';
+                            prov = isFrontendSwa ? 'github_actions' : 'azure_devops';
                         } else {
-                            prov = app.db_provider || (pLow.includes('peoplecraft-frontend') ? 'github_actions' : 'azure_devops');
+                            prov = app.db_provider || (isFrontendSwa ? 'github_actions' : 'azure_devops');
                         }
                     } else {
-                        prov = app.db_provider || (pLow.includes('peoplecraft-frontend') ? 'github_actions' : 'azure_devops');
+                        prov = app.db_provider || (isFrontendSwa ? 'github_actions' : 'azure_devops');
                     }
 
                     // pipelineId: prefer the DB pipelines.id (for conflict-capable apps), fall back to app_pipeline_id
@@ -3173,6 +3174,7 @@ const appController = {
                         : (dbApp.godaddy_dns_details || {});
 
                     const pLow = (dbApp.name || '').toLowerCase();
+                    const isFrontendSwa = dbApp.app_type === 'frontend' || pLow.endsWith('-swa');
                     // Provider ground truth: applications.pipeline_id (integer = AzDO, github-actions: = GHA)
                     let prov;
                     const rawPId = dbApp.pipeline_id ? String(dbApp.pipeline_id) : null;
@@ -3180,12 +3182,12 @@ const appController = {
                         if (rawPId.startsWith('github-actions:')) {
                             prov = 'github_actions';
                         } else if (/^\d+$/.test(rawPId)) {
-                            prov = 'azure_devops';
+                            prov = isFrontendSwa ? 'github_actions' : 'azure_devops';
                         } else {
-                            prov = dbApp.provider || (pLow.includes('peoplecraft-frontend') ? 'github_actions' : 'azure_devops');
+                            prov = dbApp.provider || (isFrontendSwa ? 'github_actions' : 'azure_devops');
                         }
                     } else {
-                        prov = dbApp.provider || (pLow.includes('peoplecraft-frontend') ? 'github_actions' : 'azure_devops');
+                        prov = dbApp.provider || (isFrontendSwa ? 'github_actions' : 'azure_devops');
                     }
 
                     let pId = dbApp.pipeline_id || dbApp.p_id;
@@ -6927,7 +6929,7 @@ const appController = {
 
             if (pipeCheck && pipeCheck.length > 0) {
                 const pRow = pipeCheck[0];
-                if (pRow.provider === 'github_actions' || (pRow.project_name || '').toLowerCase().includes('peoplecraft-frontend')) {
+                if (pRow.provider === 'github_actions' || (pRow.repo_url && pRow.repo_url.includes('github.com'))) {
                     let repoPath = 'Estevia-TechSolutions/Peoplecraft-v1-reactfrontend';
                     if (pRow.repo_url && pRow.repo_url.includes('github.com/')) {
                         repoPath = pRow.repo_url.replace('https://github.com/', '').replace(/\/$/, '');
@@ -6936,8 +6938,6 @@ const appController = {
                     }
                     effectivePipelineId = `github-actions:${repoPath}`;
                 }
-            } else if (effectivePipelineId.toLowerCase().includes('peoplecraft-frontend')) {
-                effectivePipelineId = `github-actions:Estevia-TechSolutions/Peoplecraft-v1-reactfrontend`;
             }
 
             if (effectivePipelineId.startsWith('github-actions:')) {
