@@ -1,6 +1,7 @@
 const db = require('../config/db');
-const { randomUUID } = require('crypto');
-const uuidv4 = randomUUID;
+const { v4: uuidv4 } = require('uuid');
+const gitHubService = require('../services/gitHubService');
+const runnerEngine = require('../services/runnerEngine');
 
 // ── 1. List Pipelines & Summary Metrics (STRICT REAL DB QUERY ONLY) ──────────
 const listPipelines = async (req, res) => {
@@ -67,7 +68,8 @@ const createPipelineOnTheFly = async (req, res) => {
         iacTemplateType = 'bicep',
         repoUrl,
         branch = 'main',
-        yamlConfig
+        yamlConfig,
+        app_id
     } = req.body;
 
     if (!name || !projectName) {
@@ -79,13 +81,15 @@ const createPipelineOnTheFly = async (req, res) => {
         const orgId = req.user?.organization_id || 'estevia';
 
         // Auto-match project_name against registered applications slug
-        const [scannedApps] = await db.query('SELECT name FROM applications WHERE organization_id = ?', [orgId]);
+        const [scannedApps] = await db.query('SELECT id, name FROM applications WHERE organization_id = ?', [orgId]);
         let matchedSlug = projectName;
+        let boundAppId = app_id || null;
+
         if (scannedApps && scannedApps.length > 0) {
             const lowInput = projectName.toLowerCase();
             const found = scannedApps.find(a => {
                 const aLow = a.name.toLowerCase();
-                return aLow === lowInput || aLow.includes(lowInput) || lowInput.includes(aLow) ||
+                return a.id === app_id || aLow === lowInput || aLow.includes(lowInput) || lowInput.includes(aLow) ||
                        (lowInput.includes('marketing') && aLow.includes('marketing')) ||
                        (lowInput.includes('restaurant') && aLow.includes('restaurant')) ||
                        (lowInput.includes('peoplecraft') && aLow.includes('peoplecraft')) ||
@@ -93,6 +97,7 @@ const createPipelineOnTheFly = async (req, res) => {
             });
             if (found) {
                 matchedSlug = found.name;
+                if (!boundAppId) boundAppId = found.id;
             }
         }
 
@@ -135,9 +140,15 @@ stages:
 `;
 
         await db.query(`
-            INSERT INTO pipelines (id, organization_id, project_name, name, target_type, auto_provision_infra, iac_template_type, provider, yaml_config, trigger_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'evaops_native', ?, 'git_push')
-        `, [pipelineId, orgId, matchedSlug, name, targetType, autoProvisionInfra ? 1 : 0, iacTemplateType, defaultYaml]);
+            INSERT INTO pipelines (id, organization_id, app_id, project_name, name, target_type, auto_provision_infra, iac_template_type, provider, yaml_config, trigger_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'evaops_native', ?, 'git_push')
+        `, [pipelineId, orgId, boundAppId, matchedSlug, name, targetType, autoProvisionInfra ? 1 : 0, iacTemplateType, defaultYaml]);
+
+        // Push .evaforge/config.yml to GitHub repo & register webhook via gitHubService
+        const owner = 'Estevia-TechSolutions';
+        const repoName = matchedSlug;
+        gitHubService.pushEvaForgeConfig(owner, repoName, defaultYaml, branch);
+        gitHubService.registerRepositoryWebhook(owner, repoName);
 
         // Seed initial real run record in database
         const runId = `run-${uuidv4().slice(0, 8)}`;
@@ -188,6 +199,7 @@ const triggerPipelineRun = async (req, res) => {
         if (pipelines.length === 0) {
             return res.status(404).json({ error: 'Pipeline not found' });
         }
+        const pipe = pipelines[0];
 
         const [[{ maxRun }]] = await db.query('SELECT MAX(run_number) AS maxRun FROM pipeline_runs WHERE pipeline_id = ?', [pipelineId]);
         const runNumber = (maxRun || 0) + 1;
@@ -197,6 +209,11 @@ const triggerPipelineRun = async (req, res) => {
             INSERT INTO pipeline_runs (id, pipeline_id, run_number, status, commit_sha, commit_message, branch, triggered_by, agent_pool, duration_seconds, started_at)
             VALUES (?, ?, ?, 'running', ?, ?, ?, ?, 'EvaOps Hosted Linux Pool #04', 5, NOW())
         `, [runId, pipelineId, runNumber, commitSha, commitMessage, branch, req.user?.email || 'gmenon']);
+
+        // Execute background runner if EvaForge Native
+        if (pipe.provider === 'evaops_native') {
+            runnerEngine.executeEvaForgeDeployment(runId);
+        }
 
         return res.json({
             message: `Pipeline run #${runNumber} triggered successfully.`,
@@ -649,11 +666,30 @@ const getStepLogs = async (req, res) => {
 const migratePipelineProvider = async (req, res) => {
     const { pipelineId } = req.params;
     try {
+        const [pipelines] = await db.query('SELECT * FROM pipelines WHERE id = ?', [pipelineId]);
+        if (pipelines.length === 0) {
+            return res.status(404).json({ error: 'Pipeline not found' });
+        }
+        const pipe = pipelines[0];
+        const oldProvider = pipe.provider || 'azure_devops';
+
         await db.query(`
             UPDATE pipelines 
-            SET provider = 'evaops_native', trigger_type = 'git_push'
+            SET provider = 'evaops_native', trigger_type = 'git_push', updated_at = NOW()
             WHERE id = ?
         `, [pipelineId]);
+
+        // Audit migration history
+        await db.query(`
+            INSERT INTO pipeline_provider_migrations (id, pipeline_id, from_provider, to_provider, migrated_by)
+            VALUES (?, ?, ?, 'evaops_native', ?)
+        `, [`mig-${uuidv4().slice(0, 8)}`, pipelineId, oldProvider, req.user?.email || 'gmenon']);
+
+        // Push .evaforge/config.yml to GitHub
+        const owner = 'Estevia-TechSolutions';
+        const repoName = pipe.project_name;
+        gitHubService.pushEvaForgeConfig(owner, repoName, pipe.yaml_config || `name: ${pipe.name}\nprovider: evaops_native`, 'main');
+        gitHubService.registerRepositoryWebhook(owner, repoName);
 
         return res.json({
             message: 'Pipeline successfully migrated to EvaOps Native CI/CD Engine.',
@@ -662,6 +698,31 @@ const migratePipelineProvider = async (req, res) => {
         });
     } catch (err) {
         return res.status(500).json({ error: 'Failed to migrate pipeline provider', details: err.message });
+    }
+};
+
+// ── 8B. Decommission / Disable Legacy Pipeline ────────────────────────────────
+const decommissionLegacyPipeline = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const [pipelines] = await db.query('SELECT * FROM pipelines WHERE id = ?', [id]);
+        if (pipelines.length === 0) {
+            return res.status(404).json({ error: 'Pipeline not found' });
+        }
+        const pipe = pipelines[0];
+
+        // Disable in database
+        await db.query('UPDATE pipelines SET is_active = 0 WHERE id = ?', [id]);
+
+        // If GitHub Actions, attempt automated workflow disable
+        if (pipe.provider === 'github_actions') {
+            const owner = 'Estevia-TechSolutions';
+            gitHubService.disableLegacyWorkflow(owner, pipe.project_name);
+        }
+
+        return res.json({ message: `Legacy pipeline '${pipe.name}' decommissioned successfully.` });
+    } catch (err) {
+        return res.status(500).json({ error: 'Failed to decommission legacy pipeline', details: err.message });
     }
 };
 
@@ -710,5 +771,6 @@ module.exports = {
     getRunDetails,
     getStepLogs,
     migratePipelineProvider,
+    decommissionLegacyPipeline,
     deletePipeline
 };
