@@ -323,10 +323,11 @@ const listPipelineRuns = async (req, res) => {
                 p.name AS pipeline_name,
                 p.project_name,
                 p.provider,
-                COALESCE(a.repo_url, CONCAT('https://github.com/Estevia-TechSolutions/', p.project_name)) AS repo_url
+                COALESCE(a.repo_url, CONCAT('https://github.com/', COALESCE(o.github_owner, 'Estevia-TechSolutions'), '/', p.project_name)) AS repo_url
             FROM pipeline_runs pr
             JOIN pipelines p ON pr.pipeline_id = p.id
             LEFT JOIN applications a ON (LOWER(a.name) = LOWER(p.project_name) AND a.organization_id = p.organization_id)
+            LEFT JOIN organizations o ON o.id = p.organization_id
             WHERE p.organization_id = ?
               AND p.target_type != 'database'
               AND p.project_name NOT LIKE '%-db'
@@ -562,8 +563,13 @@ const getRunDetails = async (req, res) => {
             const commitSha = prevOffset === 1 ? '9b182ef' : prevOffset === 2 ? '3c71a09' : (run.commit_sha || 'a4bafe6');
             const commitMsg = prevOffset > 0 ? `sync(build #${bId}): release update for ${reqBranch}` : (run.commit_message || `Deploy ${pName} build to ${reqBranch} target environment (${targetRg})`);
 
-            const azureDevOpsUrl = `https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=results`;
-            const ghUrl = `https://github.com/Estevia-TechSolutions/${pName}/actions`;
+            const orgConfig = await getOrgConfig(orgId);
+            const azureDevOpsOrgUrl = orgConfig.azure_devops_org_url || 'https://dev.azure.com/esteviatech';
+            const azureDevOpsProject = orgConfig.azure_devops_project || 'Estevia-Platform';
+            const ghOwner = orgConfig.github_owner || 'Estevia-TechSolutions';
+
+            const azureDevOpsUrl = `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build/results?buildId=${bId}&view=results`;
+            const ghUrl = `https://github.com/${ghOwner}/${pName}/actions`;
             const supportedBranches = getSupportedBranches(pName, reqBranch);
 
             return res.json({
@@ -645,9 +651,14 @@ const getRunDetails = async (req, res) => {
         if (!stages || stages.length === 0) {
             stages = getAuthenticStages(run.provider || 'azure_devops', pName, activeBranch, run.status, run.commit_sha, activeHost, activeRg, runBId);
         }
+        const orgConfig = await getOrgConfig(run.organization_id);
+        const azureDevOpsOrgUrl = orgConfig.azure_devops_org_url || 'https://dev.azure.com/esteviatech';
+        const azureDevOpsProject = orgConfig.azure_devops_project || 'Estevia-Platform';
+        const ghOwner = orgConfig.github_owner || 'Estevia-TechSolutions';
+
         run.pipeline_url = (run.provider || 'azure_devops') === 'azure_devops' 
-            ? `https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${runBId}&view=results`
-            : `https://github.com/Estevia-TechSolutions/${pName}/actions`;
+            ? `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build/results?buildId=${runBId}&view=results`
+            : `https://github.com/${ghOwner}/${pName}/actions`;
 
         run.supported_branches = getSupportedBranches(pName, activeBranch);
         run.cname_host = run.cname_host || activeHost;
