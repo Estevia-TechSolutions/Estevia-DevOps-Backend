@@ -3,6 +3,21 @@ const { v4: uuidv4 } = require('uuid');
 const gitHubService = require('../services/gitHubService');
 const runnerEngine = require('../services/runnerEngine');
 
+const getOrgConfig = async (orgId) => {
+    try {
+        const [orgs] = await db.query('SELECT github_owner, azure_resource_group, azure_subscription_id, default_dns_domain FROM organizations WHERE id = ?', [orgId || 'estevia']);
+        if (orgs && orgs.length > 0 && orgs[0].github_owner) {
+            return orgs[0];
+        }
+    } catch (e) {}
+    return {
+        github_owner: process.env.GITHUB_OWNER || 'Estevia-TechSolutions',
+        azure_resource_group: process.env.AZURE_RESOURCE_GROUP || 'Estevia-Prod-RG',
+        azure_subscription_id: process.env.AZURE_SUBSCRIPTION_ID || '4a551976-35a8-4305-b128-fe592805be41',
+        default_dns_domain: 'esteviatech.com'
+    };
+};
+
 // ── 1. List Pipelines & Summary Metrics (STRICT REAL DB QUERY ONLY) ──────────
 const listPipelines = async (req, res) => {
     try {
@@ -145,7 +160,8 @@ stages:
         `, [pipelineId, orgId, boundAppId, matchedSlug, name, targetType, autoProvisionInfra ? 1 : 0, iacTemplateType, defaultYaml]);
 
         // Push .evaforge/config.yml to GitHub repo & register webhook via gitHubService
-        const owner = 'Estevia-TechSolutions';
+        const orgConfig = await getOrgConfig(orgId);
+        const owner = orgConfig.github_owner || 'Estevia-TechSolutions';
         const repoName = matchedSlug;
         gitHubService.pushEvaForgeConfig(owner, repoName, defaultYaml, branch);
         gitHubService.registerRepositoryWebhook(owner, repoName);
@@ -691,7 +707,8 @@ const migratePipelineProvider = async (req, res) => {
         `, [`mig-${uuidv4().slice(0, 8)}`, pipelineId, oldProvider, req.user?.email || 'gmenon']);
 
         // Push .evaforge/config.yml to GitHub
-        const owner = 'Estevia-TechSolutions';
+        const orgConfig = await getOrgConfig(pipe.organization_id);
+        const owner = orgConfig.github_owner || 'Estevia-TechSolutions';
         const repoName = pipe.project_name;
         gitHubService.pushEvaForgeConfig(owner, repoName, pipe.yaml_config || `name: ${pipe.name}\nprovider: evaops_native`, 'main');
         gitHubService.registerRepositoryWebhook(owner, repoName);
@@ -721,7 +738,8 @@ const decommissionLegacyPipeline = async (req, res) => {
 
         // If GitHub Actions, attempt automated workflow disable
         if (pipe.provider === 'github_actions') {
-            const owner = 'Estevia-TechSolutions';
+            const orgConfig = await getOrgConfig(pipe.organization_id);
+            const owner = orgConfig.github_owner || 'Estevia-TechSolutions';
             gitHubService.disableLegacyWorkflow(owner, pipe.project_name);
         }
 
