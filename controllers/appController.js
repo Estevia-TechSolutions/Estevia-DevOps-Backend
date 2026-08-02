@@ -6927,14 +6927,18 @@ const appController = {
             if (pipeCheck && pipeCheck.length > 0) {
                 const pRow = pipeCheck[0];
                 if (pRow.provider === 'github_actions' || (pRow.repo_url && pRow.repo_url.includes('github.com'))) {
-                    let repoPath = 'Estevia-TechSolutions/Peoplecraft-v1-reactfrontend';
+                    // Build repo path from repo_url if available, else derive from project_name — no hardcoding
+                    let repoPath = null;
                     if (pRow.repo_url && pRow.repo_url.includes('github.com/')) {
                         repoPath = pRow.repo_url.replace('https://github.com/', '').replace(/\/$/, '');
                     } else if (pRow.project_name) {
                         repoPath = `Estevia-TechSolutions/${pRow.project_name}`;
                     }
-                    effectivePipelineId = `github-actions:${repoPath}`;
+                    if (repoPath) {
+                        effectivePipelineId = `github-actions:${repoPath}`;
+                    }
                 }
+
             }
 
             if (effectivePipelineId.startsWith('github-actions:')) {
