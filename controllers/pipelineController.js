@@ -22,11 +22,17 @@ const getOrgConfig = async (orgId) => {
 const listPipelines = async (req, res) => {
     try {
         const orgId = req.user?.organization_id || 'estevia';
+        const { appName } = req.query;
 
-        const [pipelines] = await db.query(
-            'SELECT * FROM pipelines WHERE organization_id = ? ORDER BY created_at DESC',
-            [orgId]
-        );
+        let query = 'SELECT * FROM pipelines WHERE organization_id = ?';
+        const params = [orgId];
+        if (appName) {
+            query += ' AND (LOWER(project_name) = LOWER(?)) AND is_active = 1';
+            params.push(appName);
+        }
+        query += ' ORDER BY created_at DESC';
+
+        const [pipelines] = await db.query(query, params);
 
         // Fetch real execution metrics from pipeline_runs
         const [[metrics]] = await db.query(`
@@ -44,8 +50,26 @@ const listPipelines = async (req, res) => {
         const passRate = totalRuns > 0 ? Math.round((successRuns / totalRuns) * 1000) / 10 : 0;
         const avgDuration = metrics?.avgDuration ? `${Math.round(metrics.avgDuration)}s` : '0s';
 
+        // Enrich each pipeline with a pipeline_url
+        const orgConfig = await getOrgConfig(orgId);
+        const azureDevOpsOrgUrl = (orgConfig.azure_devops_org_url || 'https://dev.azure.com/esteviatech').replace(/\/$/, '');
+        const azureDevOpsProject = orgConfig.azure_devops_project || 'Estevia-Platform';
+        const ghOwner = orgConfig.github_owner || 'Estevia-TechSolutions';
+
+        const enriched = pipelines.map(p => {
+            let pipeline_url = null;
+            if (p.provider === 'azure_devops') {
+                pipeline_url = `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build?definitionId=${p.id}`;
+            } else if (p.provider === 'github_actions') {
+                pipeline_url = `https://github.com/${ghOwner}/${p.project_name}/actions`;
+            } else if (p.provider === 'evaops_native') {
+                pipeline_url = `https://github.com/${ghOwner}/${p.project_name}/blob/main/.evaforge/config.yml`;
+            }
+            return { ...p, pipeline_url };
+        });
+
         return res.json({
-            pipelines,
+            pipelines: enriched,
             metrics: {
                 passRate: `${passRate}%`,
                 totalRuns,
@@ -258,9 +282,9 @@ const listPipelineRuns = async (req, res) => {
             LIMIT 50
         `, [orgId]);
 
-        // 1. Fetch real scanned Azure resources from applications table
+        // 1. Fetch real scanned Azure resources from applications table (include pipeline_id as ground truth for provider)
         const [scannedApps] = await db.query(
-            'SELECT id, name, app_type AS type, repo_url, azure_resource_details FROM applications WHERE organization_id = ? LIMIT 20',
+            'SELECT id, name, app_type AS type, repo_url, pipeline_id, azure_resource_details FROM applications WHERE organization_id = ? LIMIT 50',
             [orgId]
         );
 
@@ -274,22 +298,36 @@ const listPipelineRuns = async (req, res) => {
                 const dynamicRunNum = Number(azureDetails.pipelineRun?.id || azureDetails.buildNumber || app.buildNumber || app.run_number) || 1;
                 const pLow = (app.name || '').toLowerCase();
 
-                // Provider Resolution: Only peoplecraft-frontend uses github_actions; all others (including marketing, api-peoplecraft, db, etc) use azure_devops
-                let prov = azureDetails.provider;
-                if (!prov) {
-                    if (pLow.includes('peoplecraft-frontend')) {
+                // Provider Resolution: applications.pipeline_id is the ONLY ground truth.
+                // Integer pipeline_id = Azure DevOps definition ID.
+                // 'github-actions:owner/repo' prefix = GitHub Actions.
+                // No resource-type assumptions (SWAs can be either Azure DevOps OR GitHub Actions).
+                let prov;
+                const rawPipelineId = app.pipeline_id ? String(app.pipeline_id) : null;
+                if (rawPipelineId) {
+                    if (rawPipelineId.startsWith('github-actions:')) {
                         prov = 'github_actions';
-                    } else {
+                    } else if (/^\d+$/.test(rawPipelineId) || rawPipelineId.startsWith('azdev-') || rawPipelineId.startsWith('azdo-')) {
                         prov = 'azure_devops';
+                    } else {
+                        prov = app.db_provider || 'unconfigured';
                     }
+                } else {
+                    // No pipeline_id — use explicit provider from DB scan if available
+                    prov = app.db_provider || app.provider || 'unconfigured';
                 }
 
-                const [existing] = await db.query('SELECT id, provider FROM pipelines WHERE (app_id = ? OR project_name = ?) AND organization_id = ?', [app.id, app.name, orgId]);
-                
+                // Find all active pipeline rows for this app
+                const [existing] = await db.query(
+                    'SELECT id, provider, is_active FROM pipelines WHERE (app_id = ? OR LOWER(project_name) = LOWER(?)) AND organization_id = ? AND is_active = 1',
+                    [app.id, app.name, orgId]
+                );
+
                 if (existing.length === 0) {
+                    // No active pipeline yet — create one
                     const newPipeId = `pipe-${uuidv4().slice(0, 8)}`;
                     const targetT = app.type === 'frontend' ? 'static_web_app' : app.type === 'database' ? 'database' : 'container_app';
-                    
+
                     await db.query(`
                         INSERT INTO pipelines (id, organization_id, app_id, project_name, name, provider, target_type, auto_provision_infra, yaml_config, trigger_type)
                         VALUES (?, ?, ?, ?, ?, ?, ?, 1, '', 'push')
@@ -300,16 +338,27 @@ const listPipelineRuns = async (req, res) => {
                         INSERT INTO pipeline_runs (id, pipeline_id, run_number, status, commit_sha, commit_message, branch, triggered_by, duration_seconds)
                         VALUES (?, ?, ?, 'success', 'a4bafe6', 'Sync deployment from scanned Azure resource', 'main', 'Azure Cloud Sync', 65)
                     `, [newRunId, newPipeId, dynamicRunNum]);
-                } else {
+
+                } else if (existing.length === 1) {
+                    // Single active pipeline — update provider if not protected
                     const existingPipeId = existing[0].id;
                     const existingProvider = existing[0].provider;
                     if (existingProvider !== 'evaops_native') {
-                        await db.query(`UPDATE pipelines SET app_id = COALESCE(app_id, ?), provider = ? WHERE id = ?`, [app.id || null, prov, existingPipeId]);
+                        await db.query(
+                            'UPDATE pipelines SET app_id = COALESCE(app_id, ?), provider = ? WHERE id = ?',
+                            [app.id || null, prov, existingPipeId]
+                        );
                     } else {
-                        await db.query(`UPDATE pipelines SET app_id = COALESCE(app_id, ?) WHERE id = ?`, [app.id || null, existingPipeId]);
+                        await db.query('UPDATE pipelines SET app_id = COALESCE(app_id, ?) WHERE id = ?', [app.id || null, existingPipeId]);
                     }
                     if (dynamicRunNum > 1) {
-                        await db.query(`UPDATE pipeline_runs SET run_number = ? WHERE pipeline_id = ?`, [dynamicRunNum, existingPipeId]);
+                        await db.query('UPDATE pipeline_runs SET run_number = ? WHERE pipeline_id = ?', [dynamicRunNum, existingPipeId]);
+                    }
+
+                } else {
+                    // Multiple active pipelines = conflict case — only update app_id linkage, DO NOT touch provider
+                    for (const ep of existing) {
+                        await db.query('UPDATE pipelines SET app_id = COALESCE(app_id, ?) WHERE id = ?', [app.id || null, ep.id]);
                     }
                 }
             }
@@ -393,7 +442,21 @@ const listPipelineRuns = async (req, res) => {
             };
         });
 
-        return res.json(formattedRuns);
+        // Deduplicate formattedRuns by project_name so each application codebase gets exactly 1 entry in the grid
+        const uniqueFormattedRunsMap = new Map();
+        formattedRuns.forEach(fr => {
+            const key = (fr.project_name || '').toLowerCase();
+            if (!uniqueFormattedRunsMap.has(key)) {
+                uniqueFormattedRunsMap.set(key, fr);
+            } else {
+                const existing = uniqueFormattedRunsMap.get(key);
+                if (fr.has_cicd_conflict) {
+                    existing.has_cicd_conflict = true;
+                }
+            }
+        });
+
+        return res.json(Array.from(uniqueFormattedRunsMap.values()));
     } catch (err) {
         return res.status(500).json({ error: 'Failed to list pipeline runs', details: err.message });
     }
@@ -401,13 +464,13 @@ const listPipelineRuns = async (req, res) => {
 
 const getSupportedBranches = (pName, reqBranch) => {
     const pLow = (pName || '').toLowerCase();
-    if (pLow.includes('restaurant-frontend') || pLow.includes('restaurant-backend') || pLow.includes('api-peoplecraft') || pLow.includes('peoplecraft-frontend')) {
-        return ['main', 'qa', 'dev'];
+    const match = pLow.match(/[-_](dev|qa|prod|stage|staging|test)([-_]|$)/i);
+    if (match) {
+        const env = match[1].toLowerCase();
+        return [env === 'prod' ? 'main' : env];
     }
-    if (pLow.endsWith('-dev')) return ['dev'];
-    if (pLow.endsWith('-qa')) return ['qa'];
     if (reqBranch && reqBranch !== 'main') return Array.from(new Set(['main', reqBranch]));
-    return ['main'];
+    return ['main', 'qa', 'dev'];
 };
 
 const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, targetHost, targetRg, buildId) => {
@@ -656,9 +719,20 @@ const getRunDetails = async (req, res) => {
             });
         }
 
+        // Guard: run ID not found in DB — scan-generated UUID IDs won't have a DB record
+        if (runs.length === 0) {
+            return res.status(404).json({
+                error: 'Run details not available',
+                message: `No build record found for run ID "${runId}". This run was created by a cloud scan and does not have a stored pipeline record.`,
+                runId,
+                branch: req.query.branch || 'main'
+            });
+        }
+
         const projectName = runId.replace(/^scanned-\d+-/, '').replace(/-prev\d+$/, '') || 'Estevia-App';
 
         const run = runs[0];
+
         let [stages] = await db.query('SELECT * FROM pipeline_stages WHERE run_id = ? ORDER BY stage_order ASC', [runId]);
         
         for (const stage of stages) {
