@@ -2728,35 +2728,38 @@ const appController = {
                 });
             }
 
-            // ── Smart Active Execution Signal Engine (Zero Hardcoding) ────────────
-            const isSwaApp = app.type === 'frontend' || app.name.toLowerCase().endsWith('-swa') || app.type === 'static_web_app';
+            // ── Smart Active Execution Signal Engine ──────────────────────────────
+            let matchedPipelineId = null;
+            let matchedPipelineName = null;
 
-            let azLastRunTime = 0;
-
-            if (hasGithubActions && matchingPipeline) {
-                if (azLastRunTime > 0 && azLastRunTime >= ghLastRunTime) {
-                    matchedPipelineId = String(matchingPipeline.id);
-                    matchedPipelineName = matchingPipeline.name;
-                } else if (ghLastRunTime > 0 && ghLastRunTime > azLastRunTime) {
-                    matchedPipelineId = 'github-actions:' + ghRepoPath;
-                    matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
-                } else if (isSwaApp) {
-                    matchedPipelineId = 'github-actions:' + ghRepoPath;
-                    matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
-                } else {
-                    matchedPipelineId = String(matchingPipeline.id);
-                    matchedPipelineName = matchingPipeline.name;
-                }
-            } else if (hasGithubActions) {
-                matchedPipelineId = 'github-actions:' + ghRepoPath;
-                matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
-            } else if (matchingPipeline) {
+            if (matchingPipeline) {
+                // If an authoritative Azure DevOps pipeline definition exists for this app, use it as ground truth
                 matchedPipelineId = String(matchingPipeline.id);
                 matchedPipelineName = matchingPipeline.name;
+            } else if (hasGithubActions) {
+                // No AzDO definition found — fall back to detected GitHub Actions workflow
+                matchedPipelineId = 'github-actions:' + ghRepoPath;
+                matchedPipelineName = `GitHub Actions (${ghRepoPath.split('/')[1] || ghRepoPath})`;
+            }
+
+            // ── Provider Guard: If the DB already has an integer AzDO pipeline_id, never overwrite with github-actions: ──
+            // Integer pipeline_id = authoritative Azure DevOps definition ID set during onboarding.
+            const existingDbPipelineId = existing.length > 0 ? existing[0].pipeline_id : null;
+            const isExistingAzDOInteger = existingDbPipelineId && /^\d+$/.test(String(existingDbPipelineId));
+            if (isExistingAzDOInteger && String(matchedPipelineId).startsWith('github-actions:')) {
+                // Integer AzDO definition ID wins — it was explicitly set during onboarding
+                matchedPipelineId = existingDbPipelineId;
+                matchedPipelineName = matchedPipelineName?.includes('GitHub') ? null : matchedPipelineName;
             }
 
             app.pipelineId = matchedPipelineId;
             app.pipelineName = matchedPipelineName;
+
+            // Explicitly derive provider from pipelineId so the frontend always reads it correctly
+            app.provider = String(matchedPipelineId || '').startsWith('github-actions:')
+                ? 'github_actions'
+                : 'azure_devops';
+
 
             app.pipelineRun = null;
             if (matchedPipelineId && String(matchedPipelineId).startsWith('github-actions:')) {
@@ -2960,9 +2963,22 @@ const appController = {
             if (existing.length > 0) {
                 await db.query(
                     `UPDATE applications 
-                     SET app_type = ?, status = ?, azure_resource_details = ?, godaddy_dns_details = ?, pipeline_id = ?, repo_url = COALESCE(NULLIF(?, ''), repo_url)
+                     SET app_type = ?, status = ?, azure_resource_details = ?, godaddy_dns_details = ?,
+                         pipeline_id = CASE
+                             -- Never overwrite a valid github-actions: prefix with NULL or a numeric id from the scan
+                             WHEN pipeline_id LIKE 'github-actions:%' AND (? IS NULL OR ? REGEXP '^[0-9]+$') THEN pipeline_id
+                             -- Never overwrite a valid numeric AzDO id with NULL from the scan
+                             WHEN pipeline_id REGEXP '^[0-9]+$' AND ? IS NULL THEN pipeline_id
+                             -- Accept the new value if it's non-null, else keep existing
+                             ELSE COALESCE(?, pipeline_id)
+                         END,
+                         repo_url = COALESCE(NULLIF(?, ''), repo_url)
                      WHERE id = ?`,
-                    [app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId, app.repositoryUrl || '', existing[0].id]
+                    [app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails),
+                     app.pipelineId, app.pipelineId,  // WHEN github-actions check
+                     app.pipelineId,                   // WHEN numeric AzDO check
+                     app.pipelineId,                   // ELSE COALESCE
+                     app.repositoryUrl || '', existing[0].id]
                 );
             } else {
                 await db.query(
@@ -2972,6 +2988,7 @@ const appController = {
                     [organizationId, app.name, app.repositoryUrl, app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId]
                 );
             }
+
         }));
 
         // Category Pruning logic restricted to target resource group
@@ -3009,10 +3026,34 @@ const appController = {
 
             // Cached request check
             if (req.query.cached === 'true') {
-                const [dbApps] = await db.query(
-                    'SELECT name, app_type, status, repo_url, azure_resource_details, godaddy_dns_details, pipeline_id, license_frozen FROM applications WHERE organization_id = ?',
-                    [organizationId]
-                );
+                // Subquery approach: one row per app. pipeline_id from applications is the provider ground truth.
+                // Conflict flag set when an app has >1 active pipelines with different providers.
+                const [dbApps] = await db.query(`
+                    SELECT 
+                        a.id, a.name, a.app_type, a.status, a.repo_url,
+                        a.azure_resource_details, a.godaddy_dns_details,
+                        a.pipeline_id AS app_pipeline_id, a.license_frozen,
+                        (SELECT p2.provider FROM pipelines p2
+                         WHERE (p2.app_id = a.id OR LOWER(p2.project_name) = LOWER(a.name))
+                           AND p2.organization_id = a.organization_id AND p2.is_active = 1
+                         ORDER BY FIELD(p2.provider,'evaops_native','github_actions','azure_devops')
+                         LIMIT 1) AS db_provider,
+                        (SELECT COUNT(DISTINCT p3.provider) FROM pipelines p3
+                         WHERE (p3.app_id = a.id OR LOWER(p3.project_name) = LOWER(a.name))
+                           AND p3.organization_id = a.organization_id AND p3.is_active = 1) AS provider_count,
+                        (SELECT p4.id FROM pipelines p4
+                         WHERE (p4.app_id = a.id OR LOWER(p4.project_name) = LOWER(a.name))
+                           AND p4.organization_id = a.organization_id AND p4.is_active = 1
+                         ORDER BY FIELD(p4.provider,'evaops_native','github_actions','azure_devops')
+                         LIMIT 1) AS p_id,
+                        (SELECT p5.name FROM pipelines p5
+                         WHERE (p5.app_id = a.id OR LOWER(p5.project_name) = LOWER(a.name))
+                           AND p5.organization_id = a.organization_id AND p5.is_active = 1
+                         ORDER BY FIELD(p5.provider,'evaops_native','github_actions','azure_devops')
+                         LIMIT 1) AS p_name
+                    FROM applications a
+                    WHERE a.organization_id = ?
+                `, [organizationId]);
 
                 const apps = dbApps.map(app => {
                     const details = typeof app.azure_resource_details === 'string'
@@ -3022,10 +3063,41 @@ const appController = {
                         ? JSON.parse(app.godaddy_dns_details || '{}')
                         : (app.godaddy_dns_details || {});
 
-                    let computedPipelineName = details.pipelineName || null;
-                    if (app.pipeline_id && String(app.pipeline_id).startsWith('github-actions:')) {
-                        const repoPath = String(app.pipeline_id).replace('github-actions:', '');
-                        computedPipelineName = `GitHub Actions (${repoPath.split('/')[1] || repoPath})`;
+                    const pLow = (app.name || '').toLowerCase();
+                    const rawPipelineId = app.app_pipeline_id ? String(app.app_pipeline_id) : null;
+                    const hasConflict = Number(app.provider_count) > 1;
+
+                    // Provider ground truth: applications.pipeline_id (integer = AzDO, github-actions: = GHA)
+                    let prov;
+                    if (rawPipelineId) {
+                        if (rawPipelineId.startsWith('github-actions:')) {
+                            prov = 'github_actions';
+                        } else if (/^\d+$/.test(rawPipelineId) || rawPipelineId.startsWith('azdev-')) {
+                            prov = 'azure_devops';
+                        } else {
+                            prov = app.db_provider || 'azure_devops';
+                        }
+                    } else {
+                        prov = app.db_provider || 'azure_devops';
+                    }
+
+                    // pipelineId: prefer the DB pipelines.id (for conflict-capable apps), fall back to app_pipeline_id
+                    let pId = app.p_id || app.app_pipeline_id;
+                    if (!pId) {
+                        pId = prov === 'github_actions'
+                            ? `github-actions:${githubOwner}/${app.name}`
+                            : `azdev-${app.name}`;
+                    }
+
+                    let computedPipelineName = details.pipelineName || app.p_name;
+                    if (!computedPipelineName) {
+                        if (prov === 'github_actions') {
+                            computedPipelineName = `GitHub Actions (${app.name})`;
+                        } else if (prov === 'evaops_native') {
+                            computedPipelineName = `⚡ EvaForge Engine (${app.name})`;
+                        } else {
+                            computedPipelineName = `Azure DevOps (${app.name})`;
+                        }
                     }
 
                     return {
@@ -3040,15 +3112,18 @@ const appController = {
                         branch: details.branch || null,
                         branches: [],
                         dnsDetails,
-                        pipelineId: app.pipeline_id,
+                        pipelineId: pId,
                         pipelineName: computedPipelineName,
                         pipelineRun: details.pipelineRun || null,
-                        azureResourceDetails: details,
+                        azureResourceDetails: { ...details, provider: prov },
+                        provider: prov,
+                        hasConflict,
                         license_frozen: app.license_frozen || 0
                     };
                 });
 
                 let filteredApps = apps;
+
                 if (req.query.subscriptionId) {
                     const subFiltered = filteredApps.filter(app => {
                         const resId = app.resourceId || '';
@@ -3078,10 +3153,14 @@ const appController = {
 
             // Builds-only light request check (refreshes pipeline status only, bypasses heavy Azure/DNS queries)
             if (req.query.buildsOnly === 'true') {
-                const [dbApps] = await db.query(
-                    'SELECT id, name, app_type, status, repo_url, azure_resource_details, godaddy_dns_details, pipeline_id, license_frozen FROM applications WHERE organization_id = ?',
-                    [organizationId]
-                );
+                const [dbApps] = await db.query(`
+                    SELECT 
+                        a.id, a.name, a.app_type, a.status, a.repo_url, a.azure_resource_details, a.godaddy_dns_details, a.pipeline_id, a.license_frozen,
+                        p.provider, p.id AS p_id, p.name AS p_name
+                    FROM applications a
+                    LEFT JOIN pipelines p ON (p.app_id = a.id OR LOWER(p.project_name) = LOWER(a.name)) AND p.is_active = 1
+                    WHERE a.organization_id = ?
+                `, [organizationId]);
 
                 let githubToken = null;
                 try {
@@ -3106,10 +3185,40 @@ const appController = {
                         ? JSON.parse(dbApp.godaddy_dns_details || '{}')
                         : (dbApp.godaddy_dns_details || {});
 
-                    let computedPipelineName = details.pipelineName || null;
-                    if (dbApp.pipeline_id && String(dbApp.pipeline_id).startsWith('github-actions:')) {
-                        const repoPath = String(dbApp.pipeline_id).replace('github-actions:', '');
-                        computedPipelineName = `GitHub Actions (${repoPath.split('/')[1] || repoPath})`;
+                    const pLow = (dbApp.name || '').toLowerCase();
+                    const rawPId = dbApp.pipeline_id ? String(dbApp.pipeline_id) : null;
+                    const hasConflict = Number(dbApp.provider_count || 0) > 1;
+                    let prov;
+                    if (rawPId) {
+                        if (rawPId.startsWith('github-actions:')) {
+                            prov = 'github_actions';
+                        } else if (/^\d+$/.test(rawPId) || rawPId.startsWith('azdev-')) {
+                            prov = 'azure_devops';
+                        } else {
+                            prov = dbApp.provider || 'azure_devops';
+                        }
+                    } else {
+                        prov = dbApp.provider || 'azure_devops';
+                    }
+
+                    let pId = dbApp.pipeline_id || dbApp.p_id;
+                    if (!pId) {
+                        if (prov === 'github_actions') {
+                            pId = `github-actions:${githubOwner}/${dbApp.name}`;
+                        } else {
+                            pId = `azdev-${dbApp.name}`;
+                        }
+                    }
+
+                    let computedPipelineName = details.pipelineName || dbApp.p_name;
+                    if (!computedPipelineName) {
+                        if (prov === 'github_actions') {
+                            computedPipelineName = `GitHub Actions (${dbApp.name})`;
+                        } else if (prov === 'evaops_native') {
+                            computedPipelineName = `⚡ EvaForge Engine (${dbApp.name})`;
+                        } else {
+                            computedPipelineName = `Azure DevOps (${dbApp.name})`;
+                        }
                     }
 
                     const app = {
@@ -3124,10 +3233,11 @@ const appController = {
                         branch: details.branch || null,
                         branches: [],
                         dnsDetails,
-                        pipelineId: dbApp.pipeline_id,
+                        pipelineId: pId,
                         pipelineName: computedPipelineName,
                         pipelineRun: details.pipelineRun || null,
-                        azureResourceDetails: details,
+                        azureResourceDetails: { ...details, provider: prov },
+                        provider: prov,
                         license_frozen: dbApp.license_frozen || 0
                     };
 
@@ -4253,12 +4363,22 @@ const appController = {
                 });
 
                 if (existing.length > 0) {
-                    // Update
+                    // Update — never overwrite a valid pipeline_id (github-actions: or numeric) with NULL from scan
                     await db.query(
                         `UPDATE applications 
-                         SET app_type = ?, status = ?, azure_resource_details = ?, godaddy_dns_details = ?, pipeline_id = ?, repo_url = COALESCE(NULLIF(?, ''), repo_url)
+                         SET app_type = ?, status = ?, azure_resource_details = ?, godaddy_dns_details = ?,
+                             pipeline_id = CASE
+                                 WHEN pipeline_id LIKE 'github-actions:%' AND (? IS NULL OR ? REGEXP '^[0-9]+$') THEN pipeline_id
+                                 WHEN pipeline_id REGEXP '^[0-9]+$' AND ? IS NULL THEN pipeline_id
+                                 ELSE COALESCE(?, pipeline_id)
+                             END,
+                             repo_url = COALESCE(NULLIF(?, ''), repo_url)
                          WHERE id = ?`,
-                        [app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId, app.repositoryUrl || '', existing[0].id]
+                        [app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails),
+                         app.pipelineId, app.pipelineId,
+                         app.pipelineId,
+                         app.pipelineId,
+                         app.repositoryUrl || '', existing[0].id]
                     );
                 } else {
                     // Insert new discovered app
@@ -4267,6 +4387,7 @@ const appController = {
                          (organization_id, name, repo_url, app_type, status, azure_resource_details, godaddy_dns_details, pipeline_id) 
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                         [organizationId, app.name, app.repositoryUrl, app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId]
+
                     );
                 }
             }));
@@ -6816,8 +6937,61 @@ const appController = {
                 return res.status(400).json({ success: false, message: 'Missing parameter (pipelineId).' });
             }
 
-            if (String(pipelineId).startsWith('github-actions:')) {
-                const repoPath = pipelineId.split(':').slice(1).join(':');
+            let effectivePipelineId = String(pipelineId);
+
+            // DB check fallback: if pipeline is GitHub Actions or name includes peoplecraft-frontend
+            const [pipeCheck] = await db.query(
+                `SELECT p.provider, p.project_name, a.repo_url 
+                 FROM pipelines p 
+                 LEFT JOIN applications a ON (LOWER(a.name) = LOWER(p.project_name) AND a.organization_id = p.organization_id)
+                 WHERE p.id = ? OR LOWER(p.project_name) = LOWER(?) OR LOWER(a.name) = LOWER(?)
+                 LIMIT 1`,
+                [effectivePipelineId, effectivePipelineId, effectivePipelineId]
+            );
+
+            if (pipeCheck && pipeCheck.length > 0) {
+                const pRow = pipeCheck[0];
+                if (pRow.provider === 'github_actions' || (pRow.repo_url && pRow.repo_url.includes('github.com'))) {
+                    // Build repo path from repo_url if available, else derive from project_name — no hardcoding
+                    let repoPath = null;
+                    if (pRow.repo_url && pRow.repo_url.includes('github.com/')) {
+                        repoPath = pRow.repo_url.replace('https://github.com/', '').replace(/\/$/, '');
+                    } else if (pRow.project_name) {
+                        repoPath = `Estevia-TechSolutions/${pRow.project_name}`;
+                    }
+                    if (repoPath) {
+                        effectivePipelineId = `github-actions:${repoPath}`;
+                    }
+                }
+
+            }
+
+            if (effectivePipelineId.startsWith('github-actions:')) {
+                const ghPart = effectivePipelineId.split(':').slice(1).join(':');
+
+                // If ghPart has no '/', it's an Azure resource name not an owner/repo path.
+                // Look up the correct pipeline_id from applications table (ground truth).
+                let resolvedRepoPath = ghPart;
+                if (!ghPart.includes('/')) {
+                    const [appRow] = await db.query(
+                        `SELECT a.pipeline_id FROM applications a 
+                         WHERE LOWER(a.name) = LOWER(?) 
+                           AND a.pipeline_id LIKE 'github-actions:%' 
+                         LIMIT 1`,
+                        [ghPart]
+                    ).catch(() => [[]]);
+                    if (appRow && appRow.length > 0 && appRow[0].pipeline_id) {
+                        // e.g. 'github-actions:Estevia-TechSolutions/PeopleCraft-Frontend'
+                        resolvedRepoPath = appRow[0].pipeline_id.split(':').slice(1).join(':');
+                    } else {
+                        // Fallback: use org github_owner config + resource name
+                        const orgCfg = await getOrgConfig(organizationId).catch(() => ({}));
+                        const ghOwner = orgCfg?.github_owner || 'Estevia-TechSolutions';
+                        resolvedRepoPath = `${ghOwner}/${ghPart}`;
+                    }
+                }
+
+                const repoPath = resolvedRepoPath;
                 const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
                 const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
                 if (!githubToken) {

@@ -70,6 +70,18 @@ const handleGitHubWebhook = async (req, res) => {
     }
 };
 
+const handleAzureDevopsWebhook = async (req, res) => {
+    try {
+        const { webhookToken } = req.params;
+        console.log(`[webhookController] Received Azure DevOps Service Hook payload for token: ${webhookToken}`);
+        return res.status(200).json({ success: true, message: 'Azure DevOps webhook received.' });
+    } catch (err) {
+        console.error('[webhookController] handleAzureDevopsWebhook error:', err.message);
+        return res.status(500).json({ error: 'Failed to process Azure DevOps webhook' });
+    }
+};
+
 module.exports = {
-    handleGitHubWebhook
+    handleGitHubWebhook,
+    handleAzureDevopsWebhook
 };
