@@ -628,6 +628,7 @@ const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, target
 const getRunDetails = async (req, res) => {
     const { runId } = req.params;
     try {
+        const orgId = req.user?.organization_id || 'estevia';
         const isHistoricalAttempt = runId.includes('-prev');
         const prevMatch = runId.match(/-prev(\d+)$/);
         const prevOffset = prevMatch ? parseInt(prevMatch[1], 10) : 0;
