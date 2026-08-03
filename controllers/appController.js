@@ -6942,7 +6942,31 @@ const appController = {
             }
 
             if (effectivePipelineId.startsWith('github-actions:')) {
-                const repoPath = effectivePipelineId.split(':').slice(1).join(':');
+                const ghPart = effectivePipelineId.split(':').slice(1).join(':');
+
+                // If ghPart has no '/', it's an Azure resource name not an owner/repo path.
+                // Look up the correct pipeline_id from applications table (ground truth).
+                let resolvedRepoPath = ghPart;
+                if (!ghPart.includes('/')) {
+                    const [appRow] = await db.query(
+                        `SELECT a.pipeline_id FROM applications a 
+                         WHERE LOWER(a.name) = LOWER(?) 
+                           AND a.pipeline_id LIKE 'github-actions:%' 
+                         LIMIT 1`,
+                        [ghPart]
+                    ).catch(() => [[]]);
+                    if (appRow && appRow.length > 0 && appRow[0].pipeline_id) {
+                        // e.g. 'github-actions:Estevia-TechSolutions/PeopleCraft-Frontend'
+                        resolvedRepoPath = appRow[0].pipeline_id.split(':').slice(1).join(':');
+                    } else {
+                        // Fallback: use org github_owner config + resource name
+                        const orgCfg = await getOrgConfig(organizationId).catch(() => ({}));
+                        const ghOwner = orgCfg?.github_owner || 'Estevia-TechSolutions';
+                        resolvedRepoPath = `${ghOwner}/${ghPart}`;
+                    }
+                }
+
+                const repoPath = resolvedRepoPath;
                 const ghSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'github');
                 const githubToken = ghSecrets && (ghSecrets.token || ghSecrets.pat || ghSecrets.accessToken || Object.values(ghSecrets)[0]);
                 if (!githubToken) {
