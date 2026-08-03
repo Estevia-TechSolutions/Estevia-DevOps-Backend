@@ -2963,9 +2963,22 @@ const appController = {
             if (existing.length > 0) {
                 await db.query(
                     `UPDATE applications 
-                     SET app_type = ?, status = ?, azure_resource_details = ?, godaddy_dns_details = ?, pipeline_id = ?, repo_url = COALESCE(NULLIF(?, ''), repo_url)
+                     SET app_type = ?, status = ?, azure_resource_details = ?, godaddy_dns_details = ?,
+                         pipeline_id = CASE
+                             -- Never overwrite a valid github-actions: prefix with NULL or a numeric id from the scan
+                             WHEN pipeline_id LIKE 'github-actions:%' AND (? IS NULL OR ? REGEXP '^[0-9]+$') THEN pipeline_id
+                             -- Never overwrite a valid numeric AzDO id with NULL from the scan
+                             WHEN pipeline_id REGEXP '^[0-9]+$' AND ? IS NULL THEN pipeline_id
+                             -- Accept the new value if it's non-null, else keep existing
+                             ELSE COALESCE(?, pipeline_id)
+                         END,
+                         repo_url = COALESCE(NULLIF(?, ''), repo_url)
                      WHERE id = ?`,
-                    [app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId, app.repositoryUrl || '', existing[0].id]
+                    [app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails),
+                     app.pipelineId, app.pipelineId,  // WHEN github-actions check
+                     app.pipelineId,                   // WHEN numeric AzDO check
+                     app.pipelineId,                   // ELSE COALESCE
+                     app.repositoryUrl || '', existing[0].id]
                 );
             } else {
                 await db.query(
@@ -2975,6 +2988,7 @@ const appController = {
                     [organizationId, app.name, app.repositoryUrl, app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId]
                 );
             }
+
         }));
 
         // Category Pruning logic restricted to target resource group
@@ -4349,12 +4363,22 @@ const appController = {
                 });
 
                 if (existing.length > 0) {
-                    // Update
+                    // Update — never overwrite a valid pipeline_id (github-actions: or numeric) with NULL from scan
                     await db.query(
                         `UPDATE applications 
-                         SET app_type = ?, status = ?, azure_resource_details = ?, godaddy_dns_details = ?, pipeline_id = ?, repo_url = COALESCE(NULLIF(?, ''), repo_url)
+                         SET app_type = ?, status = ?, azure_resource_details = ?, godaddy_dns_details = ?,
+                             pipeline_id = CASE
+                                 WHEN pipeline_id LIKE 'github-actions:%' AND (? IS NULL OR ? REGEXP '^[0-9]+$') THEN pipeline_id
+                                 WHEN pipeline_id REGEXP '^[0-9]+$' AND ? IS NULL THEN pipeline_id
+                                 ELSE COALESCE(?, pipeline_id)
+                             END,
+                             repo_url = COALESCE(NULLIF(?, ''), repo_url)
                          WHERE id = ?`,
-                        [app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId, app.repositoryUrl || '', existing[0].id]
+                        [app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails),
+                         app.pipelineId, app.pipelineId,
+                         app.pipelineId,
+                         app.pipelineId,
+                         app.repositoryUrl || '', existing[0].id]
                     );
                 } else {
                     // Insert new discovered app
@@ -4363,6 +4387,7 @@ const appController = {
                          (organization_id, name, repo_url, app_type, status, azure_resource_details, godaddy_dns_details, pipeline_id) 
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                         [organizationId, app.name, app.repositoryUrl, app.type, app.status, azureDetails, JSON.stringify(app.dnsDetails), app.pipelineId]
+
                     );
                 }
             }));
