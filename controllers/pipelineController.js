@@ -719,9 +719,20 @@ const getRunDetails = async (req, res) => {
             });
         }
 
+        // Guard: run ID not found in DB — scan-generated UUID IDs won't have a DB record
+        if (runs.length === 0) {
+            return res.status(404).json({
+                error: 'Run details not available',
+                message: `No build record found for run ID "${runId}". This run was created by a cloud scan and does not have a stored pipeline record.`,
+                runId,
+                branch: req.query.branch || 'main'
+            });
+        }
+
         const projectName = runId.replace(/^scanned-\d+-/, '').replace(/-prev\d+$/, '') || 'Estevia-App';
 
         const run = runs[0];
+
         let [stages] = await db.query('SELECT * FROM pipeline_stages WHERE run_id = ? ORDER BY stage_order ASC', [runId]);
         
         for (const stage of stages) {
