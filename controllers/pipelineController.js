@@ -470,7 +470,7 @@ const listPipelineRuns = async (req, res) => {
                     branch: activeRun.branch,
                     commit_sha: activeRun.commit_sha
                 } : null,
-                supported_branches: cachedBranches || getSupportedBranches(r.project_name, r.branch, dbBranches)
+                supported_branches: getSupportedBranches(r.project_name, r.branch, (dbBranches && dbBranches.length > 0) ? dbBranches : cachedBranches)
             };
         });
 
@@ -1002,7 +1002,7 @@ const getRunDetails = async (req, res) => {
                 }
             } catch (e) {}
 
-            const supportedBranches = cachedBranches || getSupportedBranches(pName, reqBranch, dbBranches);
+            const supportedBranches = getSupportedBranches(pName, reqBranch, (dbBranches && dbBranches.length > 0) ? dbBranches : cachedBranches);
 
             return res.json({
                 id: runId,
@@ -1118,7 +1118,7 @@ const getRunDetails = async (req, res) => {
             }
         } catch (e) {}
 
-        run.supported_branches = cachedBranches || getSupportedBranches(pName, activeBranch, dbBranches);
+        run.supported_branches = getSupportedBranches(pName, activeBranch, (dbBranches && dbBranches.length > 0) ? dbBranches : cachedBranches);
         run.cname_host = run.cname_host || activeHost;
         run.resource_group = run.resource_group || activeRg;
         run.stages = stages;
