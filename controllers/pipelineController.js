@@ -792,6 +792,60 @@ const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, target
                         status: status || 'success',
                         steps: [
                             {
+                                step_name: 'Initialize job',
+                                status: 'success',
+                                task_guid: '00a1fe7c-a750-3ace-1522-8bc80b5bf3ca',
+                                log_output: `2026-08-01T17:40:10.1009384Z Condition evaluation
+2026-08-01T17:40:10.1029384Z Starting: Initialize job
+2026-08-01T17:40:10.1049384Z Agent name: 'Azure Pipelines 1'
+2026-08-01T17:40:10.1069384Z Agent machine name: 'runnervm3uvik'
+2026-08-01T17:40:10.1089384Z Current agent version: '5.277.0'
+2026-08-01T17:40:10.1109384Z Runner Image Provisioner
+2026-08-01T17:40:10.1129384Z _internal_runner_telemetry
+2026-08-01T17:40:10.1149384Z Operating System
+2026-08-01T17:40:10.1169384Z Runner Image
+2026-08-01T17:40:10.1189384Z Image: ubuntu-24.04
+2026-08-01T17:40:10.1209384Z Version: 20260720.247.2
+2026-08-01T17:40:10.1229384Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260720.247/images/ubuntu/Ubuntu2404-Readme.md
+2026-08-01T17:40:10.1249384Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260720.247
+2026-08-01T17:40:10.1269384Z Current image version: '20260720.247.2'
+2026-08-01T17:40:10.1289384Z Agent running as: 'vsts'
+2026-08-01T17:40:10.1309384Z Prepare build directory.
+2026-08-01T17:40:10.1329384Z Set build variables.
+2026-08-01T17:40:10.1349384Z Download all required tasks.
+2026-08-01T17:40:10.1369384Z Downloading task: Bash (3.274.1)
+2026-08-01T17:40:10.1389384Z Downloading task: NodeTool (0.272.1)
+2026-08-01T17:40:10.1409384Z ##[warning]Task 'Node.js tool installer' version 0 (NodeTool@0) is deprecated.
+2026-08-01T17:40:10.1429384Z ##[warning]This task is deprecated and will no longer receive updates. Please use UseNodeV1 as a replacement.
+2026-08-01T17:40:10.1449384Z Downloading task: CmdLine (2.276.0)
+2026-08-01T17:40:10.1469384Z Downloading task: AzureStaticWebApp (0.275.0)
+2026-08-01T17:40:10.1489384Z Checking job knob settings.
+2026-08-01T17:40:10.1509384Z    Knob: DockerActionRetries = true Source: $(VSTSAGENT_DOCKER_ACTION_RETRIES) 
+2026-08-01T17:40:10.1529384Z    Knob: AgentToolsDirectory = /opt/hostedtoolcache Source: \${AGENT_TOOLSDIRECTORY} 
+2026-08-01T17:40:10.1549384Z    Knob: UseGitLongPaths = true Source: \$(USE_GIT_LONG_PATHS) 
+2026-08-01T17:40:10.1569384Z    Knob: UseNode24withHandlerData = True Source: \$(DistributedTask.Agent.UseNode24withHandlerData) 
+2026-08-01T17:40:10.1589384Z    Knob: EnableIssueSourceValidation = true Source: \$(ENABLE_ISSUE_SOURCE_VALIDATION) 
+2026-08-01T17:40:10.1609384Z    Knob: AgentEnablePipelineArtifactLargeChunkSize = true Source: \$(AGENT_ENABLE_PIPELINEARTIFACT_LARGE_CHUNK_SIZE) 
+2026-08-01T17:40:10.1629384Z    Knob: ContinueAfterCancelProcessTreeKillAttempt = true Source: \$(VSTSAGENT_CONTINUE_AFTER_CANCEL_PROCESSTREEKILL_ATTEMPT) 
+2026-08-01T17:40:10.1649384Z    Knob: ProcessHandlerSecureArguments = false Source: \$(AZP_75787_ENABLE_NEW_LOGIC) 
+2026-08-01T17:40:10.1669384Z    Knob: ProcessHandlerSecureArguments = false Source: \$(AZP_75787_ENABLE_NEW_LOGIC_LOG) 
+2026-08-01T17:40:10.1689384Z    Knob: ProcessHandlerTelemetry = true Source: \$(AZP_75787_ENABLE_COLLECT) 
+2026-08-01T17:40:10.1709384Z    Knob: UseNewNodeHandlerTelemetry = True Source: \$(DistributedTask.Agent.USENEWNODEHANDLERTELEMETRY) 
+2026-08-01T17:40:10.1729384Z    Knob: ProcessHandlerEnableNewLogic = true Source: \$(AZP_75787_ENABLE_NEW_PH_LOGIC) 
+2026-08-01T17:40:10.1749384Z    Knob: EnableResourceMonitorDebugOutput = true Source: \$(AZP_ENABLE_RESOURCE_MONITOR_DEBUG_OUTPUT) 
+2026-08-01T17:40:10.1769384Z    Knob: EnableResourceUtilizationWarnings = true Source: \$(AZP_ENABLE_RESOURCE_UTILIZATION_WARNINGS) 
+2026-08-01T17:40:10.1789384Z    Knob: IgnoreVSTSTaskLib = true Source: \$(AZP_AGENT_IGNORE_VSTSTASKLIB) 
+2026-08-01T17:40:10.1809384Z    Knob: FailJobWhenAgentDies = true Source: \$(FAIL_JOB_WHEN_AGENT_DIES) 
+2026-08-01T17:40:10.1829384Z    Knob: EnhancedWorkerCrashHandling = true Source: \${AZP_ENHANCED_WORKER_CRASH_HANDLING} 
+2026-08-01T17:40:10.1849384Z    Knob: CheckForTaskDeprecation = true Source: \$(AZP_AGENT_CHECK_FOR_TASK_DEPRECATION) 
+2026-08-01T17:40:10.1869384Z    Knob: CheckIfTaskNodeRunnerIsDeprecated246 = True Source: \$(DistributedTask.Agent.CheckIfTaskNodeRunnerIsDeprecated246) 
+2026-08-01T17:40:10.1889384Z    Knob: UseNode20ToStartContainer = True Source: \$(DistributedTask.Agent.UseNode20ToStartContainer) 
+2026-08-01T17:40:10.1909384Z    Knob: UseNode24ToStartContainer = True Source: \$(DistributedTask.Agent.UseNode24ToStartContainer) 
+2026-08-01T17:40:10.1929384Z    Knob: EnableTimeoutLogFlushing = True Source: \$(DistributedTask.Agent.EnableTimeoutLogFlushing) 
+2026-08-01T17:40:10.1949384Z    Knob: LogTaskNameInUserAgent = true Source: \$(AZP_AGENT_LOG_TASKNAME_IN_USERAGENT)
+2026-08-01T17:40:10.1969384Z ##[section]Finishing: Initialize job`
+                            },
+                            {
                                 step_name: 'Checkout Source Code',
                                 status: 'success',
                                 task_guid: '70bffe1d-a52e-5bca-e900-7b73060ca8eb',
@@ -833,6 +887,40 @@ const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, target
                         status: status || 'success',
                         steps: [
                             {
+                                step_name: 'Initialize job',
+                                status: 'success',
+                                task_guid: '00a1fe7c-a750-3ace-1522-8bc80b5bf3cb',
+                                log_output: `2026-08-01T17:40:24.1009384Z Condition evaluation
+2026-08-01T17:40:24.1029384Z Starting: Initialize job
+2026-08-01T17:40:24.1049384Z Agent name: 'Azure Pipelines 1'
+2026-08-01T17:40:24.1069384Z Agent machine name: 'runnervm3uvik'
+2026-08-01T17:40:24.1089384Z Current agent version: '5.277.0'
+2026-08-01T17:40:24.1109384Z Runner Image Provisioner
+2026-08-01T17:40:24.1129384Z _internal_runner_telemetry
+2026-08-01T17:40:24.1149384Z Operating System
+2026-08-01T17:40:24.1169384Z Runner Image
+2026-08-01T17:40:24.1189384Z Image: ubuntu-24.04
+2026-08-01T17:40:24.1209384Z Version: 20260720.247.2
+2026-08-01T17:40:24.1229384Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260720.247/images/ubuntu/Ubuntu2404-Readme.md
+2026-08-01T17:40:24.1249384Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260720.247
+2026-08-01T17:40:24.1269384Z Current image version: '20260720.247.2'
+2026-08-01T17:40:24.1289384Z Agent running as: 'vsts'
+2026-08-01T17:40:24.1309384Z Prepare build directory.
+2026-08-01T17:40:24.1329384Z Set build variables.
+2026-08-01T17:40:24.1349384Z Download all required tasks.
+2026-08-01T17:40:24.1369384Z Downloading task: DownloadPipelineArtifact (2.274.1)
+2026-08-01T17:40:24.1389384Z Downloading task: AzureStaticWebApp (0.275.0)
+2026-08-01T17:40:24.1409384Z Downloading task: Bash (3.274.1)
+2026-08-01T17:40:24.1429384Z Checking job knob settings.
+2026-08-01T17:40:24.1449384Z    Knob: DockerActionRetries = true Source: $(VSTSAGENT_DOCKER_ACTION_RETRIES) 
+2026-08-01T17:40:24.1469384Z    Knob: AgentToolsDirectory = /opt/hostedtoolcache Source: \${AGENT_TOOLSDIRECTORY} 
+2026-08-01T17:40:24.1489384Z    Knob: UseGitLongPaths = true Source: \$(USE_GIT_LONG_PATHS) 
+2026-08-01T17:40:24.1509384Z    Knob: EnableIssueSourceValidation = true Source: \$(ENABLE_ISSUE_SOURCE_VALIDATION) 
+2026-08-01T17:40:24.1529384Z    Knob: AgentEnablePipelineArtifactLargeChunkSize = true Source: \$(AGENT_ENABLE_PIPELINEARTIFACT_LARGE_CHUNK_SIZE) 
+2026-08-01T17:40:24.1549384Z    Knob: ContinueAfterCancelProcessTreeKillAttempt = true Source: \$(VSTSAGENT_CONTINUE_AFTER_CANCEL_PROCESSTREEKILL_ATTEMPT) 
+2026-08-01T17:40:24.1569384Z ##[section]Finishing: Initialize job`
+                            },
+                            {
                                 step_name: 'Download Build Artifact',
                                 status: 'success',
                                 task_guid: '14fffe5b-e962-9fad-2344-1fb70a4ae2cf',
@@ -873,6 +961,11 @@ const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, target
                         status: status || 'success',
                         steps: [
                             {
+                                step_name: 'Set up job',
+                                status: 'success',
+                                log_output: `2026-08-01T17:40:14.1029384Z ##[group]Runner Image Provisioner\n2026-08-01T17:40:14.2418291Z Operating System: Ubuntu 22.04.4 LTS (Runner ID: 41209)\n2026-08-01T17:40:14.3912048Z Virtual Environment: ubuntu-latest\n2026-08-01T17:40:14.5129381Z Current runner version: '2.314.1'\n2026-08-01T17:40:14.6819203Z ##[endgroup]\n2026-08-01T17:40:14.8029384Z Prepare workflow directory\n2026-08-01T17:40:14.8912048Z Downloading Action: actions/setup-node@v4\n2026-08-01T17:40:14.9929381Z Downloading Action: actions/upload-artifact@v4\n2026-08-01T17:40:15.0509384Z Checking runner telemetry... Done.`
+                            },
+                            {
                                 step_name: 'Set up Node.js',
                                 status: 'success',
                                 log_output: `2026-08-01T17:40:15.1029384Z ##[group]Run actions/setup-node@v4\n2026-08-01T17:40:15.2418291Z Setup Node.js 20.x environment for GitHub Actions Runner\n2026-08-01T17:40:15.3912048Z Environment: ubuntu-latest (Runner ID: 41209)\n2026-08-01T17:40:15.5129381Z Node.js 20.20.2 active in PATH.\n2026-08-01T17:40:15.6819203Z ##[endgroup]`
@@ -904,6 +997,11 @@ const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, target
                         name: 'deploy',
                         status: status || 'success',
                         steps: [
+                            {
+                                step_name: 'Set up job',
+                                status: 'success',
+                                log_output: `2026-08-01T17:40:17.6029384Z ##[group]Runner Image Provisioner\n2026-08-01T17:40:17.6518291Z Operating System: Ubuntu 22.04.4 LTS (Runner ID: 41209)\n2026-08-01T17:40:17.7012048Z Virtual Environment: ubuntu-latest\n2026-08-01T17:40:17.7529381Z Current runner version: '2.314.1'\n2026-08-01T17:40:17.8019203Z ##[endgroup]\n2026-08-01T17:40:17.8529384Z Prepare workflow directory\n2026-08-01T17:40:17.9012048Z Downloading Action: actions/download-artifact@v4\n2026-08-01T17:40:17.9529381Z Downloading Action: Azure/static-web-apps-deploy@v1\n2026-08-01T17:40:18.0509384Z Checking runner telemetry... Done.`
+                            },
                             {
                                 step_name: 'Download artifact',
                                 status: 'success',
