@@ -466,7 +466,7 @@ const listPipelineRuns = async (req, res) => {
 
 const getSupportedBranches = (pName, reqBranch) => {
     try {
-        const baseWorkspace = process.env.ESTEVIA_WORKSPACE_PATH || '/Users/gmenon/WorkSpace/Estevia/CodeBase/Estevia-Workspace';
+        const baseWorkspace = process.env.ESTEVIA_WORKSPACE_PATH || path.resolve(__dirname, '..', '..');
         if (!fs.existsSync(baseWorkspace)) {
             return fallbackBranches(pName, reqBranch);
         }
