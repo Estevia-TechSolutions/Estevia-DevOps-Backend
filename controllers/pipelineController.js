@@ -29,9 +29,13 @@ const stripEnvSuffixes = (name) => {
 
 const healMismatchedPipelineIds = async (organizationId) => {
     try {
-        const [apps] = await db.query('SELECT id, name, pipeline_id FROM applications WHERE organization_id = ? AND pipeline_id IS NOT NULL', [organizationId]);
+        const [apps] = await db.query('SELECT id, name, pipeline_id, azure_resource_details FROM applications WHERE organization_id = ? AND pipeline_id IS NOT NULL', [organizationId]);
         const [pipelines] = await db.query('SELECT id, project_name, name FROM pipelines WHERE organization_id = ?', [organizationId]);
         
+        if (pipelines.length === 0) {
+            return; // Skip self-healing if local pipelines cache table is not yet populated
+        }
+
         const pipelineMap = new Map();
         pipelines.forEach(p => pipelineMap.set(String(p.id), p));
         
@@ -48,13 +52,22 @@ const healMismatchedPipelineIds = async (organizationId) => {
                     const correctPipe = pipelines.find(pl => stripEnvSuffixes(pl.project_name || pl.name) === strippedApp);
                     const correctId = correctPipe ? String(correctPipe.id) : null;
                     console.log(`[Self-Healing] Correcting mismatched pipeline_id for app '${app.name}' from '${rawPipeId}' to '${correctId}'`);
-                    await db.query('UPDATE applications SET pipeline_id = ? WHERE id = ?', [correctId, app.id]);
+                    
+                    let details = {};
+                    try {
+                        details = typeof app.azure_resource_details === 'string'
+                            ? JSON.parse(app.azure_resource_details || '{}')
+                            : (app.azure_resource_details || {});
+                    } catch (e) {}
+                    if (details.pipelineRun) {
+                        delete details.pipelineRun;
+                    }
+                    
+                    await db.query(
+                        'UPDATE applications SET pipeline_id = ?, azure_resource_details = ? WHERE id = ?',
+                        [correctId, JSON.stringify(details), app.id]
+                    );
                 }
-            } else if (/^\d+$/.test(rawPipeId)) {
-                const correctPipe = pipelines.find(pl => stripEnvSuffixes(pl.project_name || pl.name) === stripEnvSuffixes(app.name));
-                const correctId = correctPipe ? String(correctPipe.id) : null;
-                console.log(`[Self-Healing] Correcting missing pipeline_id for app '${app.name}' to '${correctId}'`);
-                await db.query('UPDATE applications SET pipeline_id = ? WHERE id = ?', [correctId, app.id]);
             }
         }
     } catch (e) {
@@ -382,10 +395,11 @@ const listPipelineRuns = async (req, res) => {
                     `, [newPipeId, orgId, app.id || null, app.name, `${app.name} CI/CD Pipeline`, prov, targetT]);
 
                     const newRunId = `run-${uuidv4().slice(0, 8)}`;
+                    const runStatus = azureDetails.pipelineRun?.status || 'success';
                     await db.query(`
                         INSERT INTO pipeline_runs (id, pipeline_id, run_number, status, commit_sha, commit_message, branch, triggered_by, duration_seconds)
-                        VALUES (?, ?, ?, 'success', 'a4bafe6', 'Sync deployment from scanned Azure resource', 'main', 'Azure Cloud Sync', 65)
-                    `, [newRunId, newPipeId, dynamicRunNum]);
+                        VALUES (?, ?, ?, ?, 'a4bafe6', 'Sync deployment from scanned Azure resource', 'main', 'Azure Cloud Sync', 65)
+                    `, [newRunId, newPipeId, dynamicRunNum, runStatus]);
 
                 } else if (existing.length === 1) {
                     // Single active pipeline — update provider if not protected
@@ -400,7 +414,8 @@ const listPipelineRuns = async (req, res) => {
                         await db.query('UPDATE pipelines SET app_id = COALESCE(app_id, ?) WHERE id = ?', [app.id || null, existingPipeId]);
                     }
                     if (dynamicRunNum > 1) {
-                        await db.query('UPDATE pipeline_runs SET run_number = ? WHERE pipeline_id = ?', [dynamicRunNum, existingPipeId]);
+                        const runStatus = azureDetails.pipelineRun?.status || 'success';
+                        await db.query('UPDATE pipeline_runs SET run_number = ?, status = ? WHERE pipeline_id = ?', [dynamicRunNum, runStatus, existingPipeId]);
                     }
 
                 } else {

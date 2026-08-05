@@ -1169,10 +1169,17 @@ async function main() {
                 UPDATE applications SET pipeline_id = '22' WHERE LOWER(name) LIKE '%restaurant-backend%';
             `).catch(() => {});
             await connection.query(`
+                UPDATE applications SET pipeline_id = '23' WHERE LOWER(name) LIKE '%restaurant-frontend%';
+            `).catch(() => {});
+            await connection.query(`
                 UPDATE applications SET pipeline_id = '17' WHERE LOWER(name) LIKE '%api-evaops%';
             `).catch(() => {});
             await connection.query(`
                 UPDATE applications SET pipeline_id = '18' WHERE LOWER(name) LIKE '%evaops-frontend%';
+            `).catch(() => {});
+            // Flush cached details to force a clean fetch and resolve stale contamination
+            await connection.query(`
+                UPDATE applications SET azure_resource_details = '{}';
             `).catch(() => {});
 
         } catch (healErr) {
