@@ -520,16 +520,54 @@ const getSupportedBranches = (pName, reqBranch, dbBranches) => {
                 }
             }
 
-            // 3. Fallback to name heuristic matching if still no match
+            // 3. Fallback to name heuristic matching if still no match (using dynamic similarity token matching)
             if (!matchedDir) {
                 const pLow = (pName || '').toLowerCase();
-                matchedDir = dirs.find(d => {
+                const appTokens = pLow
+                    .replace(/^(ca|swa|api|app|func|rg)-/i, '')
+                    .replace(/-(dev|qa|prod|production|staging|test|swa)$/g, '')
+                    .split(/[-_\s]+/)
+                    .filter(t => t.length > 1);
+
+                let bestMatch = null;
+                let highestScore = 0;
+
+                for (const d of dirs) {
                     const dLow = d.toLowerCase();
-                    if (pLow === 'api-evaops' && dLow.includes('devops') && dLow.includes('backend')) return true;
-                    if (pLow === 'evaops-frontend-swa' && dLow.includes('devops') && dLow.includes('frontend')) return true;
-                    if (pLow.includes('marketing') && dLow.includes('marketing')) return true;
-                    return false;
-                });
+                    let score = 0;
+
+                    // Match token substrings
+                    for (const t of appTokens) {
+                        if (dLow.includes(t)) {
+                            score += 10;
+                        }
+                    }
+
+                    // Cross-app abbreviation matching (e.g. evaops -> estevia devops)
+                    if ((pLow.includes('eva') || pLow.includes('ops')) && dLow.includes('devops')) {
+                        score += 5;
+                    }
+                    if (pLow.includes('api') && dLow.includes('backend')) {
+                        score += 3;
+                    }
+                    if (pLow.includes('swa') && dLow.includes('frontend')) {
+                        score += 3;
+                    }
+
+                    // Standard directory heuristics
+                    if (pLow.includes('marketing') && dLow.includes('marketing')) {
+                        score += 20;
+                    }
+
+                    if (score > highestScore) {
+                        highestScore = score;
+                        bestMatch = d;
+                    }
+                }
+
+                if (highestScore > 0) {
+                    matchedDir = bestMatch;
+                }
             }
 
             if (matchedDir) {
