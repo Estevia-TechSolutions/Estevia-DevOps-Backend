@@ -20,7 +20,7 @@ function stripEnvSuffixes(name) {
 
 const healMismatchedPipelineIds = async (organizationId) => {
     try {
-        const [apps] = await db.query('SELECT id, name, pipeline_id, azure_resource_details FROM applications WHERE organization_id = ? AND pipeline_id IS NOT NULL', [organizationId]);
+        const [apps] = await db.query('SELECT id, name, pipeline_id, repo_url, azure_resource_details FROM applications WHERE organization_id = ? AND pipeline_id IS NOT NULL', [organizationId]);
         const [pipelines] = await db.query('SELECT id, project_name, name FROM pipelines WHERE organization_id = ?', [organizationId]);
         
         if (pipelines.length === 0) {
@@ -33,6 +33,34 @@ const healMismatchedPipelineIds = async (organizationId) => {
         for (const app of apps) {
             const rawPipeId = String(app.pipeline_id);
             if (rawPipeId.startsWith('github-actions:')) {
+                if (app.repo_url) {
+                    const cleanRepo = app.repo_url.replace('https://github.com/', '').replace(/\/$/, '');
+                    const currentRepo = rawPipeId.replace('github-actions:', '');
+                    if (cleanRepo && currentRepo && cleanRepo.toLowerCase() !== currentRepo.toLowerCase()) {
+                        const newPipeId = 'github-actions:' + cleanRepo;
+                        console.log(`[Self-Healing] Correcting mismatched GHA pipeline_id for app '${app.name}' from '${rawPipeId}' to '${newPipeId}'`);
+                        
+                        let details = {};
+                        try {
+                            details = typeof app.azure_resource_details === 'string'
+                                ? JSON.parse(app.azure_resource_details || '{}')
+                                : (app.azure_resource_details || {});
+                        } catch (e) {}
+                        if (details.pipelineRun) {
+                            delete details.pipelineRun;
+                        }
+                        
+                        await db.query(
+                            'UPDATE applications SET pipeline_id = ?, azure_resource_details = ? WHERE id = ?',
+                            [newPipeId, JSON.stringify(details), app.id]
+                        );
+                        
+                        await db.query(
+                            'UPDATE pipelines SET id = ? WHERE organization_id = ? AND LOWER(project_name) = LOWER(?)',
+                            [newPipeId, organizationId, app.name]
+                        );
+                    }
+                }
                 continue;
             }
             const p = pipelineMap.get(rawPipeId);
