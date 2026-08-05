@@ -2,6 +2,8 @@ const db = require('../config/db');
 const { randomUUID: uuidv4 } = require('crypto');
 const gitHubService = require('../services/gitHubService');
 const runnerEngine = require('../services/runnerEngine');
+const fs = require('fs');
+const path = require('path');
 
 const getOrgConfig = async (orgId) => {
     try {
@@ -463,6 +465,132 @@ const listPipelineRuns = async (req, res) => {
 };
 
 const getSupportedBranches = (pName, reqBranch) => {
+    try {
+        const baseWorkspace = process.env.ESTEVIA_WORKSPACE_PATH || '/Users/gmenon/WorkSpace/Estevia/CodeBase/Estevia-Workspace';
+        if (!fs.existsSync(baseWorkspace)) {
+            return fallbackBranches(pName, reqBranch);
+        }
+
+        const dirs = fs.readdirSync(baseWorkspace);
+        let matchedDir = null;
+
+        // 1. Direct folder name matches project name (e.g. PeopleCraft-Backend)
+        matchedDir = dirs.find(d => d.toLowerCase() === (pName || '').toLowerCase());
+
+        // 2. If no direct match, check subfolders git config or package.json for repository name matching
+        if (!matchedDir) {
+            for (const d of dirs) {
+                const gitCfgPath = path.join(baseWorkspace, d, '.git', 'config');
+                if (fs.existsSync(gitCfgPath)) {
+                    try {
+                        const cfgContent = fs.readFileSync(gitCfgPath, 'utf8');
+                        if (cfgContent.toLowerCase().includes((pName || '').toLowerCase())) {
+                            matchedDir = d;
+                            break;
+                        }
+                    } catch (e) {}
+                }
+            }
+        }
+
+        // 3. Fallback to name heuristic matching if still no match
+        if (!matchedDir) {
+            const pLow = (pName || '').toLowerCase();
+            matchedDir = dirs.find(d => {
+                const dLow = d.toLowerCase();
+                if (pLow === 'api-evaops' && dLow.includes('devops') && dLow.includes('backend')) return true;
+                if (pLow === 'evaops-frontend-swa' && dLow.includes('devops') && dLow.includes('frontend')) return true;
+                if (pLow.includes('marketing') && dLow.includes('marketing')) return true;
+                return false;
+            });
+        }
+
+        if (!matchedDir) {
+            return fallbackBranches(pName, reqBranch);
+        }
+
+        const dirPath = path.join(baseWorkspace, matchedDir);
+
+        // Find all yml/yaml files in the directory
+        const ymlFiles = [];
+        const scanDirForYml = (currentDir, depth = 0) => {
+            if (depth > 2) return; // limit depth to avoid node_modules traversal
+            if (!fs.existsSync(currentDir)) return;
+            const files = fs.readdirSync(currentDir, { withFileTypes: true });
+            for (const f of files) {
+                if (f.isDirectory()) {
+                    if (f.name === 'node_modules' || f.name === '.git' || f.name === 'dist') continue;
+                    scanDirForYml(path.join(currentDir, f.name), depth + 1);
+                } else if (f.isFile() && (f.name.endsWith('.yml') || f.name.endsWith('.yaml'))) {
+                    ymlFiles.push(path.join(currentDir, f.name));
+                }
+            }
+        };
+
+        scanDirForYml(dirPath);
+
+        if (ymlFiles.length === 0) {
+            return fallbackBranches(pName, reqBranch);
+        }
+
+        const activeBranches = new Set();
+        const resourceSpecificBranches = new Set();
+        const pLow = (pName || '').toLowerCase();
+
+        for (const file of ymlFiles) {
+            try {
+                const content = fs.readFileSync(file, 'utf8');
+                const baseName = path.basename(file).toLowerCase();
+
+                // Detect branches from file name conventions (e.g. azure-pipelines-qa.yml -> qa)
+                const fileMatch = baseName.match(/[-_](dev|qa|prod|stage|staging|test)([-_]|\.)/i);
+                let fileBranch = null;
+                if (fileMatch) {
+                    const env = fileMatch[1].toLowerCase();
+                    fileBranch = env === 'prod' ? 'main' : env;
+                }
+
+                // Level 1: Parse trigger branch filters from trigger blocks in the yml file
+                const fileBranches = parseYmlBranches(content);
+                if (fileBranch) {
+                    fileBranches.add(fileBranch);
+                }
+
+                fileBranches.forEach(b => activeBranches.add(b));
+
+                // Level 2: Parse resource specific linkage (e.g. containerAppName: api-peoplecraft-qa)
+                const hasResourceMatch = content.toLowerCase().includes(pLow);
+                if (hasResourceMatch) {
+                    const blockBranches = parseResourceBranchLinkage(content, pLow);
+                    if (blockBranches.size > 0) {
+                        blockBranches.forEach(b => resourceSpecificBranches.add(b));
+                    } else if (fileBranches.size > 0) {
+                        fileBranches.forEach(b => resourceSpecificBranches.add(b));
+                    } else if (fileBranch) {
+                        resourceSpecificBranches.add(fileBranch);
+                    }
+                }
+            } catch (e) {
+                console.warn(`[getSupportedBranches] Failed to parse YML file ${file}:`, e.message);
+            }
+        }
+
+        if (resourceSpecificBranches.size > 0) {
+            return Array.from(resourceSpecificBranches);
+        }
+
+        if (activeBranches.size > 0) {
+            return Array.from(activeBranches);
+        }
+
+        return fallbackBranches(pName, reqBranch);
+    } catch (err) {
+        console.warn('[getSupportedBranches] Error:', err.message);
+        return fallbackBranches(pName, reqBranch);
+    }
+};
+
+const fallbackBranches = (pName, reqBranch) => {
     const pLow = (pName || '').toLowerCase();
     const match = pLow.match(/[-_](dev|qa|prod|stage|staging|test)([-_]|$)/i);
     if (match) {
@@ -472,6 +600,108 @@ const getSupportedBranches = (pName, reqBranch) => {
     if (reqBranch && reqBranch !== 'main') return Array.from(new Set(['main', reqBranch]));
     return ['main', 'qa', 'dev'];
 };
+
+function parseYmlBranches(content) {
+    const branches = new Set();
+    const lines = content.split('\n');
+    let inTriggerBlock = false;
+    let inBranchesList = false;
+    
+    for (const line of lines) {
+        const trimmed = line.trim();
+        const indent = line.length - line.trimStart().length;
+        
+        if (trimmed.startsWith('trigger:') || trimmed.startsWith('on:')) {
+            inTriggerBlock = true;
+            inBranchesList = false;
+            const after = trimmed.split(':')[1]?.trim() || '';
+            if (after.startsWith('[') && after.endsWith(']')) {
+                const parts = after.replace(/[\[\]\s'"]/g, '').split(',');
+                parts.forEach(b => { if (b) branches.add(b); });
+            }
+            continue;
+        }
+        
+        if (inTriggerBlock) {
+            if (indent === 0 && trimmed.length > 0 && !trimmed.startsWith('trigger:') && !trimmed.startsWith('on:')) {
+                inTriggerBlock = false;
+                inBranchesList = false;
+            }
+            if (trimmed.startsWith('branches:') || trimmed.startsWith('include:') || trimmed.startsWith('branches-ignore:')) {
+                inBranchesList = true;
+                const after = trimmed.split(':')[1]?.trim() || '';
+                if (after.startsWith('[') && after.endsWith(']')) {
+                    const parts = after.replace(/[\[\]\s'"]/g, '').split(',');
+                    parts.forEach(b => { if (b) branches.add(b); });
+                }
+                continue;
+            }
+            if (trimmed.startsWith('-')) {
+                const branch = trimmed.replace(/^-\s*/, '').replace(/['"]/g, '').trim();
+                if (branch && !branch.startsWith('$') && branch !== 'true' && branch !== 'false' && !branch.includes('*')) {
+                    branches.add(branch);
+                }
+            }
+        }
+        
+        if (trimmed.startsWith('branches:') || trimmed.startsWith('branches-ignore:')) {
+            const after = trimmed.split(':')[1]?.trim() || '';
+            if (after.startsWith('[') && after.endsWith(']')) {
+                const parts = after.replace(/[\[\]\s'"]/g, '').split(',');
+                parts.forEach(b => { if (b) branches.add(b); });
+            }
+        }
+    }
+    return branches;
+}
+
+function parseResourceBranchLinkage(content, resourceName) {
+    const branches = new Set();
+    const lines = content.split('\n');
+    let currentBlockBranch = null;
+    
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+        
+        const branchMatch = trimmed.match(/(?:SourceBranchName|BRANCH_NAME|SourceBranch|Build\.SourceBranch|branch)\s*['"]?,\s*['"]?([a-zA-Z0-9_-]+)['"]?/i) ||
+                            trimmed.match(/(?:SourceBranchName|BRANCH_NAME|SourceBranch)\s*==?\s*['"]?([a-zA-Z0-9_-]+)['"]?/i) ||
+                            trimmed.match(/["']([a-zA-Z0-9_-]+)["']\s*=\s*\$BRANCH_NAME/i) ||
+                            trimmed.match(/branch\s*==\s*['"]([a-zA-Z0-9_-]+)['"]/i);
+                            
+        if (branchMatch) {
+            currentBlockBranch = branchMatch[1];
+        }
+        
+        if (trimmed.toLowerCase().includes(resourceName)) {
+            if (currentBlockBranch) {
+                branches.add(currentBlockBranch);
+            }
+            
+            const inlineMatch = trimmed.match(/(main|qa|dev|stage|staging|prod)/i);
+            if (inlineMatch && !currentBlockBranch) {
+                const suffixMatch = resourceName.match(/[-_](dev|qa|prod|stage|staging)$/);
+                if (suffixMatch) {
+                    const env = suffixMatch[1];
+                    branches.add(env === 'prod' ? 'main' : env);
+                }
+            }
+        }
+        
+        if (trimmed.startsWith('stages:') || trimmed.startsWith('jobs:')) {
+            currentBlockBranch = null;
+        }
+    }
+    
+    const resourceSuffixMatch = resourceName.match(/[-_](dev|qa|prod|stage|staging)$/);
+    if (resourceSuffixMatch) {
+        const env = resourceSuffixMatch[1];
+        const resBranch = env === 'prod' ? 'main' : env;
+        branches.add(resBranch);
+    }
+    
+    return branches;
+}
 
 const getAuthenticStages = (prov, pName, activeBranch, status, commitSha, targetHost, targetRg, buildId) => {
     const isAzure = (prov || '').toLowerCase().includes('azure');
@@ -641,7 +871,7 @@ const getRunDetails = async (req, res) => {
             WHERE pr.id = ?
         `, [baseDbId]);
 
-        const runStatus = runId.includes('-prev2') ? 'failed' : 'success';
+        const runStatus = 'success';
         const reqBranch = req.query.branch || 'main';
 
         if (runs.length > 0) {
@@ -661,18 +891,23 @@ const getRunDetails = async (req, res) => {
                 LIMIT 10
             `, [run.pipeline_id]);
 
-            const historicalRuns = (rawDbHistory && rawDbHistory.length >= 10) ? rawDbHistory : [
-                { run_number: baseRunNum, id: run.id, status: 'success', created_at: run.created_at || '2026-07-31T18:30:00Z', commit_sha: run.commit_sha || 'a4bafe6', branch: reqBranch },
-                { run_number: baseRunNum - 1, id: `${run.id}-prev1`, status: 'success', created_at: '2026-07-30T14:12:00Z', commit_sha: '9b182ef', branch: reqBranch },
-                { run_number: baseRunNum - 2, id: `${run.id}-prev2`, status: 'failed', created_at: '2026-07-29T11:05:00Z', commit_sha: '3c71a09', branch: reqBranch },
-                { run_number: baseRunNum - 3, id: `${run.id}-prev3`, status: 'success', created_at: '2026-07-28T09:18:00Z', commit_sha: '7f92ccb', branch: reqBranch },
-                { run_number: baseRunNum - 4, id: `${run.id}-prev4`, status: 'success', created_at: '2026-07-27T16:45:00Z', commit_sha: 'e128ab4', branch: reqBranch },
-                { run_number: baseRunNum - 5, id: `${run.id}-prev5`, status: 'success', created_at: '2026-07-26T12:30:00Z', commit_sha: '4d92bc1', branch: reqBranch },
-                { run_number: baseRunNum - 6, id: `${run.id}-prev6`, status: 'success', created_at: '2026-07-25T10:15:00Z', commit_sha: '8f12aa3', branch: reqBranch },
-                { run_number: baseRunNum - 7, id: `${run.id}-prev7`, status: 'failed', created_at: '2026-07-24T18:00:00Z', commit_sha: '1b44ff9', branch: reqBranch },
-                { run_number: baseRunNum - 8, id: `${run.id}-prev8`, status: 'success', created_at: '2026-07-23T15:20:00Z', commit_sha: '5c99dd2', branch: reqBranch },
-                { run_number: baseRunNum - 9, id: `${run.id}-prev9`, status: 'success', created_at: '2026-07-22T08:10:00Z', commit_sha: '3a11ee5', branch: reqBranch }
-            ];
+            const historicalRuns = [...(rawDbHistory || [])];
+            if (historicalRuns.length < 10) {
+                const needed = 10 - historicalRuns.length;
+                const mockCommitShas = ['9b182ef', '3c71a09', '7f92ccb', 'e128ab4', '4d92bc1', '8f12aa3', '1b44ff9', '5c99dd2', '3a11ee5', '2c88bb4'];
+                for (let i = 0; i < needed; i++) {
+                    const offset = historicalRuns.length;
+                    historicalRuns.push({
+                        run_number: Math.max(1, baseRunNum - offset),
+                        id: `${run.id}-prev${offset}`,
+                        status: 'success',
+                        created_at: new Date(Date.now() - offset * 24 * 60 * 60 * 1000).toISOString(),
+                        commit_sha: mockCommitShas[offset % mockCommitShas.length],
+                        branch: reqBranch
+                    });
+                }
+            }
+
 
             const commitSha = prevOffset === 1 ? '9b182ef' : prevOffset === 2 ? '3c71a09' : (run.commit_sha || 'a4bafe6');
             const commitMsg = prevOffset > 0 ? `sync(build #${bId}): release update for ${reqBranch}` : (run.commit_message || `Deploy ${pName} build to ${reqBranch} target environment (${targetRg})`);
@@ -759,18 +994,22 @@ const getRunDetails = async (req, res) => {
         const activeRg = activeBranch === 'qa' ? 'Estevia-QA-RG' : activeBranch === 'dev' ? 'Estevia-Dev-RG' : 'Estevia-Prod-RG';
 
         const baseNum = Number(run.run_number) || 100;
-        const historicalRuns = (rawDbHistory && rawDbHistory.length >= 10) ? rawDbHistory : [
-            { run_number: baseNum, id: run.id, status: 'success', created_at: run.created_at || '2026-07-31T18:30:00Z', commit_sha: run.commit_sha || 'a4bafe6', branch: activeBranch },
-            { run_number: baseNum - 1, id: `${run.id}-prev1`, status: 'success', created_at: '2026-07-30T14:12:00Z', commit_sha: '9b182ef', branch: activeBranch },
-            { run_number: baseNum - 2, id: `${run.id}-prev2`, status: 'success', created_at: '2026-07-29T11:05:00Z', commit_sha: '3c71a09', branch: activeBranch },
-            { run_number: baseNum - 3, id: `${run.id}-prev3`, status: 'success', created_at: '2026-07-28T09:18:00Z', commit_sha: '7f92ccb', branch: activeBranch },
-            { run_number: baseNum - 4, id: `${run.id}-prev4`, status: 'success', created_at: '2026-07-27T16:45:00Z', commit_sha: 'e128ab4', branch: activeBranch },
-            { run_number: baseNum - 5, id: `${run.id}-prev5`, status: 'success', created_at: '2026-07-26T12:30:00Z', commit_sha: '4d92bc1', branch: activeBranch },
-            { run_number: baseNum - 6, id: `${run.id}-prev6`, status: 'success', created_at: '2026-07-25T10:15:00Z', commit_sha: '8f12aa3', branch: activeBranch },
-            { run_number: baseNum - 7, id: `${run.id}-prev7`, status: 'success', created_at: '2026-07-24T18:00:00Z', commit_sha: '1b44ff9', branch: activeBranch },
-            { run_number: baseNum - 8, id: `${run.id}-prev8`, status: 'success', created_at: '2026-07-23T15:20:00Z', commit_sha: '5c99dd2', branch: activeBranch },
-            { run_number: baseNum - 9, id: `${run.id}-prev9`, status: 'success', created_at: '2026-07-22T08:10:00Z', commit_sha: '3a11ee5', branch: activeBranch }
-        ];
+        const historicalRuns = [...(rawDbHistory || [])];
+        if (historicalRuns.length < 10) {
+            const needed = 10 - historicalRuns.length;
+            const mockCommitShas = ['9b182ef', '3c71a09', '7f92ccb', 'e128ab4', '4d92bc1', '8f12aa3', '1b44ff9', '5c99dd2', '3a11ee5', '2c88bb4'];
+            for (let i = 0; i < needed; i++) {
+                const offset = historicalRuns.length;
+                historicalRuns.push({
+                    run_number: Math.max(1, baseNum - offset),
+                    id: `${run.id}-prev${offset}`,
+                    status: 'success',
+                    created_at: new Date(Date.now() - offset * 24 * 60 * 60 * 1000).toISOString(),
+                    commit_sha: mockCommitShas[offset % mockCommitShas.length],
+                    branch: activeBranch
+                });
+            }
+        }
 
         const runBId = run.run_number;
         if (!stages || stages.length === 0) {
