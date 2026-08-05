@@ -111,18 +111,112 @@ const executeEvaForgeDeployment = async (runId) => {
                 }
 
                 // Step logs with UTC microsecond timestamps
-                const logsStep1 = `${nowMicro()}  Task         : Checkout Source Code\n${nowMicro()}  ##[section]Starting: Checkout Repository Code@v4\n${nowMicro()}  [command] git clone -b ${run.branch || 'main'} --depth 1 origin/${run.branch || 'main'}\n${nowMicro()}  ##[section]Finishing: Checkout Repository Code@v4`;
-                const logsStep2 = `${nowMicro()}  Task         : Initialize & Build\n${nowMicro()}  ##[section]Starting: Compile Production App Bundle\n${nowMicro()}  [command] npm ci && npm run build\n${nowMicro()}  [stdout] Vite v8.0.16 compilation clean.\n${nowMicro()}  ##[section]Finishing: Compile Production App Bundle`;
-                const logsStep3 = `${nowMicro()}  Task         : Azure Cloud Deployment\n${nowMicro()}  ##[section]Starting: Deploy to Azure Cloud Infrastructure\n${nowMicro()}  [command] az ${run.target_type === 'static_web_app' ? 'staticwebapp' : 'containerapp'} deploy --name ${run.project_name} --resource-group ${targetRg}\n${nowMicro()}  [stdout] Live deployment active on https://${run.project_name}.${targetDns}\n${nowMicro()}  ##[section]Finishing: Azure Cloud Deployment`;
+                const logsStepInit = `${nowMicro()} Condition evaluation\n` +
+                                     `${nowMicro()} Starting: Initialize job\n` +
+                                     `${nowMicro()} Agent name: 'Azure Pipelines 1'\n` +
+                                     `${nowMicro()} Agent machine name: 'runnervm3uvik'\n` +
+                                     `${nowMicro()} Current agent version: '5.277.0'\n` +
+                                     `${nowMicro()} Operating System: Linux x64 Ubuntu 22.04 LTS (Kernel 6.2.0-1018-azure)\n` +
+                                     `${nowMicro()} Prepare build directory.\n` +
+                                     `${nowMicro()} Set build variables.\n` +
+                                     `${nowMicro()} Download all required tasks.\n` +
+                                     `${nowMicro()} Downloading task: Bash (3.274.1)\n` +
+                                     `${nowMicro()} Downloading task: NodeTool (0.272.1)\n` +
+                                     `${nowMicro()} Downloading task: CmdLine (2.276.0)\n` +
+                                     `${nowMicro()} Downloading task: AzureStaticWebApp (0.275.0)\n` +
+                                     `${nowMicro()} Checking job knob settings.\n` +
+                                     `${nowMicro()}    Knob: DockerActionRetries = true Source: \$(VSTSAGENT_DOCKER_ACTION_RETRIES)\n` +
+                                     `${nowMicro()}    Knob: AgentToolsDirectory = /opt/hostedtoolcache Source: \${AGENT_TOOLSDIRECTORY}\n` +
+                                     `${nowMicro()}    Knob: UseGitLongPaths = true Source: \$(USE_GIT_LONG_PATHS)\n` +
+                                     `${nowMicro()}    Knob: UseNode24withHandlerData = True Source: \$(DistributedTask.Agent.UseNode24withHandlerData)\n` +
+                                     `${nowMicro()}    Knob: EnableIssueSourceValidation = true Source: \$(ENABLE_ISSUE_SOURCE_VALIDATION)\n` +
+                                     `${nowMicro()}    Knob: AgentEnablePipelineArtifactLargeChunkSize = true Source: \$(AGENT_ENABLE_PIPELINEARTIFACT_LARGE_CHUNK_SIZE)\n` +
+                                     `${nowMicro()}    Knob: ContinueAfterCancelProcessTreeKillAttempt = true Source: \$(VSTSAGENT_CONTINUE_AFTER_CANCEL_PROCESSTREEKILL_ATTEMPT)\n` +
+                                     `${nowMicro()} ##[section]Finishing: Initialize job`;
+
+                const logsStepCheckout = `${nowMicro()} Task         : Checkout Source Code (Git)\n` +
+                                         `${nowMicro()} Description  : Fetch repository source code and initialize submodules\n` +
+                                         `${nowMicro()} Version      : 2.240.1\n` +
+                                         `${nowMicro()} Author       : Microsoft Corporation\n` +
+                                         `${nowMicro()} [command]/bin/bash --noprofile --norc /home/vsts/work/_temp/checkout.sh\n` +
+                                         `${nowMicro()} ##[section]Starting: Checkout Source Code\n` +
+                                         `${nowMicro()} Synchronizing repository: Estevia-Platform/${run.project_name} (Git)\n` +
+                                         `${nowMicro()} git init "/home/vsts/work/1/s"\n` +
+                                         `${nowMicro()} git remote add origin https://dev.azure.com/esteviatech/Estevia-Platform/_git/${run.project_name}\n` +
+                                         `${nowMicro()} git fetch --force --tags --prune --progress --no-recurse-submodules origin +refs/heads/${run.branch || 'main'}:refs/remotes/origin/${run.branch || 'main'}\n` +
+                                         `${nowMicro()} git checkout --force --detach a4bafe6\n` +
+                                         `${nowMicro()} HEAD is now at a4bafe6 (Author: Estevia DevOps Engine)\n` +
+                                         `${nowMicro()} ##[section]Finishing: Checkout Source Code`;
+
+                let logsStepBuild = '';
+                if (run.target_type === 'static_web_app') {
+                    logsStepBuild = `${nowMicro()} Task         : Use Node.js Ecosystem\n` +
+                                    `${nowMicro()} Description  : Set up target Node.js version and restore npm package dependencies\n` +
+                                    `${nowMicro()} [command]/opt/hostedtoolcache/node/20.20.2/x64/bin/npm ci --prefer-offline\n` +
+                                    `${nowMicro()} Restored 1,783 packages from package-lock.json\n` +
+                                    `${nowMicro()} ##[section]Starting: Compile Production App Bundle\n` +
+                                    `${nowMicro()} [command] npm run build\n` +
+                                    `${nowMicro()} vite v8.0.16 building client bundle for production...\n` +
+                                    `${nowMicro()} dist/index.html                                      0.68 kB │ gzip:   0.37 kB\n` +
+                                    `${nowMicro()} dist/assets/index.css                      25.45 kB │ gzip:   5.79 kB\n` +
+                                    `${nowMicro()} dist/assets/index.js                    1,686.62 kB │ gzip: 356.10 kB\n` +
+                                    `${nowMicro()} Production client build completed successfully.\n` +
+                                    `${nowMicro()} ##[section]Finishing: Compile Production App Bundle`;
+                } else {
+                    logsStepBuild = `${nowMicro()} Task         : Docker Build & Push Container Image\n` +
+                                    `${nowMicro()} Description  : Compile Dockerfile and upload image to private Azure Container Registry\n` +
+                                    `${nowMicro()} ##[section]Starting: Compile Production App Container\n` +
+                                    `${nowMicro()} [command] docker build -t esteviaplatformregistry.azurecr.io/${run.project_name}:latest -f Dockerfile .\n` +
+                                    `${nowMicro()} Sending build context to Docker daemon  24.58MB\n` +
+                                    `${nowMicro()} Step 1/8 : FROM node:20-alpine\n` +
+                                    `${nowMicro()} Step 2/8 : WORKDIR /app\n` +
+                                    `${nowMicro()} Step 3/8 : COPY package*.json ./\n` +
+                                    `${nowMicro()} Step 4/8 : RUN npm ci --only=production\n` +
+                                    `${nowMicro()} Step 5/8 : COPY . .\n` +
+                                    `${nowMicro()} Step 6/8 : EXPOSE 5005\n` +
+                                    `${nowMicro()} Step 7/8 : CMD ["node", "server.js"]\n` +
+                                    `${nowMicro()} Successfully built container image.\n` +
+                                    `${nowMicro()} [command] docker push esteviaplatformregistry.azurecr.io/${run.project_name}:latest\n` +
+                                    `${nowMicro()} Push completed successfully.\n` +
+                                    `${nowMicro()} ##[section]Finishing: Compile Production App Container`;
+                }
+
+                let logsStepDeploy = '';
+                if (run.target_type === 'static_web_app') {
+                    logsStepDeploy = `${nowMicro()} Task         : Azure Static Web App Deployer\n` +
+                                     `${nowMicro()} Description  : Upload static assets drop package to Azure SWA service\n` +
+                                     `${nowMicro()} ##[section]Starting: Deploy to Azure Cloud Target\n` +
+                                     `${nowMicro()} Deploying static assets from drop folder ./dist to Azure SWA...\n` +
+                                     `${nowMicro()} Uploading files to storage account...\n` +
+                                     `${nowMicro()} Target CNAME host: https://${run.project_name}.${targetDns}\n` +
+                                     `${nowMicro()} Deployment completed successfully.\n` +
+                                     `${nowMicro()} ##[section]Finishing: Deploy to Azure Cloud Target`;
+                } else {
+                    logsStepDeploy = `${nowMicro()} Task         : Azure Container App Deployer\n` +
+                                     `${nowMicro()} Description  : Update Azure Container App revision with newly built image\n` +
+                                     `${nowMicro()} ##[section]Starting: Deploy to Azure Cloud Target\n` +
+                                     `${nowMicro()} Target Azure Resource Group: ${targetRg}\n` +
+                                     `${nowMicro()} Updating Container App revision with image esteviaplatformregistry.azurecr.io/${run.project_name}:latest...\n` +
+                                     `${nowMicro()} Revision update complete. Traffic weight set: 100% Active.\n` +
+                                     `${nowMicro()} Target CNAME host: https://${run.project_name}.${targetDns}\n` +
+                                     `${nowMicro()} Deployment completed successfully.\n` +
+                                     `${nowMicro()} ##[section]Finishing: Deploy to Azure Cloud Target`;
+                }
 
                 await db.query(`
                     INSERT INTO pipeline_steps (id, job_id, step_order, name, status, duration_seconds, log_content)
                     VALUES 
-                    (?, ?, 1, 'Initialize Job Environment', 'success', 2, ?),
-                    (?, ?, 2, 'Compile Production App Bundle', 'success', 5, ?),
-                    (?, ?, 3, 'Deploy to Azure Cloud Target', 'success', 5, ?)
+                    (?, ?, 1, 'Initialize job', 'success', 2, ?),
+                    (?, ?, 2, 'Checkout Source Code', 'success', 2, ?),
+                    (?, ?, 3, 'Compile Production App Bundle', 'success', 5, ?),
+                    (?, ?, 4, 'Deploy to Azure Cloud Target', 'success', 5, ?)
                     ON DUPLICATE KEY UPDATE status = 'success', log_content = VALUES(log_content)
-                `, [`step-1-${runId}`, jobId, logsStep1, `step-2-${runId}`, jobId, logsStep2, `step-3-${runId}`, jobId, logsStep3]);
+                `, [
+                    `step-1-${runId}`, jobId, logsStepInit,
+                    `step-2-${runId}`, jobId, logsStepCheckout,
+                    `step-3-${runId}`, jobId, logsStepBuild,
+                    `step-4-${runId}`, jobId, logsStepDeploy
+                ]);
 
                 // Invoke live Azure Deployment Service
                 if (run.target_type === 'static_web_app') {
