@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const credentialController = require('./credentialController');
 const emailService = require('../utils/emailService');
+const pipelineController = require('./pipelineController');
 const { DefaultAzureCredential, ClientSecretCredential, AzureCliCredential, ChainedTokenCredential } = require('@azure/identity');
 const { WebSiteManagementClient } = require('@azure/arm-appservice');
 const { ContainerAppsAPIClient } = require('@azure/arm-appcontainers');
@@ -3111,6 +3112,7 @@ const appController = {
                         resourceGroup: details.resourceGroup || resourceGroup,
                         branch: details.branch || null,
                         branches: [],
+                        supported_branches: pipelineController.getSupportedBranches(app.name, details.branch),
                         dnsDetails,
                         pipelineId: pId,
                         pipelineName: computedPipelineName,
@@ -4351,6 +4353,8 @@ const appController = {
                     }
                 }
 
+                app.supported_branches = pipelineController.getSupportedBranches(app.name, app.branch);
+
                 const azureDetails = JSON.stringify({
                     resourceId: app.resourceId,
                     location: app.location,
@@ -4358,6 +4362,7 @@ const appController = {
                     pipelineName: app.pipelineName,
                     resourceGroup: app.resourceGroup || resourceGroup,
                     branch: app.branch || null,
+                    supported_branches: app.supported_branches,
                     ...(app.azureResourceDetails || {}),
                     pipelineRun: app.pipelineRun || null
                 });
