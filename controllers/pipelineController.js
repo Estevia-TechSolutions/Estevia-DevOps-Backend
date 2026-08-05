@@ -20,6 +20,13 @@ const getOrgConfig = async (orgId) => {
     };
 };
 
+const stripEnvSuffixes = (name) => {
+    if (!name) return '';
+    return name.toLowerCase()
+        .replace(/-(dev|qa|prod|production|staging|test)(-swa)?$/i, '')
+        .replace(/(-swa)?$/i, '');
+};
+
 // ── 1. List Pipelines & Summary Metrics (STRICT REAL DB QUERY ONLY) ──────────
 const listPipelines = async (req, res) => {
     try {
@@ -367,17 +374,15 @@ const listPipelineRuns = async (req, res) => {
         }
 
         // 3. Query all pipeline execution runs joined with pipeline metadata (excluding databases)
-        const [allRuns] = await db.query(`
+        const [rawRuns] = await db.query(`
             SELECT 
                 pr.*,
                 p.name AS pipeline_name,
                 p.project_name,
                 p.provider,
-                a.azure_resource_details,
-                COALESCE(a.repo_url, CONCAT('https://github.com/', COALESCE(o.github_owner, 'Estevia-TechSolutions'), '/', p.project_name)) AS repo_url
+                o.github_owner
             FROM pipeline_runs pr
             JOIN pipelines p ON pr.pipeline_id = p.id
-            LEFT JOIN applications a ON (LOWER(a.name) = LOWER(p.project_name) AND a.organization_id = p.organization_id)
             LEFT JOIN organizations o ON o.id = p.organization_id
             WHERE p.organization_id = ?
               AND p.target_type != 'database'
@@ -385,6 +390,24 @@ const listPipelineRuns = async (req, res) => {
             ORDER BY pr.created_at DESC
             LIMIT 50
         `, [orgId]);
+
+        const [apps] = await db.query('SELECT name, repo_url, app_type, azure_resource_details FROM applications WHERE organization_id = ?', [orgId]);
+
+        const allRuns = rawRuns.map(r => {
+            const strippedProject = stripEnvSuffixes(r.project_name);
+            const matchedApp = apps.find(app => stripEnvSuffixes(app.name) === strippedProject);
+            
+            const repoUrl = (matchedApp && matchedApp.repo_url)
+                ? matchedApp.repo_url
+                : `https://github.com/${r.github_owner || 'Estevia-TechSolutions'}/${r.project_name}`;
+                
+            return {
+                ...r,
+                azure_resource_details: matchedApp ? matchedApp.azure_resource_details : null,
+                repo_url: repoUrl,
+                app_type: matchedApp ? matchedApp.app_type : null
+            };
+        });
 
         // Query active in-flight running/queued runs across organization pipelines
         const [activeRuns] = await db.query(`
@@ -1192,10 +1215,9 @@ const getRunDetails = async (req, res) => {
         const baseDbId = runId.replace(/-prev\d+$/, '');
 
         const [runs] = await db.query(`
-            SELECT pr.*, p.name AS pipeline_name, p.project_name, p.provider, p.yaml_config, a.azure_resource_details, a.repo_url, a.app_type
+            SELECT pr.*, p.name AS pipeline_name, p.project_name, p.provider, p.yaml_config, p.organization_id
             FROM pipeline_runs pr
             JOIN pipelines p ON pr.pipeline_id = p.id
-            LEFT JOIN applications a ON (LOWER(a.name) = LOWER(p.project_name) AND a.organization_id = p.organization_id)
             WHERE pr.id = ?
         `, [baseDbId]);
 
@@ -1210,6 +1232,15 @@ const getRunDetails = async (req, res) => {
             const bId = Math.max(1, baseRunNum - prevOffset);
             const targetHost = reqBranch === 'qa' ? `${pName.toLowerCase()}-qa.esteviatech.com` : reqBranch === 'dev' ? `${pName.toLowerCase()}-dev.esteviatech.com` : `${pName.toLowerCase()}.esteviatech.com`;
             const targetRg = reqBranch === 'qa' ? 'Estevia-QA-RG' : reqBranch === 'dev' ? 'Estevia-Dev-RG' : 'Estevia-Prod-RG';
+
+            // JS suffix-stripping name match for applications metadata
+            const [apps] = await db.query('SELECT name, repo_url, app_type, azure_resource_details FROM applications WHERE organization_id = ?', [orgId]);
+            const strippedProject = stripEnvSuffixes(pName);
+            const matchedApp = apps.find(app => stripEnvSuffixes(app.name) === strippedProject);
+
+            run.repo_url = matchedApp ? matchedApp.repo_url : null;
+            run.app_type = matchedApp ? matchedApp.app_type : null;
+            run.azure_resource_details = matchedApp ? matchedApp.azure_resource_details : null;
 
             const [rawDbHistory] = await db.query(`
                 SELECT pr.id, pr.run_number, pr.status, pr.commit_sha, pr.created_at, pr.branch
