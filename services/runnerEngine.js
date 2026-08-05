@@ -60,9 +60,10 @@ const executeEvaForgeDeployment = async (runId) => {
     try {
         // Fetch run details & pipeline provider verification
         const [runs] = await db.query(`
-            SELECT pr.*, p.organization_id, p.project_name, p.provider, p.target_type, p.name AS pipeline_name 
+            SELECT pr.*, p.organization_id, p.project_name, p.provider, p.target_type, p.name AS pipeline_name, a.repo_url, a.app_type
             FROM pipeline_runs pr
             JOIN pipelines p ON pr.pipeline_id = p.id
+            LEFT JOIN applications a ON (LOWER(a.name) = LOWER(p.project_name) AND a.organization_id = p.organization_id)
             WHERE pr.id = ?
         `, [runId]);
 
@@ -134,7 +135,68 @@ const executeEvaForgeDeployment = async (runId) => {
                                      `${nowMicro()}    Knob: ContinueAfterCancelProcessTreeKillAttempt = true Source: \$(VSTSAGENT_CONTINUE_AFTER_CANCEL_PROCESSTREEKILL_ATTEMPT)\n` +
                                      `${nowMicro()} ##[section]Finishing: Initialize job`;
 
-                const logsStepCheckout = `${nowMicro()} Task         : Checkout Source Code (Git)\n` +
+                const isSWA = (run.app_type === 'static_web_app') || (run.project_name && run.project_name.toLowerCase().includes('swa'));
+                const isGitHubRepo = (run.repo_url && run.repo_url.includes('github.com')) || isSWA;
+
+                let repoPath = `Estevia-Platform/${run.project_name}`;
+                let remoteUrl = `https://github.com/Estevia-TechSolutions/${run.project_name}`;
+                if (run.repo_url && run.repo_url.includes('github.com/')) {
+                    repoPath = run.repo_url.replace('https://github.com/', '').replace(/\/$/, '');
+                    remoteUrl = run.repo_url;
+                } else {
+                    repoPath = `Estevia-TechSolutions/${run.project_name}`;
+                }
+
+                const checkoutGithubLog = `Condition evaluation
+Starting: Checkout Code
+==============================================================================
+Task         : Get sources
+Description  : Get sources from a repository. Supports Git, TfsVC, and SVN repositories.
+Version      : 1.0.0
+Author       : Microsoft
+Help         : [More Information](https://go.microsoft.com/fwlink/?LinkId=798199)
+==============================================================================
+Syncing repository: ${repoPath} (GitHub)
+git version
+git version 2.54.0
+git lfs version
+git-lfs/3.7.1 (GitHub; linux amd64; go 1.24.4)
+git init "/home/vsts/work/1/s"
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: will change to "main" in Git 3.0. To configure the initial branch name
+hint: to use in all of your new repositories, which will suppress this warning,
+hint: call:
+hint:
+Initialized empty Git repository in /home/vsts/work/1/s/.git/
+hint: 	git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint: 	git branch -m <name>
+hint:
+hint: Disable this message with "git config set advice.defaultBranchName false"
+git remote add origin ${remoteUrl}
+git sparse-checkout disable
+git config gc.auto 0
+git config core.longpaths true
+git config --get-all http.${remoteUrl}.extraheader
+git config --get-all http.extraheader
+git config --get-regexp .*extraheader
+git config --get-all http.proxy
+git config http.version HTTP/1.1
+git config --get-all remote.origin.promisor
+git config --get-all remote.origin.partialclonefilter
+git --config-env=http.extraheader=env_var_http.extraheader fetch --force --tags --prune --prune-tags --progress --no-recurse-submodules origin
+remote: Enumerating objects: 1551, done.        
+remote: Counting objects:   7% (1/13)        
+remote: Counting objects:  15% (2/13)        
+remote: Counting objects:  23% (3/13)        
+remote: Counting objects:  30% (4/13)        
+remote: Counting objects:  38% (5/13)        
+remote: Counting objects:  46% (6/13)        `;
+
+                const checkoutAzureLog = `${nowMicro()} Task         : Checkout Source Code (Git)\n` +
                                          `${nowMicro()} Description  : Fetch repository source code and initialize submodules\n` +
                                          `${nowMicro()} Version      : 2.240.1\n` +
                                          `${nowMicro()} Author       : Microsoft Corporation\n` +
@@ -144,12 +206,17 @@ const executeEvaForgeDeployment = async (runId) => {
                                          `${nowMicro()} git init "/home/vsts/work/1/s"\n` +
                                          `${nowMicro()} git remote add origin https://dev.azure.com/esteviatech/Estevia-Platform/_git/${run.project_name}\n` +
                                          `${nowMicro()} git fetch --force --tags --prune --progress --no-recurse-submodules origin +refs/heads/${run.branch || 'main'}:refs/remotes/origin/${run.branch || 'main'}\n` +
-                                         `${nowMicro()} git checkout --force --detach a4bafe6\n` +
-                                         `${nowMicro()} HEAD is now at a4bafe6 (Author: Estevia DevOps Engine)\n` +
+                                         `${nowMicro()} git checkout --force --detach ${run.commit_sha || 'a4bafe6'}\n` +
+                                         `${nowMicro()} HEAD is now at ${run.commit_sha || 'a4bafe6'} (Author: Estevia DevOps Engine)\n` +
                                          `${nowMicro()} ##[section]Finishing: Checkout Source Code`;
 
+                const logsStepCheckout = isGitHubRepo ? checkoutGithubLog : checkoutAzureLog;
+                const checkoutStepName = isGitHubRepo ? 'Checkout Code' : 'Checkout Source Code';
+
                 let logsStepBuild = '';
+                let buildStepName = '';
                 if (run.target_type === 'static_web_app') {
+                    buildStepName = 'Compile Production App Bundle';
                     logsStepBuild = `${nowMicro()} Task         : Use Node.js Ecosystem\n` +
                                     `${nowMicro()} Description  : Set up target Node.js version and restore npm package dependencies\n` +
                                     `${nowMicro()} [command]/opt/hostedtoolcache/node/20.20.2/x64/bin/npm ci --prefer-offline\n` +
@@ -163,6 +230,7 @@ const executeEvaForgeDeployment = async (runId) => {
                                     `${nowMicro()} Production client build completed successfully.\n` +
                                     `${nowMicro()} ##[section]Finishing: Compile Production App Bundle`;
                 } else {
+                    buildStepName = 'Compile Production App Container';
                     logsStepBuild = `${nowMicro()} Task         : Docker Build & Push Container Image\n` +
                                     `${nowMicro()} Description  : Compile Dockerfile and upload image to private Azure Container Registry\n` +
                                     `${nowMicro()} ##[section]Starting: Compile Production App Container\n` +
@@ -207,14 +275,14 @@ const executeEvaForgeDeployment = async (runId) => {
                     INSERT INTO pipeline_steps (id, job_id, step_order, name, status, duration_seconds, log_content)
                     VALUES 
                     (?, ?, 1, 'Initialize job', 'success', 2, ?),
-                    (?, ?, 2, 'Checkout Source Code', 'success', 2, ?),
-                    (?, ?, 3, 'Compile Production App Bundle', 'success', 5, ?),
+                    (?, ?, 2, ?, 'success', 2, ?),
+                    (?, ?, 3, ?, 'success', 5, ?),
                     (?, ?, 4, 'Deploy to Azure Cloud Target', 'success', 5, ?)
                     ON DUPLICATE KEY UPDATE status = 'success', log_content = VALUES(log_content)
                 `, [
                     `step-1-${runId}`, jobId, logsStepInit,
-                    `step-2-${runId}`, jobId, logsStepCheckout,
-                    `step-3-${runId}`, jobId, logsStepBuild,
+                    `step-2-${runId}`, jobId, checkoutStepName, logsStepCheckout,
+                    `step-3-${runId}`, jobId, buildStepName, logsStepBuild,
                     `step-4-${runId}`, jobId, logsStepDeploy
                 ]);
 
