@@ -547,7 +547,14 @@ const listPipelineRuns = async (req, res) => {
                 const repoPath = r.pipeline_id && String(r.pipeline_id).startsWith('github-actions:')
                     ? String(r.pipeline_id).replace('github-actions:', '')
                     : `${ghOwner}/${r.project_name}`;
-                pipelineUrl = r.repo_url ? `${r.repo_url}/actions` : `https://github.com/${repoPath}/actions`;
+                let runPath = 'actions';
+                if (r.id && String(r.id).startsWith('scanned-')) {
+                    const parts = String(r.id).split('-');
+                    if (parts.length >= 3 && /^\d+$/.test(parts[1])) {
+                        runPath = `actions/runs/${parts[1]}`;
+                    }
+                }
+                pipelineUrl = r.repo_url ? `${r.repo_url}/${runPath}` : `https://github.com/${repoPath}/${runPath}`;
             } else if (r.provider === 'evaops_native') {
                 pipelineUrl = `https://github.com/${ghOwner}/${r.project_name}/blob/main/.evaforge/config.yml`;
             }
@@ -1576,7 +1583,7 @@ const getRunDetails = async (req, res) => {
             const repoPath = resolvedRepoUrl
                 ? resolvedRepoUrl.replace('https://github.com/', '').replace(/\/$/, '')
                 : `${ghOwner}/${pName}`;
-            const ghUrl = `https://github.com/${repoPath}/actions`;
+            const ghUrl = `https://github.com/${repoPath}/actions/runs/${bId}`;
 
             const dbBranches = Array.from(new Set((rawDbHistory || []).map(hr => hr.branch).filter(Boolean)));
             let cachedBranches = null;
