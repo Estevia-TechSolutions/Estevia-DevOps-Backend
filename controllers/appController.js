@@ -20,9 +20,13 @@ function stripEnvSuffixes(name) {
 
 const healMismatchedPipelineIds = async (organizationId) => {
     try {
-        const [apps] = await db.query('SELECT id, name, pipeline_id FROM applications WHERE organization_id = ? AND pipeline_id IS NOT NULL', [organizationId]);
+        const [apps] = await db.query('SELECT id, name, pipeline_id, azure_resource_details FROM applications WHERE organization_id = ? AND pipeline_id IS NOT NULL', [organizationId]);
         const [pipelines] = await db.query('SELECT id, project_name, name FROM pipelines WHERE organization_id = ?', [organizationId]);
         
+        if (pipelines.length === 0) {
+            return; // Skip self-healing if local pipelines cache table is not yet populated
+        }
+
         const pipelineMap = new Map();
         pipelines.forEach(p => pipelineMap.set(String(p.id), p));
         
@@ -39,13 +43,22 @@ const healMismatchedPipelineIds = async (organizationId) => {
                     const correctPipe = pipelines.find(pl => stripEnvSuffixes(pl.project_name || pl.name) === strippedApp);
                     const correctId = correctPipe ? String(correctPipe.id) : null;
                     console.log(`[Self-Healing] Correcting mismatched pipeline_id for app '${app.name}' from '${rawPipeId}' to '${correctId}'`);
-                    await db.query('UPDATE applications SET pipeline_id = ? WHERE id = ?', [correctId, app.id]);
+                    
+                    let details = {};
+                    try {
+                        details = typeof app.azure_resource_details === 'string'
+                            ? JSON.parse(app.azure_resource_details || '{}')
+                            : (app.azure_resource_details || {});
+                    } catch (e) {}
+                    if (details.pipelineRun) {
+                        delete details.pipelineRun;
+                    }
+                    
+                    await db.query(
+                        'UPDATE applications SET pipeline_id = ?, azure_resource_details = ? WHERE id = ?',
+                        [correctId, JSON.stringify(details), app.id]
+                    );
                 }
-            } else if (/^\d+$/.test(rawPipeId)) {
-                const correctPipe = pipelines.find(pl => stripEnvSuffixes(pl.project_name || pl.name) === stripEnvSuffixes(app.name));
-                const correctId = correctPipe ? String(correctPipe.id) : null;
-                console.log(`[Self-Healing] Correcting missing pipeline_id for app '${app.name}' to '${correctId}'`);
-                await db.query('UPDATE applications SET pipeline_id = ? WHERE id = ?', [correctId, app.id]);
             }
         }
     } catch (e) {
