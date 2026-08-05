@@ -148,7 +148,10 @@ const listPipelines = async (req, res) => {
             if (p.provider === 'azure_devops') {
                 pipeline_url = `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build?definitionId=${p.id}`;
             } else if (p.provider === 'github_actions') {
-                pipeline_url = `https://github.com/${ghOwner}/${p.project_name}/actions`;
+                const repoPath = p.id && String(p.id).startsWith('github-actions:')
+                    ? String(p.id).replace('github-actions:', '')
+                    : `${ghOwner}/${p.project_name}`;
+                pipeline_url = `https://github.com/${repoPath}/actions`;
             } else if (p.provider === 'evaops_native') {
                 pipeline_url = `https://github.com/${ghOwner}/${p.project_name}/blob/main/.evaforge/config.yml`;
             }
@@ -541,7 +544,10 @@ const listPipelineRuns = async (req, res) => {
             if (r.provider === 'azure_devops') {
                 pipelineUrl = `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build/results?buildId=${rNum}&view=results`;
             } else if (r.provider === 'github_actions') {
-                pipelineUrl = r.repo_url ? `${r.repo_url}/actions` : `https://github.com/${ghOwner}/${r.project_name}/actions`;
+                const repoPath = r.pipeline_id && String(r.pipeline_id).startsWith('github-actions:')
+                    ? String(r.pipeline_id).replace('github-actions:', '')
+                    : `${ghOwner}/${r.project_name}`;
+                pipelineUrl = r.repo_url ? `${r.repo_url}/actions` : `https://github.com/${repoPath}/actions`;
             } else if (r.provider === 'evaops_native') {
                 pipelineUrl = `https://github.com/${ghOwner}/${r.project_name}/blob/main/.evaforge/config.yml`;
             }
@@ -1566,7 +1572,11 @@ const getRunDetails = async (req, res) => {
             const commitMsg = run.commit_message || (prevOffset > 0 ? `sync(build #${bId}): release update for ${reqBranch}` : `Deploy ${pName} build to ${reqBranch} target environment (${targetRg})`);
 
             const azureDevOpsUrl = `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build/results?buildId=${bId}&view=results`;
-            const ghUrl = `https://github.com/${ghOwner}/${pName}/actions`;
+            const resolvedRepoUrl = run.repo_url || (matchedApp ? matchedApp.repo_url : null);
+            const repoPath = resolvedRepoUrl
+                ? resolvedRepoUrl.replace('https://github.com/', '').replace(/\/$/, '')
+                : `${ghOwner}/${pName}`;
+            const ghUrl = `https://github.com/${repoPath}/actions`;
 
             const dbBranches = Array.from(new Set((rawDbHistory || []).map(hr => hr.branch).filter(Boolean)));
             let cachedBranches = null;
