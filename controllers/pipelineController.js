@@ -373,6 +373,7 @@ const listPipelineRuns = async (req, res) => {
                 p.name AS pipeline_name,
                 p.project_name,
                 p.provider,
+                a.azure_resource_details,
                 COALESCE(a.repo_url, CONCAT('https://github.com/', COALESCE(o.github_owner, 'Estevia-TechSolutions'), '/', p.project_name)) AS repo_url
             FROM pipeline_runs pr
             JOIN pipelines p ON pr.pipeline_id = p.id
@@ -392,6 +393,18 @@ const listPipelineRuns = async (req, res) => {
             JOIN pipelines p ON pr.pipeline_id = p.id
             WHERE p.organization_id = ? AND pr.status IN ('running', 'queued')
         `, [orgId]);
+
+        // Query distinct branches from pipeline_runs to check build history triggers
+        const [uniqueBranchesRows] = await db.query(`
+            SELECT DISTINCT pipeline_id, branch FROM pipeline_runs WHERE branch IS NOT NULL
+        `);
+        const pipelineBranchesMap = new Map();
+        for (const row of uniqueBranchesRows) {
+            if (!pipelineBranchesMap.has(row.pipeline_id)) {
+                pipelineBranchesMap.set(row.pipeline_id, new Set());
+            }
+            pipelineBranchesMap.get(row.pipeline_id).add(row.branch);
+        }
 
         const activeRunMap = new Map();
         if (activeRuns && activeRuns.length > 0) {
@@ -426,6 +439,23 @@ const listPipelineRuns = async (req, res) => {
                 pipelineUrl = `https://github.com/${ghOwner}/${r.project_name}/blob/main/.evaforge/config.yml`;
             }
 
+            let dbBranches = null;
+            if (pipelineBranchesMap.has(r.pipeline_id)) {
+                dbBranches = Array.from(pipelineBranchesMap.get(r.pipeline_id));
+            } else if (r.branch) {
+                dbBranches = [r.branch];
+            }
+
+            let cachedBranches = null;
+            try {
+                const details = typeof r.azure_resource_details === 'string'
+                    ? JSON.parse(r.azure_resource_details || '{}')
+                    : (r.azure_resource_details || {});
+                if (details && Array.isArray(details.supported_branches)) {
+                    cachedBranches = details.supported_branches;
+                }
+            } catch (e) {}
+
             return {
                 ...r,
                 status: activeRun ? activeRun.status : r.status,
@@ -440,7 +470,7 @@ const listPipelineRuns = async (req, res) => {
                     branch: activeRun.branch,
                     commit_sha: activeRun.commit_sha
                 } : null,
-                supported_branches: getSupportedBranches(r.project_name, r.branch)
+                supported_branches: cachedBranches || getSupportedBranches(r.project_name, r.branch, dbBranches)
             };
         });
 
@@ -464,128 +494,130 @@ const listPipelineRuns = async (req, res) => {
     }
 };
 
-const getSupportedBranches = (pName, reqBranch) => {
+const getSupportedBranches = (pName, reqBranch, dbBranches) => {
     try {
         const baseWorkspace = process.env.ESTEVIA_WORKSPACE_PATH || path.resolve(__dirname, '..', '..');
-        if (!fs.existsSync(baseWorkspace)) {
-            return fallbackBranches(pName, reqBranch);
-        }
+        if (fs.existsSync(baseWorkspace)) {
+            const dirs = fs.readdirSync(baseWorkspace);
+            let matchedDir = null;
 
-        const dirs = fs.readdirSync(baseWorkspace);
-        let matchedDir = null;
+            // 1. Direct folder name matches project name (e.g. PeopleCraft-Backend)
+            matchedDir = dirs.find(d => d.toLowerCase() === (pName || '').toLowerCase());
 
-        // 1. Direct folder name matches project name (e.g. PeopleCraft-Backend)
-        matchedDir = dirs.find(d => d.toLowerCase() === (pName || '').toLowerCase());
-
-        // 2. If no direct match, check subfolders git config or package.json for repository name matching
-        if (!matchedDir) {
-            for (const d of dirs) {
-                const gitCfgPath = path.join(baseWorkspace, d, '.git', 'config');
-                if (fs.existsSync(gitCfgPath)) {
-                    try {
-                        const cfgContent = fs.readFileSync(gitCfgPath, 'utf8');
-                        if (cfgContent.toLowerCase().includes((pName || '').toLowerCase())) {
-                            matchedDir = d;
-                            break;
-                        }
-                    } catch (e) {}
-                }
-            }
-        }
-
-        // 3. Fallback to name heuristic matching if still no match
-        if (!matchedDir) {
-            const pLow = (pName || '').toLowerCase();
-            matchedDir = dirs.find(d => {
-                const dLow = d.toLowerCase();
-                if (pLow === 'api-evaops' && dLow.includes('devops') && dLow.includes('backend')) return true;
-                if (pLow === 'evaops-frontend-swa' && dLow.includes('devops') && dLow.includes('frontend')) return true;
-                if (pLow.includes('marketing') && dLow.includes('marketing')) return true;
-                return false;
-            });
-        }
-
-        if (!matchedDir) {
-            return fallbackBranches(pName, reqBranch);
-        }
-
-        const dirPath = path.join(baseWorkspace, matchedDir);
-
-        // Find all yml/yaml files in the directory
-        const ymlFiles = [];
-        const scanDirForYml = (currentDir, depth = 0) => {
-            if (depth > 2) return; // limit depth to avoid node_modules traversal
-            if (!fs.existsSync(currentDir)) return;
-            const files = fs.readdirSync(currentDir, { withFileTypes: true });
-            for (const f of files) {
-                if (f.isDirectory()) {
-                    if (f.name === 'node_modules' || f.name === '.git' || f.name === 'dist') continue;
-                    scanDirForYml(path.join(currentDir, f.name), depth + 1);
-                } else if (f.isFile() && (f.name.endsWith('.yml') || f.name.endsWith('.yaml'))) {
-                    ymlFiles.push(path.join(currentDir, f.name));
-                }
-            }
-        };
-
-        scanDirForYml(dirPath);
-
-        if (ymlFiles.length === 0) {
-            return fallbackBranches(pName, reqBranch);
-        }
-
-        const activeBranches = new Set();
-        const resourceSpecificBranches = new Set();
-        const pLow = (pName || '').toLowerCase();
-
-        for (const file of ymlFiles) {
-            try {
-                const content = fs.readFileSync(file, 'utf8');
-                const baseName = path.basename(file).toLowerCase();
-
-                // Detect branches from file name conventions (e.g. azure-pipelines-qa.yml -> qa)
-                const fileMatch = baseName.match(/[-_](dev|qa|prod|stage|staging|test)([-_]|\.)/i);
-                let fileBranch = null;
-                if (fileMatch) {
-                    const env = fileMatch[1].toLowerCase();
-                    fileBranch = env === 'prod' ? 'main' : env;
-                }
-
-                // Level 1: Parse trigger branch filters from trigger blocks in the yml file
-                const fileBranches = parseYmlBranches(content);
-                if (fileBranch) {
-                    fileBranches.add(fileBranch);
-                }
-
-                fileBranches.forEach(b => activeBranches.add(b));
-
-                // Level 2: Parse resource specific linkage (e.g. containerAppName: api-peoplecraft-qa)
-                const hasResourceMatch = content.toLowerCase().includes(pLow);
-                if (hasResourceMatch) {
-                    const blockBranches = parseResourceBranchLinkage(content, pLow);
-                    if (blockBranches.size > 0) {
-                        blockBranches.forEach(b => resourceSpecificBranches.add(b));
-                    } else if (fileBranches.size > 0) {
-                        fileBranches.forEach(b => resourceSpecificBranches.add(b));
-                    } else if (fileBranch) {
-                        resourceSpecificBranches.add(fileBranch);
+            // 2. If no direct match, check subfolders git config or package.json for repository name matching
+            if (!matchedDir) {
+                for (const d of dirs) {
+                    const gitCfgPath = path.join(baseWorkspace, d, '.git', 'config');
+                    if (fs.existsSync(gitCfgPath)) {
+                        try {
+                            const cfgContent = fs.readFileSync(gitCfgPath, 'utf8');
+                            if (cfgContent.toLowerCase().includes((pName || '').toLowerCase())) {
+                                matchedDir = d;
+                                break;
+                            }
+                        } catch (e) {}
                     }
                 }
-            } catch (e) {
-                console.warn(`[getSupportedBranches] Failed to parse YML file ${file}:`, e.message);
+            }
+
+            // 3. Fallback to name heuristic matching if still no match
+            if (!matchedDir) {
+                const pLow = (pName || '').toLowerCase();
+                matchedDir = dirs.find(d => {
+                    const dLow = d.toLowerCase();
+                    if (pLow === 'api-evaops' && dLow.includes('devops') && dLow.includes('backend')) return true;
+                    if (pLow === 'evaops-frontend-swa' && dLow.includes('devops') && dLow.includes('frontend')) return true;
+                    if (pLow.includes('marketing') && dLow.includes('marketing')) return true;
+                    return false;
+                });
+            }
+
+            if (matchedDir) {
+                const dirPath = path.join(baseWorkspace, matchedDir);
+
+                // Find all yml/yaml files in the directory
+                const ymlFiles = [];
+                const scanDirForYml = (currentDir, depth = 0) => {
+                    if (depth > 2) return; // limit depth to avoid node_modules traversal
+                    if (!fs.existsSync(currentDir)) return;
+                    const files = fs.readdirSync(currentDir, { withFileTypes: true });
+                    for (const f of files) {
+                        if (f.isDirectory()) {
+                            if (f.name === 'node_modules' || f.name === '.git' || f.name === 'dist') continue;
+                            scanDirForYml(path.join(currentDir, f.name), depth + 1);
+                        } else if (f.isFile() && (f.name.endsWith('.yml') || f.name.endsWith('.yaml'))) {
+                            ymlFiles.push(path.join(currentDir, f.name));
+                        }
+                    }
+                };
+
+                scanDirForYml(dirPath);
+
+                if (ymlFiles.length > 0) {
+                    const activeBranches = new Set();
+                    const resourceSpecificBranches = new Set();
+                    const pLow = (pName || '').toLowerCase();
+
+                    for (const file of ymlFiles) {
+                        try {
+                            const content = fs.readFileSync(file, 'utf8');
+                            const baseName = path.basename(file).toLowerCase();
+
+                            // Detect branches from file name conventions (e.g. azure-pipelines-qa.yml -> qa)
+                            const fileMatch = baseName.match(/[-_](dev|qa|prod|stage|staging|test)([-_]|\.)/i);
+                            let fileBranch = null;
+                            if (fileMatch) {
+                                const env = fileMatch[1].toLowerCase();
+                                fileBranch = env === 'prod' ? 'main' : env;
+                            }
+
+                            // Level 1: Parse trigger branch filters from trigger blocks in the yml file
+                            const fileBranches = parseYmlBranches(content);
+                            if (fileBranch) {
+                                fileBranches.add(fileBranch);
+                            }
+
+                            fileBranches.forEach(b => activeBranches.add(b));
+
+                            // Level 2: Parse resource specific linkage (e.g. containerAppName: api-peoplecraft-qa)
+                            const hasResourceMatch = content.toLowerCase().includes(pLow);
+                            if (hasResourceMatch) {
+                                const blockBranches = parseResourceBranchLinkage(content, pLow);
+                                if (blockBranches.size > 0) {
+                                    blockBranches.forEach(b => resourceSpecificBranches.add(b));
+                                } else if (fileBranches.size > 0) {
+                                    fileBranches.forEach(b => resourceSpecificBranches.add(b));
+                                } else if (fileBranch) {
+                                    resourceSpecificBranches.add(fileBranch);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn(`[getSupportedBranches] Failed to parse YML file ${file}:`, e.message);
+                        }
+                    }
+
+                    if (resourceSpecificBranches.size > 0) {
+                        return Array.from(resourceSpecificBranches);
+                    }
+
+                    if (activeBranches.size > 0) {
+                        return Array.from(activeBranches);
+                    }
+                }
             }
         }
 
-        if (resourceSpecificBranches.size > 0) {
-            return Array.from(resourceSpecificBranches);
-        }
-
-        if (activeBranches.size > 0) {
-            return Array.from(activeBranches);
+        // Fallback to database runs history branches if YML files are not available locally (e.g. in Docker)
+        if (Array.isArray(dbBranches) && dbBranches.length > 0) {
+            return dbBranches;
         }
 
         return fallbackBranches(pName, reqBranch);
     } catch (err) {
         console.warn('[getSupportedBranches] Error:', err.message);
+        if (Array.isArray(dbBranches) && dbBranches.length > 0) {
+            return dbBranches;
+        }
         return fallbackBranches(pName, reqBranch);
     }
 };
@@ -598,7 +630,7 @@ const fallbackBranches = (pName, reqBranch) => {
         return [env === 'prod' ? 'main' : env];
     }
     if (reqBranch && reqBranch !== 'main') return Array.from(new Set(['main', reqBranch]));
-    return ['main', 'qa', 'dev'];
+    return ['main']; // Default to main rather than ['main', 'qa', 'dev'] to prevent overexposure for single-branch apps
 };
 
 function parseYmlBranches(content) {
@@ -865,9 +897,10 @@ const getRunDetails = async (req, res) => {
         const baseDbId = runId.replace(/-prev\d+$/, '');
 
         const [runs] = await db.query(`
-            SELECT pr.*, p.name AS pipeline_name, p.project_name, p.provider, p.yaml_config
+            SELECT pr.*, p.name AS pipeline_name, p.project_name, p.provider, p.yaml_config, a.azure_resource_details
             FROM pipeline_runs pr
             JOIN pipelines p ON pr.pipeline_id = p.id
+            LEFT JOIN applications a ON (LOWER(a.name) = LOWER(p.project_name) AND a.organization_id = p.organization_id)
             WHERE pr.id = ?
         `, [baseDbId]);
 
@@ -919,7 +952,19 @@ const getRunDetails = async (req, res) => {
 
             const azureDevOpsUrl = `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build/results?buildId=${bId}&view=results`;
             const ghUrl = `https://github.com/${ghOwner}/${pName}/actions`;
-            const supportedBranches = getSupportedBranches(pName, reqBranch);
+
+            const dbBranches = Array.from(new Set((rawDbHistory || []).map(hr => hr.branch).filter(Boolean)));
+            let cachedBranches = null;
+            try {
+                const details = typeof run.azure_resource_details === 'string'
+                    ? JSON.parse(run.azure_resource_details || '{}')
+                    : (run.azure_resource_details || {});
+                if (details && Array.isArray(details.supported_branches)) {
+                    cachedBranches = details.supported_branches;
+                }
+            } catch (e) {}
+
+            const supportedBranches = cachedBranches || getSupportedBranches(pName, reqBranch, dbBranches);
 
             return res.json({
                 id: runId,
@@ -1024,7 +1069,18 @@ const getRunDetails = async (req, res) => {
             ? `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build/results?buildId=${runBId}&view=results`
             : `https://github.com/${ghOwner}/${pName}/actions`;
 
-        run.supported_branches = getSupportedBranches(pName, activeBranch);
+        const dbBranches = Array.from(new Set((rawDbHistory || []).map(hr => hr.branch).filter(Boolean)));
+        let cachedBranches = null;
+        try {
+            const details = typeof run.azure_resource_details === 'string'
+                ? JSON.parse(run.azure_resource_details || '{}')
+                : (run.azure_resource_details || {});
+            if (details && Array.isArray(details.supported_branches)) {
+                cachedBranches = details.supported_branches;
+            }
+        } catch (e) {}
+
+        run.supported_branches = cachedBranches || getSupportedBranches(pName, activeBranch, dbBranches);
         run.cname_host = run.cname_host || activeHost;
         run.resource_group = run.resource_group || activeRg;
         run.stages = stages;
