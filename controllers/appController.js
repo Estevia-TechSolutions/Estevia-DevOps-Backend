@@ -11,6 +11,48 @@ const jsYaml = require('js-yaml');
 const fs = require('fs');
 const path = require('path');
 
+function stripEnvSuffixes(name) {
+    if (!name) return '';
+    return name.toLowerCase()
+        .replace(/-(dev|qa|prod|production|staging|test)(-swa)?$/i, '')
+        .replace(/(-swa)?$/i, '');
+}
+
+const healMismatchedPipelineIds = async (organizationId) => {
+    try {
+        const [apps] = await db.query('SELECT id, name, pipeline_id FROM applications WHERE organization_id = ? AND pipeline_id IS NOT NULL', [organizationId]);
+        const [pipelines] = await db.query('SELECT id, project_name, name FROM pipelines WHERE organization_id = ?', [organizationId]);
+        
+        const pipelineMap = new Map();
+        pipelines.forEach(p => pipelineMap.set(String(p.id), p));
+        
+        for (const app of apps) {
+            const rawPipeId = String(app.pipeline_id);
+            if (rawPipeId.startsWith('github-actions:')) {
+                continue;
+            }
+            const p = pipelineMap.get(rawPipeId);
+            if (p) {
+                const strippedApp = stripEnvSuffixes(app.name);
+                const strippedPipe = stripEnvSuffixes(p.project_name || p.name);
+                if (strippedApp !== strippedPipe) {
+                    const correctPipe = pipelines.find(pl => stripEnvSuffixes(pl.project_name || pl.name) === strippedApp);
+                    const correctId = correctPipe ? String(correctPipe.id) : null;
+                    console.log(`[Self-Healing] Correcting mismatched pipeline_id for app '${app.name}' from '${rawPipeId}' to '${correctId}'`);
+                    await db.query('UPDATE applications SET pipeline_id = ? WHERE id = ?', [correctId, app.id]);
+                }
+            } else if (/^\d+$/.test(rawPipeId)) {
+                const correctPipe = pipelines.find(pl => stripEnvSuffixes(pl.project_name || pl.name) === stripEnvSuffixes(app.name));
+                const correctId = correctPipe ? String(correctPipe.id) : null;
+                console.log(`[Self-Healing] Correcting missing pipeline_id for app '${app.name}' to '${correctId}'`);
+                await db.query('UPDATE applications SET pipeline_id = ? WHERE id = ?', [correctId, app.id]);
+            }
+        }
+    } catch (e) {
+        console.error('[Self-Healing] Failed to execute pipeline ID self-healing:', e.message);
+    }
+};
+
 function parseBackendUrlFromEnvContent(content) {
     const lines = content.split('\n');
     for (const line of lines) {
@@ -3017,6 +3059,9 @@ const appController = {
             if (!organizationId) {
                 return res.status(400).json({ message: 'Missing organizationId query parameter.' });
             }
+
+            // Self-healing database check on scan
+            await healMismatchedPipelineIds(organizationId);
 
             const orgSettings = await appController._getOrgSettings(organizationId, true);
 
@@ -6762,21 +6807,31 @@ const appController = {
                 // Update the database cache with the new pipelineRun
                 try {
                     const [apps] = await db.query(
-                        'SELECT id, azure_resource_details FROM applications WHERE organization_id = ? AND pipeline_id = ?',
+                        'SELECT id, name, azure_resource_details FROM applications WHERE organization_id = ? AND pipeline_id = ?',
                         [organizationId, pipelineId]
                     );
                     if (apps.length > 0) {
-                        for (const app of apps) {
-                            const details = typeof app.azure_resource_details === 'string'
-                                ? JSON.parse(app.azure_resource_details || '{}')
-                                : (app.azure_resource_details || {});
+                        const [pipelines] = await db.query('SELECT project_name, name FROM pipelines WHERE id = ? OR project_name = ?', [pipelineId, pipelineId]);
+                        const pName = pipelines[0]?.project_name || pipelines[0]?.name || (String(pipelineId).includes('/') ? String(pipelineId).split('/').pop() : String(pipelineId));
+                        
+                        const targetApp = apps.find(app => {
+                            if (pName) {
+                                return stripEnvSuffixes(app.name) === stripEnvSuffixes(pName);
+                            }
+                            return true;
+                        });
+
+                        if (targetApp) {
+                            const details = typeof targetApp.azure_resource_details === 'string'
+                                ? JSON.parse(targetApp.azure_resource_details || '{}')
+                                : (targetApp.azure_resource_details || {});
                             details.pipelineRun = pipelineRun;
                             await db.query(
                                 'UPDATE applications SET azure_resource_details = ? WHERE id = ?',
-                                [JSON.stringify(details), app.id]
+                                [JSON.stringify(details), targetApp.id]
                             );
+                            console.log(`[AppController] getLatestPipelineBuild (GitHub): Updated cache for app: ${targetApp.name}`);
                         }
-                        console.log(`[AppController] getLatestPipelineBuild (GitHub): Updated cache for pipeline: ${pipelineId}`);
                     }
                 } catch (dbErr) {
                     console.warn('[AppController] getLatestPipelineBuild: Failed to update GitHub cache in DB:', dbErr.message);
@@ -6900,21 +6955,31 @@ const appController = {
             // Update the database cache with the new pipelineRun
             try {
                 const [apps] = await db.query(
-                    'SELECT id, azure_resource_details FROM applications WHERE organization_id = ? AND pipeline_id = ?',
+                    'SELECT id, name, azure_resource_details FROM applications WHERE organization_id = ? AND pipeline_id = ?',
                     [organizationId, pipelineId]
                 );
                 if (apps.length > 0) {
-                    for (const app of apps) {
-                        const details = typeof app.azure_resource_details === 'string'
-                            ? JSON.parse(app.azure_resource_details || '{}')
-                            : (app.azure_resource_details || {});
+                    const [pipelines] = await db.query('SELECT project_name, name FROM pipelines WHERE id = ? OR project_name = ?', [pipelineId, pipelineId]);
+                    const pName = pipelines[0]?.project_name || pipelines[0]?.name;
+
+                    const targetApp = apps.find(app => {
+                        if (pName) {
+                            return stripEnvSuffixes(app.name) === stripEnvSuffixes(pName);
+                        }
+                        return true;
+                    });
+
+                    if (targetApp) {
+                        const details = typeof targetApp.azure_resource_details === 'string'
+                            ? JSON.parse(targetApp.azure_resource_details || '{}')
+                            : (targetApp.azure_resource_details || {});
                         details.pipelineRun = pipelineRun;
                         await db.query(
                             'UPDATE applications SET azure_resource_details = ? WHERE id = ?',
-                            [JSON.stringify(details), app.id]
+                            [JSON.stringify(details), targetApp.id]
                         );
+                        console.log(`[AppController] getLatestPipelineBuild (Azure DevOps): Updated cache for app: ${targetApp.name}`);
                     }
-                    console.log(`[AppController] getLatestPipelineBuild (Azure DevOps): Updated cache for pipeline: ${pipelineId}`);
                 }
             } catch (dbErr) {
                 console.warn('[AppController] getLatestPipelineBuild: Failed to update DevOps cache in DB:', dbErr.message);

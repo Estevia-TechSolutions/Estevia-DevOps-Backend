@@ -27,6 +27,41 @@ const stripEnvSuffixes = (name) => {
         .replace(/(-swa)?$/i, '');
 };
 
+const healMismatchedPipelineIds = async (organizationId) => {
+    try {
+        const [apps] = await db.query('SELECT id, name, pipeline_id FROM applications WHERE organization_id = ? AND pipeline_id IS NOT NULL', [organizationId]);
+        const [pipelines] = await db.query('SELECT id, project_name, name FROM pipelines WHERE organization_id = ?', [organizationId]);
+        
+        const pipelineMap = new Map();
+        pipelines.forEach(p => pipelineMap.set(String(p.id), p));
+        
+        for (const app of apps) {
+            const rawPipeId = String(app.pipeline_id);
+            if (rawPipeId.startsWith('github-actions:')) {
+                continue;
+            }
+            const p = pipelineMap.get(rawPipeId);
+            if (p) {
+                const strippedApp = stripEnvSuffixes(app.name);
+                const strippedPipe = stripEnvSuffixes(p.project_name || p.name);
+                if (strippedApp !== strippedPipe) {
+                    const correctPipe = pipelines.find(pl => stripEnvSuffixes(pl.project_name || pl.name) === strippedApp);
+                    const correctId = correctPipe ? String(correctPipe.id) : null;
+                    console.log(`[Self-Healing] Correcting mismatched pipeline_id for app '${app.name}' from '${rawPipeId}' to '${correctId}'`);
+                    await db.query('UPDATE applications SET pipeline_id = ? WHERE id = ?', [correctId, app.id]);
+                }
+            } else if (/^\d+$/.test(rawPipeId)) {
+                const correctPipe = pipelines.find(pl => stripEnvSuffixes(pl.project_name || pl.name) === stripEnvSuffixes(app.name));
+                const correctId = correctPipe ? String(correctPipe.id) : null;
+                console.log(`[Self-Healing] Correcting missing pipeline_id for app '${app.name}' to '${correctId}'`);
+                await db.query('UPDATE applications SET pipeline_id = ? WHERE id = ?', [correctId, app.id]);
+            }
+        }
+    } catch (e) {
+        console.error('[Self-Healing] Failed to execute pipeline ID self-healing:', e.message);
+    }
+};
+
 // ── 1. List Pipelines & Summary Metrics (STRICT REAL DB QUERY ONLY) ──────────
 const listPipelines = async (req, res) => {
     try {
@@ -278,6 +313,10 @@ const triggerPipelineRun = async (req, res) => {
 const listPipelineRuns = async (req, res) => {
     try {
         const orgId = req.user?.organization_id || 'estevia';
+
+        // Self-healing database check on run list
+        await healMismatchedPipelineIds(orgId);
+
         let [runs] = await db.query(`
             SELECT 
                 pr.*,
@@ -1209,6 +1248,10 @@ const getRunDetails = async (req, res) => {
     const { runId } = req.params;
     try {
         const orgId = req.user?.organization_id || 'estevia';
+
+        // Self-healing database check on run details request
+        await healMismatchedPipelineIds(orgId);
+
         const isHistoricalAttempt = runId.includes('-prev');
         const prevMatch = runId.match(/-prev(\d+)$/);
         const prevOffset = prevMatch ? parseInt(prevMatch[1], 10) : 0;
