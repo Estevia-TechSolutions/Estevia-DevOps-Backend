@@ -1164,6 +1164,17 @@ async function main() {
                 ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS github_workflow_id VARCHAR(100) DEFAULT NULL;
             `).catch(() => {});
 
+            // Self-healing database alignment for mismatched pipeline IDs
+            await connection.query(`
+                UPDATE applications SET pipeline_id = '22' WHERE LOWER(name) LIKE '%restaurant-backend%';
+            `).catch(() => {});
+            await connection.query(`
+                UPDATE applications SET pipeline_id = '17' WHERE LOWER(name) LIKE '%api-evaops%';
+            `).catch(() => {});
+            await connection.query(`
+                UPDATE applications SET pipeline_id = '18' WHERE LOWER(name) LIKE '%evaops-frontend%';
+            `).catch(() => {});
+
         } catch (healErr) {
             console.warn('[run_migrations] Self-healing notice:', healErr.message);
         }
