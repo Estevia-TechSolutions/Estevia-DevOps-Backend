@@ -1304,7 +1304,7 @@ const fetchLiveHistory = async (orgId, prov, pName, matchedApp, azureDevOpsOrgUr
         }
     } else if (prov === 'github_actions') {
         try {
-            const gitHubSecrets = await credentialController.getDecryptedCredentialsInternal(orgId, 'github_actions');
+            const gitHubSecrets = await credentialController.getDecryptedCredentialsInternal(orgId, 'github');
             const githubToken = gitHubSecrets?.pat || gitHubSecrets?.token || process.env.GITHUB_TOKEN;
             if (githubToken) {
                 const repoPath = (matchedApp && matchedApp.repo_url)
@@ -1494,7 +1494,7 @@ const getRunDetails = async (req, res) => {
                 }
             } else if (prov === 'github_actions') {
                 try {
-                    const gitHubSecrets = await credentialController.getDecryptedCredentialsInternal(orgId, 'github_actions');
+                    const gitHubSecrets = await credentialController.getDecryptedCredentialsInternal(orgId, 'github');
                     const githubToken = gitHubSecrets?.pat || gitHubSecrets?.token || process.env.GITHUB_TOKEN;
                     if (githubToken) {
                         const repoPath = (matchedApp && matchedApp.repo_url)
