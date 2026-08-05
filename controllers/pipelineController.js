@@ -1174,5 +1174,6 @@ module.exports = {
     getStepLogs,
     migratePipelineProvider,
     decommissionLegacyPipeline,
-    deletePipeline
+    deletePipeline,
+    getSupportedBranches
 };
