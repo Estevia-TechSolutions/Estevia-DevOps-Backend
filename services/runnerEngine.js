@@ -60,15 +60,28 @@ const executeEvaForgeDeployment = async (runId) => {
     try {
         // Fetch run details & pipeline provider verification
         const [runs] = await db.query(`
-            SELECT pr.*, p.organization_id, p.project_name, p.provider, p.target_type, p.name AS pipeline_name, a.repo_url, a.app_type
+            SELECT pr.*, p.organization_id, p.project_name, p.provider, p.target_type, p.name AS pipeline_name
             FROM pipeline_runs pr
             JOIN pipelines p ON pr.pipeline_id = p.id
-            LEFT JOIN applications a ON (LOWER(a.name) = LOWER(p.project_name) AND a.organization_id = p.organization_id)
             WHERE pr.id = ?
         `, [runId]);
 
         if (!runs || runs.length === 0) return;
         const run = runs[0];
+        const orgId = run.organization_id;
+
+        const [apps] = await db.query('SELECT name, repo_url, app_type FROM applications WHERE organization_id = ?', [orgId]);
+        const stripEnvSuffixes = (name) => {
+            if (!name) return '';
+            return name.toLowerCase()
+                .replace(/-(dev|qa|prod|production|staging|test)(-swa)?$/i, '')
+                .replace(/(-swa)?$/i, '');
+        };
+        const strippedProject = stripEnvSuffixes(run.project_name);
+        const matchedApp = apps.find(app => stripEnvSuffixes(app.name) === strippedProject);
+
+        run.repo_url = matchedApp ? matchedApp.repo_url : null;
+        run.app_type = matchedApp ? matchedApp.app_type : null;
 
         // STRICT EVALUATION GUARD: EVAOPS_NATIVE ONLY
         if (run.provider !== 'evaops_native') {

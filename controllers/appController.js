@@ -6945,14 +6945,45 @@ const appController = {
             let effectivePipelineId = String(pipelineId);
 
             // DB check fallback: if pipeline is GitHub Actions or name includes peoplecraft-frontend
-            const [pipeCheck] = await db.query(
-                `SELECT p.provider, p.project_name, a.repo_url 
+            const [pipeCheckRaw] = await db.query(
+                `SELECT p.provider, p.project_name, p.organization_id 
                  FROM pipelines p 
-                 LEFT JOIN applications a ON (LOWER(a.name) = LOWER(p.project_name) AND a.organization_id = p.organization_id)
-                 WHERE p.id = ? OR LOWER(p.project_name) = LOWER(?) OR LOWER(a.name) = LOWER(?)
+                 WHERE p.id = ? OR LOWER(p.project_name) = LOWER(?)
                  LIMIT 1`,
-                [effectivePipelineId, effectivePipelineId, effectivePipelineId]
+                [effectivePipelineId, effectivePipelineId]
             );
+
+            let pipeCheck = [];
+            if (pipeCheckRaw && pipeCheckRaw.length > 0) {
+                const pipe = pipeCheckRaw[0];
+                const [apps] = await db.query('SELECT name, repo_url FROM applications WHERE organization_id = ?', [pipe.organization_id]);
+                const stripEnvSuffixes = (name) => {
+                    if (!name) return '';
+                    return name.toLowerCase()
+                        .replace(/-(dev|qa|prod|production|staging|test)(-swa)?$/i, '')
+                        .replace(/(-swa)?$/i, '');
+                };
+                const strippedProject = stripEnvSuffixes(pipe.project_name);
+                const matchedApp = apps.find(app => stripEnvSuffixes(app.name) === strippedProject);
+
+                pipeCheck = [{
+                    provider: pipe.provider,
+                    project_name: pipe.project_name,
+                    repo_url: matchedApp ? matchedApp.repo_url : null
+                }];
+            } else {
+                const [appsCheck] = await db.query(
+                    `SELECT repo_url, name FROM applications WHERE id = ? OR LOWER(name) = LOWER(?) LIMIT 1`,
+                    [effectivePipelineId, effectivePipelineId]
+                );
+                if (appsCheck && appsCheck.length > 0) {
+                    pipeCheck = [{
+                        provider: 'github_actions',
+                        project_name: appsCheck[0].name,
+                        repo_url: appsCheck[0].repo_url
+                    }];
+                }
+            }
 
             if (pipeCheck && pipeCheck.length > 0) {
                 const pRow = pipeCheck[0];
