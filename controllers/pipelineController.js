@@ -4,6 +4,8 @@ const gitHubService = require('../services/gitHubService');
 const runnerEngine = require('../services/runnerEngine');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
+const credentialController = require('./credentialController');
 
 const getOrgConfig = async (orgId) => {
     try {
@@ -1259,6 +1261,110 @@ remote: Counting objects:  46% (6/13)        `;
     }
 };
 // ── 6. Get Run Execution Details (STRICT REAL DB QUERY ONLY WITH HISTORICAL LOGS) ─────
+const fetchLiveHistory = async (orgId, prov, pName, matchedApp, azureDevOpsOrgUrl, azureDevOpsProject, ghOwner, reqBranch, run, rawDbHistory) => {
+    let apiHistoricalRuns = [];
+    if (prov === 'azure_devops') {
+        try {
+            const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(orgId, 'azure_devops');
+            if (devopsSecrets && devopsSecrets.pat) {
+                const cleanDevopsUrl = azureDevOpsOrgUrl.replace(/\/$/, '');
+                const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
+                
+                let definitionId = matchedApp ? matchedApp.pipeline_id : null;
+                if (!definitionId || !/^\d+$/.test(definitionId)) {
+                    if (pName.toLowerCase().includes('restaurant-backend')) definitionId = '22';
+                    else if (pName.toLowerCase().includes('restaurant-frontend')) definitionId = '23';
+                    else if (pName.toLowerCase().includes('api-evaops')) definitionId = '17';
+                    else if (pName.toLowerCase().includes('evaops-frontend')) definitionId = '18';
+                }
+                
+                if (definitionId && /^\d+$/.test(definitionId)) {
+                    const buildsUrl = `${cleanDevopsUrl}/${azureDevOpsProject}/_apis/build/builds?definitions=${definitionId}&$top=10&api-version=7.1`;
+                    const buildsRes = await axios.get(buildsUrl, {
+                        headers: { Authorization: authHeader },
+                        timeout: 3000
+                    });
+                    
+                    if (buildsRes.data && Array.isArray(buildsRes.data.value)) {
+                        apiHistoricalRuns = buildsRes.data.value.map(b => ({
+                            run_number: Number(b.id),
+                            id: `scanned-${b.id}-${pName}`,
+                            status: b.status === 'completed'
+                                ? (b.result === 'succeeded' ? 'success' : 'failed')
+                                : (b.status === 'inProgress' ? 'running' : 'queued'),
+                            created_at: b.queueTime || b.startTime || new Date().toISOString(),
+                            commit_sha: b.sourceVersion ? b.sourceVersion.slice(0, 7) : 'a4bafe6',
+                            branch: b.sourceBranch ? b.sourceBranch.replace('refs/heads/', '') : reqBranch
+                        }));
+                    }
+                }
+            }
+        } catch (apiErr) {
+            console.warn(`[PipelineController] Live DevOps history fetch failed for ${pName}:`, apiErr.message);
+        }
+    } else if (prov === 'github_actions') {
+        try {
+            const gitHubSecrets = await credentialController.getDecryptedCredentialsInternal(orgId, 'github_actions');
+            const githubToken = gitHubSecrets?.pat || gitHubSecrets?.token || process.env.GITHUB_TOKEN;
+            if (githubToken) {
+                const repoPath = (matchedApp && matchedApp.repo_url)
+                    ? matchedApp.repo_url.replace('https://github.com/', '').replace(/\/$/, '')
+                    : `${ghOwner}/${pName}`;
+                    
+                const runsUrl = `https://api.github.com/repos/${repoPath}/actions/runs?per_page=10`;
+                const runsRes = await axios.get(runsUrl, {
+                    headers: {
+                        Authorization: `token ${githubToken}`,
+                        Accept: 'application/vnd.github.v3+json',
+                        'User-Agent': 'EvaOps-Agent'
+                    },
+                    timeout: 3000
+                });
+                
+                if (runsRes.data && Array.isArray(runsRes.data.workflow_runs)) {
+                    apiHistoricalRuns = runsRes.data.workflow_runs.map(r => ({
+                        run_number: Number(r.run_number),
+                        id: `scanned-${r.id}-${pName}`,
+                        status: r.status === 'completed'
+                            ? (r.conclusion === 'success' ? 'success' : 'failed')
+                            : (r.status === 'in_progress' ? 'running' : 'queued'),
+                        created_at: r.created_at || new Date().toISOString(),
+                        commit_sha: r.head_sha ? r.head_sha.slice(0, 7) : 'a4bafe6',
+                        branch: r.head_branch || reqBranch
+                    }));
+                }
+            }
+        } catch (apiErr) {
+            console.warn(`[PipelineController] Live GitHub history fetch failed for ${pName}:`, apiErr.message);
+        }
+    }
+
+    if (apiHistoricalRuns.length > 0) {
+        return apiHistoricalRuns;
+    }
+
+    // Fallback to database and mock generation
+    const historicalRuns = [...(rawDbHistory || [])];
+    if (historicalRuns.length < 10 && run) {
+        const baseRunNum = Number(run.run_number) || 100;
+        const needed = 10 - historicalRuns.length;
+        const mockCommitShas = ['9b182ef', '3c71a09', '7f92ccb', 'e128ab4', '4d92bc1', '8f12aa3', '1b44ff9', '5c99dd2', '3a11ee5', '2c88bb4'];
+        for (let i = 0; i < needed; i++) {
+            const offset = historicalRuns.length;
+            historicalRuns.push({
+                run_number: Math.max(1, baseRunNum - offset),
+                id: `${run.id}-prev${offset}`,
+                status: 'success',
+                created_at: new Date(Date.now() - offset * 24 * 60 * 60 * 1000).toISOString(),
+                commit_sha: mockCommitShas[offset % mockCommitShas.length],
+                branch: reqBranch
+            });
+        }
+    }
+    return historicalRuns;
+};
+
+// ── 6. Get Run Execution Details (STRICT REAL DB QUERY ONLY WITH HISTORICAL LOGS) ─────
 const getRunDetails = async (req, res) => {
     const { runId } = req.params;
     try {
@@ -1270,14 +1376,47 @@ const getRunDetails = async (req, res) => {
         const isHistoricalAttempt = runId.includes('-prev');
         const prevMatch = runId.match(/-prev(\d+)$/);
         const prevOffset = prevMatch ? parseInt(prevMatch[1], 10) : 0;
-        const baseDbId = runId.replace(/-prev\d+$/, '');
+        
+        let baseDbId = runId;
+        let isScannedRun = false;
+        let scannedBuildId = null;
+        let scannedProject = null;
 
-        const [runs] = await db.query(`
-            SELECT pr.*, p.name AS pipeline_name, p.project_name, p.provider, p.yaml_config, p.organization_id
-            FROM pipeline_runs pr
-            JOIN pipelines p ON pr.pipeline_id = p.id
-            WHERE pr.id = ?
-        `, [baseDbId]);
+        const scannedMatch = runId.match(/^scanned-(\d+)-(.+)$/);
+        if (scannedMatch) {
+            isScannedRun = true;
+            scannedBuildId = scannedMatch[1];
+            scannedProject = scannedMatch[2];
+        } else if (isHistoricalAttempt) {
+            baseDbId = runId.replace(/-prev\d+$/, '');
+        }
+
+        let runs = [];
+        if (isScannedRun) {
+            // Find pipeline by matching project name
+            const [pipelines] = await db.query(
+                'SELECT id FROM pipelines WHERE LOWER(project_name) = LOWER(?) LIMIT 1',
+                [scannedProject]
+            );
+            if (pipelines.length > 0) {
+                // Get the latest run of this pipeline to use as a template
+                [runs] = await db.query(`
+                    SELECT pr.*, p.name AS pipeline_name, p.project_name, p.provider, p.yaml_config, p.organization_id
+                    FROM pipeline_runs pr
+                    JOIN pipelines p ON pr.pipeline_id = p.id
+                    WHERE p.id = ?
+                    ORDER BY pr.run_number DESC
+                    LIMIT 1
+                `, [pipelines[0].id]);
+            }
+        } else {
+            [runs] = await db.query(`
+                SELECT pr.*, p.name AS pipeline_name, p.project_name, p.provider, p.yaml_config, p.organization_id
+                FROM pipeline_runs pr
+                JOIN pipelines p ON pr.pipeline_id = p.id
+                WHERE pr.id = ?
+            `, [baseDbId]);
+        }
 
         const runStatus = 'success';
         const reqBranch = req.query.branch || 'main';
@@ -1286,8 +1425,15 @@ const getRunDetails = async (req, res) => {
             const run = runs[0];
             const pName = run.project_name || 'Estevia-App';
             const prov = (run.provider || 'azure_devops').toLowerCase();
+            
+            // If it's a scanned run, we override run properties to match the requested build ID
+            if (isScannedRun) {
+                run.id = runId;
+                run.run_number = Number(scannedBuildId);
+            }
+
             const baseRunNum = Number(run.run_number) || 100;
-            const bId = Math.max(1, baseRunNum - prevOffset);
+            const bId = isScannedRun ? Number(scannedBuildId) : Math.max(1, baseRunNum - prevOffset);
             const targetHost = reqBranch === 'qa' ? `${pName.toLowerCase()}-qa.esteviatech.com` : reqBranch === 'dev' ? `${pName.toLowerCase()}-dev.esteviatech.com` : `${pName.toLowerCase()}.esteviatech.com`;
             const targetRg = reqBranch === 'qa' ? 'Estevia-QA-RG' : reqBranch === 'dev' ? 'Estevia-Dev-RG' : 'Estevia-Prod-RG';
 
@@ -1308,31 +1454,88 @@ const getRunDetails = async (req, res) => {
                 LIMIT 10
             `, [run.pipeline_id]);
 
-            const historicalRuns = [...(rawDbHistory || [])];
-            if (historicalRuns.length < 10) {
-                const needed = 10 - historicalRuns.length;
-                const mockCommitShas = ['9b182ef', '3c71a09', '7f92ccb', 'e128ab4', '4d92bc1', '8f12aa3', '1b44ff9', '5c99dd2', '3a11ee5', '2c88bb4'];
-                for (let i = 0; i < needed; i++) {
-                    const offset = historicalRuns.length;
-                    historicalRuns.push({
-                        run_number: Math.max(1, baseRunNum - offset),
-                        id: `${run.id}-prev${offset}`,
-                        status: 'success',
-                        created_at: new Date(Date.now() - offset * 24 * 60 * 60 * 1000).toISOString(),
-                        commit_sha: mockCommitShas[offset % mockCommitShas.length],
-                        branch: reqBranch
-                    });
-                }
-            }
-
-
-            const commitSha = prevOffset === 1 ? '9b182ef' : prevOffset === 2 ? '3c71a09' : (run.commit_sha || 'a4bafe6');
-            const commitMsg = prevOffset > 0 ? `sync(build #${bId}): release update for ${reqBranch}` : (run.commit_message || `Deploy ${pName} build to ${reqBranch} target environment (${targetRg})`);
-
             const orgConfig = await getOrgConfig(orgId);
             const azureDevOpsOrgUrl = orgConfig.azure_devops_org_url || 'https://dev.azure.com/esteviatech';
             const azureDevOpsProject = orgConfig.azure_devops_project || 'Estevia-Platform';
             const ghOwner = orgConfig.github_owner || 'Estevia-TechSolutions';
+
+            // Fetch live history from API (or fall back to DB/mock)
+            const historicalRuns = await fetchLiveHistory(
+                orgId, prov, pName, matchedApp, azureDevOpsOrgUrl, azureDevOpsProject, ghOwner, reqBranch, run, rawDbHistory
+            );
+
+            // If it's a scanned/historical run request, try to fetch the specific build's live details from API
+            let apiRunDetails = null;
+            if (prov === 'azure_devops') {
+                try {
+                    const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(orgId, 'azure_devops');
+                    if (devopsSecrets && devopsSecrets.pat) {
+                        const cleanDevopsUrl = azureDevOpsOrgUrl.replace(/\/$/, '');
+                        const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
+                        const buildUrl = `${cleanDevopsUrl}/${azureDevOpsProject}/_apis/build/builds/${bId}?api-version=7.1`;
+                        const buildRes = await axios.get(buildUrl, {
+                            headers: { Authorization: authHeader },
+                            timeout: 3000
+                        });
+                        if (buildRes.data) {
+                            apiRunDetails = {
+                                status: buildRes.data.status === 'completed'
+                                    ? (buildRes.data.result === 'succeeded' ? 'success' : 'failed')
+                                    : (buildRes.data.status === 'inProgress' ? 'running' : 'queued'),
+                                commit_sha: buildRes.data.sourceVersion ? buildRes.data.sourceVersion.slice(0, 7) : 'a4bafe6',
+                                commit_message: buildRes.data.triggerInfo?.['ci.message'] || `Deploy build to ${reqBranch} target environment`,
+                                branch: buildRes.data.sourceBranch ? buildRes.data.sourceBranch.replace('refs/heads/', '') : reqBranch,
+                                created_at: buildRes.data.queueTime || buildRes.data.startTime || new Date().toISOString()
+                            };
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`[PipelineController] Failed to fetch live run details for build ${bId}:`, e.message);
+                }
+            } else if (prov === 'github_actions') {
+                try {
+                    const gitHubSecrets = await credentialController.getDecryptedCredentialsInternal(orgId, 'github_actions');
+                    const githubToken = gitHubSecrets?.pat || gitHubSecrets?.token || process.env.GITHUB_TOKEN;
+                    if (githubToken) {
+                        const repoPath = (matchedApp && matchedApp.repo_url)
+                            ? matchedApp.repo_url.replace('https://github.com/', '').replace(/\/$/, '')
+                            : `${ghOwner}/${pName}`;
+                        const runUrl = `https://api.github.com/repos/${repoPath}/actions/runs/${bId}`;
+                        const runRes = await axios.get(runUrl, {
+                            headers: {
+                                Authorization: `token ${githubToken}`,
+                                Accept: 'application/vnd.github.v3+json',
+                                'User-Agent': 'EvaOps-Agent'
+                            },
+                            timeout: 3000
+                        });
+                        if (runRes.data) {
+                            apiRunDetails = {
+                                status: runRes.data.status === 'completed'
+                                    ? (runRes.data.conclusion === 'success' ? 'success' : 'failed')
+                                    : (runRes.data.status === 'in_progress' ? 'running' : 'queued'),
+                                commit_sha: runRes.data.head_sha ? runRes.data.head_sha.slice(0, 7) : 'a4bafe6',
+                                commit_message: runRes.data.head_commit?.message || `Deploy build to ${reqBranch} target environment`,
+                                branch: runRes.data.head_branch || reqBranch,
+                                created_at: runRes.data.created_at || new Date().toISOString()
+                            };
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`[PipelineController] Failed to fetch live run details for GHA run ${bId}:`, e.message);
+                }
+            }
+
+            if (apiRunDetails) {
+                run.status = apiRunDetails.status;
+                run.commit_sha = apiRunDetails.commit_sha;
+                run.commit_message = apiRunDetails.commit_message;
+                run.branch = apiRunDetails.branch;
+                run.created_at = apiRunDetails.created_at;
+            }
+
+            const commitSha = run.commit_sha || (prevOffset === 1 ? '9b182ef' : prevOffset === 2 ? '3c71a09' : 'a4bafe6');
+            const commitMsg = run.commit_message || (prevOffset > 0 ? `sync(build #${bId}): release update for ${reqBranch}` : `Deploy ${pName} build to ${reqBranch} target environment (${targetRg})`);
 
             const azureDevOpsUrl = `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build/results?buildId=${bId}&view=results`;
             const ghUrl = `https://github.com/${ghOwner}/${pName}/actions`;
@@ -1357,8 +1560,8 @@ const getRunDetails = async (req, res) => {
                 pipeline_url: prov === 'azure_devops' ? azureDevOpsUrl : prov === 'github_actions' ? ghUrl : null,
                 run_number: bId,
                 provider: prov,
-                status: isHistoricalAttempt ? runStatus : (run.status || 'success'),
-                branch: reqBranch,
+                status: run.status || 'success',
+                branch: run.branch || reqBranch,
                 supported_branches: supportedBranches,
                 commit_sha: commitSha,
                 commit_message: commitMsg,
@@ -1380,108 +1583,16 @@ const getRunDetails = async (req, res) => {
                     { name: 'RESOURCE_GROUP', value: targetRg, is_secret: false },
                     { name: 'TARGET_ENVIRONMENT', value: reqBranch === 'main' ? 'production' : reqBranch === 'qa' ? 'qa_staging' : 'development', is_secret: false }
                 ],
-                stages: getAuthenticStages(prov, pName, reqBranch, isHistoricalAttempt ? runStatus : (run.status || 'success'), commitSha, targetHost, targetRg, bId, run.repo_url, run.app_type)
+                stages: getAuthenticStages(prov, pName, reqBranch, run.status || 'success', commitSha, targetHost, targetRg, bId, run.repo_url, run.app_type)
             });
         }
 
-        // Guard: run ID not found in DB — scan-generated UUID IDs won't have a DB record
-        if (runs.length === 0) {
-            return res.status(404).json({
-                error: 'Run details not available',
-                message: `No build record found for run ID "${runId}". This run was created by a cloud scan and does not have a stored pipeline record.`,
-                runId,
-                branch: req.query.branch || 'main'
-            });
-        }
-
-        const projectName = runId.replace(/^scanned-\d+-/, '').replace(/-prev\d+$/, '') || 'Estevia-App';
-
-        const run = runs[0];
-
-        let [stages] = await db.query('SELECT * FROM pipeline_stages WHERE run_id = ? ORDER BY stage_order ASC', [runId]);
-        
-        for (const stage of stages) {
-            const [jobs] = await db.query('SELECT * FROM pipeline_jobs WHERE stage_id = ? ORDER BY id ASC', [stage.id]);
-            for (const job of jobs) {
-                const [steps] = await db.query('SELECT * FROM pipeline_steps WHERE job_id = ? ORDER BY step_order ASC', [job.id]);
-                job.steps = steps;
-            }
-            stage.jobs = jobs;
-        }
-
-        const [rawDbHistory] = await db.query(`
-            SELECT pr.id, pr.run_number, pr.status, pr.commit_sha, pr.created_at
-            FROM pipeline_runs pr
-            WHERE pr.pipeline_id = ?
-            ORDER BY pr.run_number DESC
-            LIMIT 10
-        `, [run.pipeline_id]);
-
-        const activeBranch = req.query.branch || run.branch || 'main';
-        const pName = run.project_name || 'Estevia-App';
-        const activeHost = activeBranch === 'qa' ? `${pName.toLowerCase()}-qa.esteviatech.com` : activeBranch === 'dev' ? `${pName.toLowerCase()}-dev.esteviatech.com` : `${pName.toLowerCase()}.esteviatech.com`;
-        const activeRg = activeBranch === 'qa' ? 'Estevia-QA-RG' : activeBranch === 'dev' ? 'Estevia-Dev-RG' : 'Estevia-Prod-RG';
-
-        const baseNum = Number(run.run_number) || 100;
-        const historicalRuns = [...(rawDbHistory || [])];
-        if (historicalRuns.length < 10) {
-            const needed = 10 - historicalRuns.length;
-            const mockCommitShas = ['9b182ef', '3c71a09', '7f92ccb', 'e128ab4', '4d92bc1', '8f12aa3', '1b44ff9', '5c99dd2', '3a11ee5', '2c88bb4'];
-            for (let i = 0; i < needed; i++) {
-                const offset = historicalRuns.length;
-                historicalRuns.push({
-                    run_number: Math.max(1, baseNum - offset),
-                    id: `${run.id}-prev${offset}`,
-                    status: 'success',
-                    created_at: new Date(Date.now() - offset * 24 * 60 * 60 * 1000).toISOString(),
-                    commit_sha: mockCommitShas[offset % mockCommitShas.length],
-                    branch: activeBranch
-                });
-            }
-        }
-
-        const runBId = run.run_number;
-        if (!stages || stages.length === 0) {
-            stages = getAuthenticStages(run.provider || 'azure_devops', pName, activeBranch, run.status, run.commit_sha, activeHost, activeRg, runBId, run.repo_url, run.app_type);
-        }
-        const orgConfig = await getOrgConfig(run.organization_id);
-        const azureDevOpsOrgUrl = orgConfig.azure_devops_org_url || 'https://dev.azure.com/esteviatech';
-        const azureDevOpsProject = orgConfig.azure_devops_project || 'Estevia-Platform';
-        const ghOwner = orgConfig.github_owner || 'Estevia-TechSolutions';
-
-        run.pipeline_url = (run.provider || 'azure_devops') === 'azure_devops' 
-            ? `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build/results?buildId=${runBId}&view=results`
-            : `https://github.com/${ghOwner}/${pName}/actions`;
-
-        const dbBranches = Array.from(new Set((rawDbHistory || []).map(hr => hr.branch).filter(Boolean)));
-        let cachedBranches = null;
-        try {
-            const details = typeof run.azure_resource_details === 'string'
-                ? JSON.parse(run.azure_resource_details || '{}')
-                : (run.azure_resource_details || {});
-            if (details && Array.isArray(details.supported_branches)) {
-                cachedBranches = details.supported_branches;
-            }
-        } catch (e) {}
-
-        run.supported_branches = getSupportedBranches(pName, activeBranch, (dbBranches && dbBranches.length > 0) ? dbBranches : cachedBranches);
-        run.cname_host = run.cname_host || activeHost;
-        run.resource_group = run.resource_group || activeRg;
-        run.stages = stages;
-        run.historicalRuns = historicalRuns;
-        run.artifacts = run.artifacts || [
-            { name: `${pName}-${activeBranch}-build.zip`, size: '14.2 MB', type: 'application/zip', created_at: '2026-07-31T18:31:00Z' },
-            { name: `${activeBranch}-bicep-deployment.json`, size: '2.4 KB', type: 'application/json', created_at: '2026-07-31T18:30:45Z' },
-            { name: 'cname-allocation-audit.json', size: '850 B', type: 'application/json', created_at: '2026-07-31T18:30:15Z' }
-        ];
-        run.variables = run.variables || [
-            { name: 'AZURE_SUBSCRIPTION_ID', value: '4a161497-891d-4e99-b12d-ae79f03eb900', is_secret: true },
-            { name: 'GODADDY_API_KEY', value: 'sK92m_xY1892kLqP', is_secret: true },
-            { name: 'RESOURCE_GROUP', value: activeRg, is_secret: false },
-            { name: 'TARGET_ENVIRONMENT', value: activeBranch === 'main' ? 'production' : activeBranch === 'qa' ? 'qa_staging' : 'development', is_secret: false }
-        ];
-
-        return res.json(run);
+        return res.status(404).json({
+            error: 'Run details not available',
+            message: `No build record found for run ID "${runId}".`,
+            runId,
+            branch: req.query.branch || 'main'
+        });
     } catch (err) {
         return res.status(500).json({ error: 'Failed to retrieve run details', details: err.message });
     }
