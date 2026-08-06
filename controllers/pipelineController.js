@@ -460,21 +460,36 @@ const listPipelineRuns = async (req, res) => {
             }
         }
 
-        // 3. Query all pipeline execution runs joined with pipeline metadata (excluding databases)
+        // 3. Query all pipelines joined with their latest execution run (excluding databases)
         const [rawRuns] = await db.query(`
             SELECT 
-                pr.*,
+                p.id AS pipeline_id,
                 p.name AS pipeline_name,
                 p.project_name,
                 p.provider,
-                o.github_owner
-            FROM pipeline_runs pr
-            JOIN pipelines p ON pr.pipeline_id = p.id
+                p.target_type,
+                o.github_owner,
+                pr.id,
+                pr.run_number,
+                pr.status,
+                pr.commit_sha,
+                pr.commit_message,
+                pr.branch,
+                pr.duration_seconds,
+                pr.created_at
+            FROM pipelines p
+            LEFT JOIN pipeline_runs pr ON pr.pipeline_id = p.id 
+                AND pr.id = (
+                    SELECT pr2.id FROM pipeline_runs pr2 
+                    WHERE pr2.pipeline_id = p.id 
+                    ORDER BY pr2.run_number DESC LIMIT 1
+                )
             LEFT JOIN organizations o ON o.id = p.organization_id
             WHERE p.organization_id = ?
               AND p.target_type != 'database'
               AND p.project_name NOT LIKE '%-db'
-            ORDER BY pr.created_at DESC
+              AND p.is_active = 1
+            ORDER BY COALESCE(pr.created_at, p.created_at) DESC
             LIMIT 50
         `, [orgId]);
 
@@ -489,7 +504,19 @@ const listPipelineRuns = async (req, res) => {
                 : `https://github.com/${r.github_owner || 'Estevia-TechSolutions'}/${r.project_name}`;
                 
             return {
-                ...r,
+                id: r.id || `unconfigured-${r.pipeline_id}`,
+                pipeline_id: r.pipeline_id,
+                pipeline_name: r.pipeline_name,
+                project_name: r.project_name,
+                provider: r.provider,
+                target_type: r.target_type,
+                run_number: r.run_number !== null && r.run_number !== undefined ? r.run_number : null,
+                status: r.status || 'never_run',
+                commit_sha: r.commit_sha || null,
+                commit_message: r.commit_message || 'No runs executed yet',
+                branch: r.branch || 'main',
+                duration_seconds: r.duration_seconds || 0,
+                created_at: r.created_at || new Date().toISOString(),
                 azure_resource_details: matchedApp ? matchedApp.azure_resource_details : null,
                 repo_url: repoUrl,
                 app_type: matchedApp ? matchedApp.app_type : null
@@ -538,11 +565,11 @@ const listPipelineRuns = async (req, res) => {
 
         const formattedRuns = allRuns.map((r) => {
             const activeRun = activeRunMap.get(r.pipeline_id);
-            const rNum = activeRun ? activeRun.run_number : (r.run_number || 1);
+            const rNum = activeRun ? activeRun.run_number : (r.run_number !== null && r.run_number !== undefined ? r.run_number : null);
             
             let pipelineUrl = null;
             if (r.provider === 'azure_devops') {
-                pipelineUrl = `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build/results?buildId=${rNum}&view=results`;
+                pipelineUrl = rNum ? `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build/results?buildId=${rNum}&view=results` : `${azureDevOpsOrgUrl}/${azureDevOpsProject}/_build`;
             } else if (r.provider === 'github_actions') {
                 const repoPath = r.pipeline_id && String(r.pipeline_id).startsWith('github-actions:')
                     ? String(r.pipeline_id).replace('github-actions:', '')
@@ -575,6 +602,8 @@ const listPipelineRuns = async (req, res) => {
                     cachedBranches = details.supported_branches;
                 }
             } catch (e) {}
+
+
 
             return {
                 ...r,
