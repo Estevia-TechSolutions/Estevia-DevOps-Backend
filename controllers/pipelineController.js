@@ -1510,54 +1510,140 @@ const getRunDetails = async (req, res) => {
                         
                         if (timelineRes.data && Array.isArray(timelineRes.data.records)) {
                             const records = timelineRes.data.records;
+                            const stageRecords = records.filter(r => r.type === 'Stage');
+                            const phaseRecords = records.filter(r => r.type === 'Phase');
                             const jobRecords = records.filter(r => r.type === 'Job');
                             const taskRecords = records.filter(r => r.type === 'Task');
                             
-                            liveStages = jobRecords.map((job, idx) => {
-                                const jobTasks = taskRecords.filter(t => t.parentId === job.id)
-                                    .sort((a, b) => (a.order || 0) - (b.order || 0));
-                                
-                                return {
-                                    id: `stg-${idx}`,
-                                    name: job.name || 'Build & Deploy',
-                                    status: job.result === 'succeeded' ? 'success' : (job.result === 'failed' ? 'failed' : 'running'),
-                                    stage_order: idx + 1,
-                                    jobs: [
-                                        {
-                                            id: job.id,
-                                            name: job.name || 'Execution_Job',
-                                            status: job.result === 'succeeded' ? 'success' : (job.result === 'failed' ? 'failed' : 'running'),
-                                            steps: jobTasks.map(task => {
-                                                const taskStatus = task.result === 'succeeded' ? 'success' 
-                                                    : task.result === 'failed' ? 'failed' 
-                                                    : task.result === 'skipped' ? 'skipped' 
-                                                    : 'running';
-                                                
-                                                let logOutput = `Starting task: ${task.name}\nStatus: ${taskStatus.toUpperCase()}`;
-                                                
-                                                // Extract warning & error issues from task and append to logs
-                                                if (Array.isArray(task.issues)) {
-                                                    task.issues.forEach(issue => {
-                                                        const prefix = issue.type === 'error' ? '##[error]' : '##[warning]';
-                                                        logOutput += `\n2026-08-01T17:40:20Z ${prefix} ${issue.message || ''}`;
+                            if (stageRecords.length > 0) {
+                                liveStages = await Promise.all(stageRecords.map(async (stage, sIdx) => {
+                                    const stagePhases = phaseRecords.filter(p => p.parentId === stage.id);
+                                    const stageJobs = jobRecords.filter(j => j.parentId === stage.id || stagePhases.some(p => p.id === j.parentId));
+                                    
+                                    const jobs = await Promise.all(stageJobs.map(async job => {
+                                        const jobTasks = taskRecords.filter(t => t.parentId === job.id)
+                                            .sort((a, b) => (a.order || 0) - (b.order || 0));
+                                        
+                                        const steps = await Promise.all(jobTasks.map(async task => {
+                                            const taskStatus = task.result === 'succeeded' ? 'success' 
+                                                : task.result === 'failed' ? 'failed' 
+                                                : task.result === 'skipped' ? 'skipped' 
+                                                : 'running';
+                                            
+                                            let logOutput = `Starting task: ${task.name}\nStatus: ${taskStatus.toUpperCase()}`;
+                                            
+                                            // Fetch live log content from Azure DevOps
+                                            if (task.log && task.log.url) {
+                                                try {
+                                                    const logRes = await axios.get(task.log.url, {
+                                                        headers: { Authorization: authHeader },
+                                                        timeout: 2500,
+                                                        responseType: 'text'
                                                     });
+                                                    if (logRes.data) {
+                                                        logOutput = logRes.data;
+                                                    }
+                                                } catch (logErr) {
+                                                    console.warn(`[PipelineController] Failed to fetch log from ${task.log.url}:`, logErr.message);
                                                 }
-                                                
-                                                if (taskStatus === 'failed' && (!task.issues || task.issues.length === 0)) {
-                                                    logOutput += `\n##[error] Task failed. Error code: 1\n##[error] Detailed logs can be viewed in the Azure DevOps portal.`;
+                                            }
+                                            
+                                            // Extract warning & error issues from task and append to logs if log fetch failed or as extra info
+                                            if (logOutput.length < 250 && Array.isArray(task.issues)) {
+                                                task.issues.forEach(issue => {
+                                                    const prefix = issue.type === 'error' ? '##[error]' : '##[warning]';
+                                                    logOutput += `\n${prefix} ${issue.message || ''}`;
+                                                });
+                                            }
+                                            
+                                            if (taskStatus === 'failed' && logOutput.length < 250) {
+                                                logOutput += `\n##[error] Task failed. Error code: 1\n##[error] Detailed logs can be viewed in the Azure DevOps portal.`;
+                                            }
+                                            
+                                            return {
+                                                step_name: task.name,
+                                                status: taskStatus,
+                                                task_guid: task.id,
+                                                log_output: logOutput
+                                            };
+                                        }));
+                                        
+                                        return {
+                                            id: job.id,
+                                            name: job.name || 'Job',
+                                            status: job.result === 'succeeded' ? 'success' : (job.result === 'failed' ? 'failed' : 'running'),
+                                            steps
+                                        };
+                                    }));
+                                    
+                                    return {
+                                        id: stage.id,
+                                        name: stage.name || 'Stage',
+                                        status: stage.result === 'succeeded' ? 'success' : (stage.result === 'failed' ? 'failed' : 'running'),
+                                        stage_order: sIdx + 1,
+                                        jobs
+                                    };
+                                }));
+                            } else {
+                                // Fallback: map jobs directly as stages
+                                liveStages = await Promise.all(jobRecords.map(async (job, idx) => {
+                                    const jobTasks = taskRecords.filter(t => t.parentId === job.id)
+                                        .sort((a, b) => (a.order || 0) - (b.order || 0));
+                                    
+                                    const steps = await Promise.all(jobTasks.map(async task => {
+                                        const taskStatus = task.result === 'succeeded' ? 'success' 
+                                            : task.result === 'failed' ? 'failed' 
+                                            : task.result === 'skipped' ? 'skipped' 
+                                            : 'running';
+                                        
+                                        let logOutput = `Starting task: ${task.name}\nStatus: ${taskStatus.toUpperCase()}`;
+                                        
+                                        if (task.log && task.log.url) {
+                                            try {
+                                                const logRes = await axios.get(task.log.url, {
+                                                    headers: { Authorization: authHeader },
+                                                    timeout: 2500,
+                                                    responseType: 'text'
+                                                });
+                                                if (logRes.data) {
+                                                    logOutput = logRes.data;
                                                 }
-                                                
-                                                return {
-                                                    step_name: task.name,
-                                                    status: taskStatus,
-                                                    task_guid: task.id,
-                                                    log_output: logOutput
-                                                };
-                                            })
+                                            } catch (logErr) {
+                                                console.warn(`[PipelineController] Failed to fetch log from ${task.log.url}:`, logErr.message);
+                                            }
                                         }
-                                    ]
-                                };
-                            });
+                                        
+                                        if (logOutput.length < 250 && Array.isArray(task.issues)) {
+                                            task.issues.forEach(issue => {
+                                                const prefix = issue.type === 'error' ? '##[error]' : '##[warning]';
+                                                logOutput += `\n${prefix} ${issue.message || ''}`;
+                                            });
+                                        }
+                                        
+                                        return {
+                                            step_name: task.name,
+                                            status: taskStatus,
+                                            task_guid: task.id,
+                                            log_output: logOutput
+                                        };
+                                    }));
+                                    
+                                    return {
+                                        id: `stg-${idx}`,
+                                        name: job.name || 'Build & Deploy',
+                                        status: job.result === 'succeeded' ? 'success' : (job.result === 'failed' ? 'failed' : 'running'),
+                                        stage_order: idx + 1,
+                                        jobs: [
+                                            {
+                                                id: job.id,
+                                                name: job.name || 'Execution_Job',
+                                                status: job.result === 'succeeded' ? 'success' : (job.result === 'failed' ? 'failed' : 'running'),
+                                                steps
+                                            }
+                                        ]
+                                    };
+                                }));
+                            }
                         }
                     }
                 } catch (e) {
@@ -1582,12 +1668,74 @@ const getRunDetails = async (req, res) => {
                         });
                         
                         if (jobsRes.data && Array.isArray(jobsRes.data.jobs)) {
-                            liveStages = jobsRes.data.jobs.map((job, idx) => {
+                            liveStages = await Promise.all(jobsRes.data.jobs.map(async (job, idx) => {
                                 const steps = Array.isArray(job.steps) ? job.steps : [];
+                                
+                                let jobLogsText = null;
+                                try {
+                                    const logsUrl = `https://api.github.com/repos/${repoPath}/actions/jobs/${job.id}/logs`;
+                                    const logsRes = await axios.get(logsUrl, {
+                                        headers: {
+                                            Authorization: `token ${githubToken}`,
+                                            Accept: 'application/vnd.github.v3+json',
+                                            'User-Agent': 'EvaOps-Agent'
+                                        },
+                                        timeout: 2500,
+                                        responseType: 'text'
+                                    });
+                                    if (logsRes.data) {
+                                        jobLogsText = logsRes.data;
+                                    }
+                                } catch (logsErr) {
+                                    console.warn(`[PipelineController] Failed to fetch GHA job logs for job ${job.id}:`, logsErr.message);
+                                }
+                                
+                                const mappedSteps = steps.map(step => {
+                                    const taskStatus = step.conclusion === 'success' ? 'success' 
+                                        : step.conclusion === 'failure' ? 'failed' 
+                                        : step.conclusion === 'skipped' ? 'skipped' 
+                                        : 'running';
+                                    
+                                    let logOutput = `Starting step: ${step.name}\nStatus: ${taskStatus.toUpperCase()}`;
+                                    
+                                    if (jobLogsText) {
+                                        const lines = jobLogsText.split('\n');
+                                        let stepLines = [];
+                                        let inStep = false;
+                                        const stepNameLower = step.name.toLowerCase();
+                                        for (const line of lines) {
+                                            if (line.includes(`##[group]`) && line.toLowerCase().includes(stepNameLower)) {
+                                                inStep = true;
+                                                continue;
+                                            }
+                                            if (line.includes(`##[endgroup]`) && inStep) {
+                                                inStep = false;
+                                                break;
+                                            }
+                                            if (inStep) {
+                                                stepLines.push(line);
+                                            }
+                                        }
+                                        if (stepLines.length > 0) {
+                                            logOutput = stepLines.join('\n');
+                                        }
+                                    }
+                                    
+                                    if (taskStatus === 'failed' && logOutput.length < 250) {
+                                        logOutput += `\n##[error] Step failed. Conclusion: ${step.conclusion}\n##[error] Detailed logs can be viewed in the GitHub Actions dashboard.`;
+                                    }
+                                    
+                                    return {
+                                        step_name: step.name,
+                                        status: taskStatus,
+                                        task_guid: String(step.number),
+                                        log_output: logOutput
+                                    };
+                                });
                                 
                                 return {
                                     id: `stg-${idx}`,
-                                    name: job.name || 'Build & Package',
+                                    name: job.name || 'Build & Deploy',
                                     status: job.conclusion === 'success' ? 'success' : (job.conclusion === 'failure' ? 'failed' : 'running'),
                                     stage_order: idx + 1,
                                     jobs: [
@@ -1595,28 +1743,11 @@ const getRunDetails = async (req, res) => {
                                             id: String(job.id),
                                             name: job.name || 'build',
                                             status: job.conclusion === 'success' ? 'success' : (job.conclusion === 'failure' ? 'failed' : 'running'),
-                                            steps: steps.map(step => {
-                                                const taskStatus = step.conclusion === 'success' ? 'success' 
-                                                    : step.conclusion === 'failure' ? 'failed' 
-                                                    : step.conclusion === 'skipped' ? 'skipped' 
-                                                    : 'running';
-                                                
-                                                let logOutput = `Starting step: ${step.name}\nStatus: ${taskStatus.toUpperCase()}`;
-                                                if (taskStatus === 'failed') {
-                                                    logOutput += `\n##[error] Step failed. Conclusion: ${step.conclusion}\n##[error] Detailed logs can be viewed in the GitHub Actions dashboard.`;
-                                                }
-                                                
-                                                return {
-                                                    step_name: step.name,
-                                                    status: taskStatus,
-                                                    task_guid: String(step.number),
-                                                    log_output: logOutput
-                                                };
-                                            })
+                                            steps: mappedSteps
                                         }
                                     ]
                                 };
-                            });
+                            }));
                         }
                     }
                 } catch (e) {
