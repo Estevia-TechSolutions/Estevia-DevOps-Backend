@@ -946,64 +946,27 @@ Task         : Get sources
 Description  : Get sources from a repository. Supports Git, TfsVC, and SVN repositories.
 Version      : 1.0.0
 Author       : Microsoft
-Help         : [More Information](https://go.microsoft.com/fwlink/?LinkId=798199)
 ==============================================================================
 Syncing repository: ${repoPath} (GitHub)
-git version
 git version 2.54.0
-git lfs version
-git-lfs/3.7.1 (GitHub; linux amd64; go 1.24.4)
 git init "/home/vsts/work/1/s"
-hint: Using 'master' as the name for the initial branch. This default branch name
-hint: will change to "main" in Git 3.0. To configure the initial branch name
-hint: to use in all of your new repositories, which will suppress this warning,
-hint: call:
-hint:
 Initialized empty Git repository in /home/vsts/work/1/s/.git/
-hint: 	git config --global init.defaultBranch <name>
-hint:
-hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
-hint: 'development'. The just-created branch can be renamed via this command:
-hint:
-hint: 	git branch -m <name>
-hint:
-hint: Disable this message with "git config set advice.defaultBranchName false"
 git remote add origin ${remoteUrl}
-git sparse-checkout disable
-git config gc.auto 0
-git config core.longpaths true
-git config --get-all http.${remoteUrl}.extraheader
-git config --get-all http.extraheader
-git config --get-regexp .*extraheader
-git config --get-all http.proxy
-git config http.version HTTP/1.1
-git config --get-all remote.origin.promisor
-git config --get-all remote.origin.partialclonefilter
-git --config-env=http.extraheader=env_var_http.extraheader fetch --force --tags --prune --prune-tags --progress --no-recurse-submodules origin
-remote: Enumerating objects: 1551, done.        
-remote: Counting objects:   7% (1/13)        
-remote: Counting objects:  15% (2/13)        
-remote: Counting objects:  23% (3/13)        
-remote: Counting objects:  30% (4/13)        
-remote: Counting objects:  38% (5/13)        
-remote: Counting objects:  46% (6/13)        `;
+git fetch --force --tags --prune --prune-tags --progress --no-recurse-submodules origin
+remote: Enumerating objects: 1551, done.`;
 
     const checkoutAzureLog = `2026-08-01T17:40:14.9616944Z Task         : Checkout Source Code (Git)
 2026-08-01T17:40:14.9616944Z Description  : Fetch repository source code and initialize submodules
-2026-08-01T17:40:14.9616944Z Version      : 2.240.1
-2026-08-01T17:40:14.9616944Z Author       : Microsoft Corporation
-2026-08-01T17:40:14.9616944Z Direct Link   : https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=logs&j=${jobGuid}&t=70bffe1d-a52e-5bca-e900-7b73060ca8eb
-2026-08-01T17:40:15.1029384Z [command]/bin/bash --noprofile --norc /home/vsts/work/_temp/checkout.sh
 2026-08-01T17:40:15.2418291Z ##[section]Starting: Checkout Source Code
 2026-08-01T17:40:15.3912048Z Agent Environment: Linux x64 Ubuntu 22.04 LTS (Kernel 6.2.0-1018-azure)
-2026-08-01T17:40:15.5129381Z Pool Name: Azure Pipelines Hosted Linux Pool #04
 2026-08-01T17:40:16.1283910Z Synchronizing repository: Estevia-Platform/${pName} (Git)
-2026-08-01T17:40:16.4820193Z git init "/home/vsts/work/1/s"
 2026-08-01T17:40:17.2910384Z git remote add origin https://dev.azure.com/esteviatech/Estevia-Platform/_git/${pName}
-2026-08-01T17:40:17.4819203Z git fetch --force --tags --prune --progress --no-recurse-submodules origin +refs/heads/${activeBranch}:refs/remotes/origin/${activeBranch}
 2026-08-01T17:40:17.6910293Z git checkout --force --detach ${commitSha || 'a4bafe6'}
-2026-08-01T17:40:17.8910394Z HEAD is now at ${commitSha || 'a4bafe6'} (Author: Estevia DevOps Engine)
 2026-08-01T17:40:18.0192038Z ##[section]Finishing: Checkout Source Code`;
+
+    // Realistic mock failure point selection (deterministic by build ID)
+    const failAtCompile = (status === 'failed') && (bId % 2 === 0);
+    const failAtDeploy = (status === 'failed') && (bId % 2 !== 0);
 
     if (isAzure) {
         const buildJobSteps = [
@@ -1011,55 +974,7 @@ remote: Counting objects:  46% (6/13)        `;
                 step_name: 'Initialize job',
                 status: 'success',
                 task_guid: '00a1fe7c-a750-3ace-1522-8bc80b5bf3ca',
-                log_output: `2026-08-01T17:40:10.1009384Z Condition evaluation
-2026-08-01T17:40:10.1029384Z Starting: Initialize job
-2026-08-01T17:40:10.1049384Z Agent name: 'Azure Pipelines 1'
-2026-08-01T17:40:10.1069384Z Agent machine name: 'runnervm3uvik'
-2026-08-01T17:40:10.1089384Z Current agent version: '5.277.0'
-2026-08-01T17:40:10.1109384Z Runner Image Provisioner
-2026-08-01T17:40:10.1129384Z _internal_runner_telemetry
-2026-08-01T17:40:10.1149384Z Operating System
-2026-08-01T17:40:10.1169384Z Runner Image
-2026-08-01T17:40:10.1189384Z Image: ubuntu-24.04
-2026-08-01T17:40:10.1209384Z Version: 20260720.247.2
-2026-08-01T17:40:10.1229384Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260720.247/images/ubuntu/Ubuntu2404-Readme.md
-2026-08-01T17:40:10.1249384Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260720.247
-2026-08-01T17:40:10.1269384Z Current image version: '20260720.247.2'
-2026-08-01T17:40:10.1289384Z Agent running as: 'vsts'
-2026-08-01T17:40:10.1309384Z Prepare build directory.
-2026-08-01T17:40:10.1329384Z Set build variables.
-2026-08-01T17:40:10.1349384Z Download all required tasks.
-2026-08-01T17:40:10.1369384Z Downloading task: Bash (3.274.1)
-2026-08-01T17:40:10.1389384Z Downloading task: NodeTool (0.272.1)
-2026-08-01T17:40:10.1409384Z ##[warning]Task 'Node.js tool installer' version 0 (NodeTool@0) is deprecated.
-2026-08-01T17:40:10.1429384Z ##[warning]This task is deprecated and will no longer receive updates. Please use UseNodeV1 as a replacement.
-2026-08-01T17:40:10.1449384Z Downloading task: CmdLine (2.276.0)
-2026-08-01T17:40:10.1469384Z Downloading task: AzureStaticWebApp (0.275.0)
-2026-08-01T17:40:10.1489384Z Checking job knob settings.
-2026-08-01T17:40:10.1509384Z    Knob: DockerActionRetries = true Source: $(VSTSAGENT_DOCKER_ACTION_RETRIES) 
-2026-08-01T17:40:10.1529384Z    Knob: AgentToolsDirectory = /opt/hostedtoolcache Source: \${AGENT_TOOLSDIRECTORY} 
-2026-08-01T17:40:10.1549384Z    Knob: UseGitLongPaths = true Source: \$(USE_GIT_LONG_PATHS) 
-2026-08-01T17:40:10.1569384Z    Knob: UseNode24withHandlerData = True Source: \$(DistributedTask.Agent.UseNode24withHandlerData) 
-2026-08-01T17:40:10.1589384Z    Knob: EnableIssueSourceValidation = true Source: \$(ENABLE_ISSUE_SOURCE_VALIDATION) 
-2026-08-01T17:40:10.1609384Z    Knob: AgentEnablePipelineArtifactLargeChunkSize = true Source: \$(AGENT_ENABLE_PIPELINEARTIFACT_LARGE_CHUNK_SIZE) 
-2026-08-01T17:40:10.1629384Z    Knob: ContinueAfterCancelProcessTreeKillAttempt = true Source: \$(VSTSAGENT_CONTINUE_AFTER_CANCEL_PROCESSTREEKILL_ATTEMPT) 
-2026-08-01T17:40:10.1649384Z    Knob: ProcessHandlerSecureArguments = false Source: \$(AZP_75787_ENABLE_NEW_LOGIC) 
-2026-08-01T17:40:10.1669384Z    Knob: ProcessHandlerSecureArguments = false Source: \$(AZP_75787_ENABLE_NEW_LOGIC_LOG) 
-2026-08-01T17:40:10.1689384Z    Knob: ProcessHandlerTelemetry = true Source: \$(AZP_75787_ENABLE_COLLECT) 
-2026-08-01T17:40:10.1709384Z    Knob: UseNewNodeHandlerTelemetry = True Source: \$(DistributedTask.Agent.USENEWNODEHANDLERTELEMETRY) 
-2026-08-01T17:40:10.1729384Z    Knob: ProcessHandlerEnableNewLogic = true Source: \$(AZP_75787_ENABLE_NEW_PH_LOGIC) 
-2026-08-01T17:40:10.1749384Z    Knob: EnableResourceMonitorDebugOutput = true Source: \$(AZP_ENABLE_RESOURCE_MONITOR_DEBUG_OUTPUT) 
-2026-08-01T17:40:10.1769384Z    Knob: EnableResourceUtilizationWarnings = true Source: \$(AZP_ENABLE_RESOURCE_UTILIZATION_WARNINGS) 
-2026-08-01T17:40:10.1789384Z    Knob: IgnoreVSTSTaskLib = true Source: \$(AZP_AGENT_IGNORE_VSTSTASKLIB) 
-2026-08-01T17:40:10.1809384Z    Knob: FailJobWhenAgentDies = true Source: \$(FAIL_JOB_WHEN_AGENT_DIES) 
-2026-08-01T17:40:10.1829384Z    Knob: EnhancedWorkerCrashHandling = true Source: \${AZP_ENHANCED_WORKER_CRASH_HANDLING} 
-2026-08-01T17:40:10.1849384Z    Knob: CheckForTaskDeprecation = true Source: \$(AZP_AGENT_CHECK_FOR_TASK_DEPRECATION) 
-2026-08-01T17:40:10.1869384Z    Knob: CheckIfTaskNodeRunnerIsDeprecated246 = True Source: \$(DistributedTask.Agent.CheckIfTaskNodeRunnerIsDeprecated246) 
-2026-08-01T17:40:10.1889384Z    Knob: UseNode20ToStartContainer = True Source: \$(DistributedTask.Agent.UseNode20ToStartContainer) 
-2026-08-01T17:40:10.1909384Z    Knob: UseNode24ToStartContainer = True Source: \$(DistributedTask.Agent.UseNode24ToStartContainer) 
-2026-08-01T17:40:10.1929384Z    Knob: EnableTimeoutLogFlushing = True Source: \$(DistributedTask.Agent.EnableTimeoutLogFlushing) 
-2026-08-01T17:40:10.1949384Z    Knob: LogTaskNameInUserAgent = true Source: \$(AZP_AGENT_LOG_TASKNAME_IN_USERAGENT)
-2026-08-01T17:40:10.1969384Z ##[section]Finishing: Initialize job`
+                log_output: `2026-08-01T17:40:10.1029384Z Starting: Initialize job\n2026-08-01T17:40:10.1189384Z Image: ubuntu-24.04\n2026-08-01T17:40:10.1369384Z Downloading task: Bash (3.274.1)\n2026-08-01T17:40:10.1969384Z ##[section]Finishing: Initialize job`
             },
             {
                 step_name: isGitHubRepo ? 'Checkout Code' : 'Checkout Source Code',
@@ -1075,54 +990,42 @@ remote: Counting objects:  46% (6/13)        `;
                     step_name: 'Initialize Node Environment',
                     status: 'success',
                     task_guid: '81cffe2e-b63f-6cda-f011-8c84071db9fc',
-                    log_output: `2026-08-01T17:40:18.1029384Z Task         : Use Node.js Ecosystem\n2026-08-01T17:40:18.1029384Z Description  : Set up target Node.js version and restore npm package dependencies\n2026-08-01T17:40:18.1029384Z Version      : 2.240.1\n2026-08-01T17:40:18.1029384Z Direct Link   : https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=logs&j=${jobGuid}&t=81cffe2e-b63f-6cda-f011-8c84071db9fc\n2026-08-01T17:40:18.2418291Z ##[section]Starting: Initialize Node Environment\n2026-08-01T17:40:18.3912048Z Found Node.js toolcache at /opt/hostedtoolcache/node/20.20.2/x64\n2026-08-01T17:40:18.5129381Z Exporting PATH="/opt/hostedtoolcache/node/20.20.2/x64/bin:$PATH"\n2026-08-01T17:40:18.6819203Z [command]/opt/hostedtoolcache/node/20.20.2/x64/bin/npm ci --prefer-offline --no-audit\n2026-08-01T17:40:21.1283910Z Restored 1,783 packages from package-lock.json in 3.42s (0 vulnerabilities found)\n2026-08-01T17:40:21.3910293Z ##[section]Finishing: Initialize Node Environment`
+                    log_output: `2026-08-01T17:40:18.1029384Z Task         : Use Node.js Ecosystem\n2026-08-01T17:40:21.1283910Z Restored 1,783 packages from package-lock.json in 3.42s\n2026-08-01T17:40:21.3910293Z ##[section]Finishing: Initialize Node Environment`
                 },
                 {
                     step_name: 'Compile & Typecheck Project',
-                    status: status || 'success',
+                    status: failAtCompile ? 'failed' : 'success',
                     task_guid: '92dffe3f-c740-7deb-0122-9d95082ec0ad',
-                    log_output: `2026-08-01T17:40:21.5029384Z Task         : TypeScript AST Compiler & Vite Production Build\n2026-08-01T17:40:21.5029384Z Direct Link   : https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=logs&j=${jobGuid}&t=92dffe3f-c740-7deb-0122-9d95082ec0ad\n2026-08-01T17:40:21.6418291Z ##[section]Starting: Compile & Typecheck Project\n2026-08-01T17:40:21.7912048Z [command]npx tsc -b && npx vite build\n` + (status === 'failed'
+                    log_output: `2026-08-01T17:40:21.5029384Z Task         : TypeScript AST Compiler & Vite Production Build\n` + (failAtCompile
                         ? `2026-08-01T17:40:22.1283910Z [error] src/auth/token.ts(42,18): error TS2307: Cannot find module 'jsonwebtoken' or its corresponding type declarations.\n2026-08-01T17:40:22.3910293Z ##[error]Process completed with exit code 1.\n2026-08-01T17:40:22.5029384Z ##[section]Finishing: Compile & Typecheck Project`
-                        : `2026-08-01T17:40:22.1283910Z TypeScript typecheck passed with 0 errors.\n2026-08-01T17:40:22.3910293Z vite v8.0.16 building client bundle for production...\n2026-08-01T17:40:22.5029384Z dist/index.html                                      0.68 kB │ gzip:   0.37 kB\n2026-08-01T17:40:22.6819203Z dist/assets/index.css                      25.45 kB │ gzip:   5.79 kB\n2026-08-01T17:40:22.8910293Z dist/assets/index.js                    1,686.62 kB │ gzip: 356.10 kB\n2026-08-01T17:40:23.0192038Z Production client build completed successfully in 516ms.\n2026-08-01T17:40:23.1283910Z ##[section]Finishing: Compile & Typecheck Project`)
+                        : `2026-08-01T17:40:22.1283910Z TypeScript typecheck passed with 0 errors.\n2026-08-01T17:40:22.8910293Z dist/assets/index.js                    1,686.62 kB │ gzip: 356.10 kB\n2026-08-01T17:40:23.1283910Z ##[section]Finishing: Compile & Typecheck Project`)
                 },
                 {
                     step_name: 'Publish Build Artifacts',
-                    status: status || 'success',
+                    status: failAtCompile ? 'skipped' : 'success',
                     task_guid: '03effe4a-d851-8efc-1233-0ea6093fd1be',
-                    log_output: `2026-08-01T17:40:23.2418291Z Task         : Publish Pipeline Artifacts\n2026-08-01T17:40:23.2418291Z Direct Link   : https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=logs&j=${jobGuid}&t=03effe4a-d851-8efc-1233-0ea6093fd1be\n2026-08-01T17:40:23.3912048Z ##[section]Starting: Publish Build Artifacts\n2026-08-01T17:40:23.5129381Z Packaging directory ./dist into drop.zip archive...\n2026-08-01T17:40:23.6819203Z Archive size: 14.2 MB (Compression ratio: 68%)\n2026-08-01T17:40:24.1283910Z Uploading drop.zip to Azure DevOps Artifact Feed 'esteviatech-drop'...\n2026-08-01T17:40:24.3910293Z Uploaded artifact drop.zip cleanly. Artifact ID: art-98042.\n2026-08-01T17:40:24.5029384Z ##[section]Finishing: Publish Build Artifacts`
+                    log_output: failAtCompile 
+                        ? `Task skipped because a previous step failed.`
+                        : `2026-08-01T17:40:23.2418291Z Task         : Publish Pipeline Artifacts\n2026-08-01T17:40:24.3910293Z Uploaded artifact drop.zip cleanly. Artifact ID: art-98042.\n2026-08-01T17:40:24.5029384Z ##[section]Finishing: Publish Build Artifacts`
                 }
             );
         } else {
             buildJobSteps.push(
                 {
                     step_name: 'Docker Build & Push',
-                    status: status || 'success',
+                    status: failAtCompile ? 'failed' : 'success',
                     task_guid: '82cffe2e-b63f-6cda-f011-8c84071db9fc',
-                    log_output: `2026-08-01T17:40:18.1029384Z Task         : Docker Build & Push Container Image\n` +
-                                `2026-08-01T17:40:18.2418291Z ##[section]Starting: Docker Build & Push\n` +
-                                `2026-08-01T17:40:18.3912048Z [command]docker build -t esteviaplatformregistry.azurecr.io/${pName}:latest -f Dockerfile .\n` +
-                                `2026-08-01T17:40:18.5129381Z Sending build context to Docker daemon  24.58MB\n` +
-                                `2026-08-01T17:40:18.6819203Z Step 1/8 : FROM node:20-alpine\n` +
-                                `2026-08-01T17:40:18.8910293Z Step 2/8 : WORKDIR /app\n` +
-                                `2026-08-01T17:40:19.1283910Z Step 3/8 : COPY package*.json ./\n` +
-                                `2026-08-01T17:40:19.3910293Z Step 4/8 : RUN npm ci --only=production\n` +
-                                `2026-08-01T17:40:21.1283910Z Step 5/8 : COPY . .\n` +
-                                `2026-08-01T17:40:21.3910293Z Step 6/8 : EXPOSE 5005\n` +
-                                `2026-08-01T17:40:21.5029384Z Step 7/8 : CMD ["node", "server.js"]\n` +
-                                `2026-08-01T17:40:21.6819203Z Successfully built container image.\n` +
-                                `2026-08-01T17:40:21.8910293Z [command]docker push esteviaplatformregistry.azurecr.io/${pName}:latest\n` +
-                                `2026-08-01T17:40:22.3910293Z Push completed successfully.\n` +
-                                `2026-08-01T17:40:22.5029384Z ##[section]Finishing: Docker Build & Push`
+                    log_output: `2026-08-01T17:40:18.1029384Z Task         : Docker Build & Push Container Image\n` + (failAtCompile
+                        ? `2026-08-01T17:40:19.3910293Z Step 4/8 : RUN npm ci --only=production\n2026-08-01T17:40:20.1029384Z ##[error]npm ERR! code EAI_AGAIN\n2026-08-01T17:40:20.1049384Z ##[error]npm ERR! syscall getaddrinfo\n2026-08-01T17:40:20.2039384Z ##[error]Process completed with exit code 1.`
+                        : `2026-08-01T17:40:22.3910293Z Push completed successfully.\n2026-08-01T17:40:22.5029384Z ##[section]Finishing: Docker Build & Push`)
                 },
                 {
                     step_name: 'Publish Build Artifacts',
-                    status: status || 'success',
+                    status: failAtCompile ? 'skipped' : 'success',
                     task_guid: '03effe4a-d851-8efc-1233-0ea6093fd1be',
-                    log_output: `2026-08-01T17:40:22.6418291Z Task         : Publish Pipeline Artifacts\n` +
-                                `2026-08-01T17:40:22.7912048Z ##[section]Starting: Publish Build Artifacts\n` +
-                                `2026-08-01T17:40:23.1283910Z Uploading container telemetry manifest artifact to Azure DevOps Artifact Feed...\n` +
-                                `2026-08-01T17:40:23.3910293Z Uploaded telemetry manifest cleanly. Artifact ID: art-98042.\n` +
-                                `2026-08-01T17:40:23.5029384Z ##[section]Finishing: Publish Build Artifacts`
+                    log_output: failAtCompile
+                        ? `Task skipped because a previous step failed.`
+                        : `2026-08-01T17:40:22.6418291Z Task         : Publish Pipeline Artifacts\n2026-08-01T17:40:23.5029384Z ##[section]Finishing: Publish Build Artifacts`
                 }
             );
         }
@@ -1130,54 +1033,11 @@ remote: Counting objects:  46% (6/13)        `;
         const deployJobSteps = [
             {
                 step_name: 'Initialize job',
-                status: 'success',
+                status: failAtCompile ? 'skipped' : 'success',
                 task_guid: '00a1fe7c-a750-3ace-1522-8bc80b5bf3cb',
-                log_output: `2026-08-01T17:40:24.1009384Z Condition evaluation
-2026-08-01T17:40:24.1029384Z Starting: Initialize job
-2026-08-01T17:40:24.1049384Z Agent name: 'Azure Pipelines 1'
-2026-08-01T17:40:24.1069384Z Agent machine name: 'runnervm3uvik'
-2026-08-01T17:40:24.1089384Z Current agent version: '5.277.0'
-2026-08-01T17:40:24.1109384Z Runner Image Provisioner
-2026-08-01T17:40:24.1129384Z _internal_runner_telemetry
-2026-08-01T17:40:24.1149384Z Operating System
-2026-08-01T17:40:24.1169384Z Runner Image
-2026-08-01T17:40:24.1189384Z Image: ubuntu-24.04
-2026-08-01T17:40:24.1209384Z Version: 20260720.247.2
-2026-08-01T17:40:24.1229384Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260720.247/images/ubuntu/Ubuntu2404-Readme.md
-2026-08-01T17:40:24.1249384Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260720.247
-2026-08-01T17:40:24.1269384Z Current image version: '20260720.247.2'
-2026-08-01T17:40:24.1289384Z Agent running as: 'vsts'
-2026-08-01T17:40:24.1309384Z Prepare build directory.
-2026-08-01T17:40:24.1329384Z Set build variables.
-2026-08-01T17:40:24.1349384Z Download all required tasks.
-2026-08-01T17:40:24.1369384Z Downloading task: DownloadPipelineArtifact (2.274.1)
-2026-08-01T17:40:24.1389384Z Downloading task: AzureStaticWebApp (0.275.0)
-2026-08-01T17:40:24.1409384Z Downloading task: Bash (3.274.1)
-2026-08-01T17:40:24.1429384Z Checking job knob settings.
-2026-08-01T17:40:24.1449384Z    Knob: DockerActionRetries = true Source: $(VSTSAGENT_DOCKER_ACTION_RETRIES) 
-2026-08-01T17:40:24.1529384Z    Knob: AgentToolsDirectory = /opt/hostedtoolcache Source: \${AGENT_TOOLSDIRECTORY} 
-2026-08-01T17:40:24.1549384Z    Knob: UseGitLongPaths = true Source: \$(USE_GIT_LONG_PATHS) 
-2026-08-01T17:40:24.1569384Z    Knob: UseNode24withHandlerData = True Source: \$(DistributedTask.Agent.UseNode24withHandlerData) 
-2026-08-01T17:40:24.1589384Z    Knob: EnableIssueSourceValidation = true Source: \$(ENABLE_ISSUE_SOURCE_VALIDATION) 
-2026-08-01T17:40:24.1609384Z    Knob: AgentEnablePipelineArtifactLargeChunkSize = true Source: \$(AGENT_ENABLE_PIPELINEARTIFACT_LARGE_CHUNK_SIZE) 
-2026-08-01T17:40:24.1629384Z    Knob: ContinueAfterCancelProcessTreeKillAttempt = true Source: \$(VSTSAGENT_CONTINUE_AFTER_CANCEL_PROCESSTREEKILL_ATTEMPT) 
-2026-08-01T17:40:24.1649384Z    Knob: ProcessHandlerSecureArguments = false Source: \$(AZP_75787_ENABLE_NEW_LOGIC) 
-2026-08-01T17:40:24.1669384Z    Knob: ProcessHandlerSecureArguments = false Source: \$(AZP_75787_ENABLE_NEW_LOGIC_LOG) 
-2026-08-01T17:40:24.1689384Z    Knob: ProcessHandlerTelemetry = true Source: \$(AZP_75787_ENABLE_COLLECT) 
-2026-08-01T17:40:24.1709384Z    Knob: UseNewNodeHandlerTelemetry = True Source: \$(DistributedTask.Agent.USENEWNODEHANDLERTELEMETRY) 
-2026-08-01T17:40:24.1729384Z    Knob: ProcessHandlerEnableNewLogic = true Source: \$(AZP_75787_ENABLE_NEW_PH_LOGIC) 
-2026-08-01T17:40:24.1749384Z    Knob: EnableResourceMonitorDebugOutput = true Source: \$(AZP_ENABLE_RESOURCE_MONITOR_DEBUG_OUTPUT) 
-2026-08-01T17:40:24.1769384Z    Knob: EnableResourceUtilizationWarnings = true Source: \$(AZP_ENABLE_RESOURCE_UTILIZATION_WARNINGS) 
-2026-08-01T17:40:24.1789384Z    Knob: IgnoreVSTSTaskLib = true Source: \$(AZP_AGENT_IGNORE_VSTSTASKLIB) 
-2026-08-01T17:40:24.1809384Z    Knob: FailJobWhenAgentDies = true Source: \$(FAIL_JOB_WHEN_AGENT_DIES) 
-2026-08-01T17:40:24.1829384Z    Knob: EnhancedWorkerCrashHandling = true Source: \${AZP_ENHANCED_WORKER_CRASH_HANDLING} 
-2026-08-01T17:40:24.1849384Z    Knob: CheckForTaskDeprecation = true Source: \$(AZP_AGENT_CHECK_FOR_TASK_DEPRECATION) 
-2026-08-01T17:40:24.1869384Z    Knob: CheckIfTaskNodeRunnerIsDeprecated246 = True Source: \$(DistributedTask.Agent.CheckIfTaskNodeRunnerIsDeprecated246) 
-2026-08-01T17:40:24.1889384Z    Knob: UseNode20ToStartContainer = True Source: \$(DistributedTask.Agent.UseNode20ToStartContainer) 
-2026-08-01T17:40:24.1909384Z    Knob: UseNode24ToStartContainer = True Source: \$(DistributedTask.Agent.UseNode24ToStartContainer) 
-2026-08-01T17:40:24.1929384Z    Knob: EnableTimeoutLogFlushing = True Source: \$(DistributedTask.Agent.EnableTimeoutLogFlushing) 
-2026-08-01T17:40:24.1949384Z    Knob: LogTaskNameInUserAgent = true Source: \$(AZP_AGENT_LOG_TASKNAME_IN_USERAGENT)
-2026-08-01T17:40:24.1969384Z ##[section]Finishing: Initialize job`
+                log_output: failAtCompile
+                    ? `Task skipped because a previous stage failed.`
+                    : `2026-08-01T17:40:24.1029384Z Starting: Initialize job\n2026-08-01T17:40:24.1969384Z ##[section]Finishing: Initialize job`
             }
         ];
 
@@ -1185,32 +1045,34 @@ remote: Counting objects:  46% (6/13)        `;
             deployJobSteps.push(
                 {
                     step_name: 'Download Build Artifact',
-                    status: 'success',
+                    status: failAtCompile ? 'skipped' : 'success',
                     task_guid: '14fffe5b-e962-9fad-2344-1fb70a4ae2cf',
-                    log_output: `2026-08-01T17:40:24.6418291Z Task         : Download Pipeline Artifacts\n2026-08-01T17:40:24.6418291Z Direct Link   : https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=logs&j=${jobGuid}&t=14fffe5b-e962-9fad-2344-1fb70a4ae2cf\n2026-08-01T17:40:24.7912048Z ##[section]Starting: Download Build Artifact\n2026-08-01T17:40:25.1283910Z Downloading drop.zip from Azure DevOps Artifact Feed 'esteviatech-drop'...\n2026-08-01T17:40:25.3910293Z Downloaded 14.2 MB archive to agent working folder.\n2026-08-01T17:40:25.5029384Z ##[section]Finishing: Download Build Artifact`
+                    log_output: failAtCompile
+                        ? `Task skipped because a previous stage failed.`
+                        : `2026-08-01T17:40:24.6418291Z Task         : Download Pipeline Artifacts\n2026-08-01T17:40:25.5029384Z ##[section]Finishing: Download Build Artifact`
                 },
                 {
                     step_name: 'Deploy to Azure Cloud Environment',
-                    status: status || 'success',
+                    status: failAtCompile ? 'skipped' : (failAtDeploy ? 'failed' : 'success'),
                     task_guid: '2500fe6c-fa73-0abe-3455-2gc80b5bf3da',
-                    log_output: `2026-08-01T17:40:25.6418291Z Task         : Azure Cloud Infrastructure & Revision Deployment\n2026-08-01T17:40:25.6418291Z Direct Link   : https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=logs&j=${jobGuid}&t=2500fe6c-fa73-0abe-3455-2gc80b5bf3da\n2026-08-01T17:40:25.7912048Z ##[section]Starting: Deploy to Azure Cloud Environment\n2026-08-01T17:40:26.1283910Z Target Azure Resource Group: ${targetRg} (${targetHost})\n2026-08-01T17:40:26.3910293Z Authenticating with Azure ARM Management API...\n` + (status === 'failed'
-                        ? `2026-08-01T17:40:26.6819203Z ##[error]Deployment failed in ${targetRg}: Quota Exceeded for subscription.\n2026-08-01T17:40:26.8910293Z ##[section]Finishing: Deploy to Azure Cloud Environment`
-                        : `2026-08-01T17:40:26.6819203Z Deploying container app revision / static web app build package...\n2026-08-01T17:40:27.1283910Z Deployment completed successfully.\n2026-08-01T17:40:27.3910293Z ##[section]Finishing: Deploy to Azure Cloud Environment`)
+                    log_output: failAtCompile
+                        ? `Task skipped because a previous stage failed.`
+                        : `2026-08-01T17:40:25.6418291Z Task         : Azure Cloud Infrastructure & Revision Deployment\n` + (failAtDeploy
+                            ? `2026-08-01T17:40:26.6819203Z ##[error]Deployment failed in ${targetRg}: Quota Exceeded for subscription.\n2026-08-01T17:40:26.8910293Z ##[section]Finishing: Deploy to Azure Cloud Environment`
+                            : `2026-08-01T17:40:27.1283910Z Deployment completed successfully.\n2026-08-01T17:40:27.3910293Z ##[section]Finishing: Deploy to Azure Cloud Environment`)
                 }
             );
         } else {
             deployJobSteps.push(
                 {
                     step_name: 'Deploy to Azure Cloud Environment',
-                    status: status || 'success',
+                    status: failAtCompile ? 'skipped' : (failAtDeploy ? 'failed' : 'success'),
                     task_guid: '2500fe6c-fa73-0abe-3455-2gc80b5bf3da',
-                    log_output: `2026-08-01T17:40:24.6418291Z Task         : Azure Container App Deployer\n` +
-                                `2026-08-01T17:40:24.7912048Z ##[section]Starting: Deploy to Azure Cloud Environment\n` +
-                                `2026-08-01T17:40:25.1283910Z Target Azure Resource Group: ${targetRg}\n` +
-                                `2026-08-01T17:40:25.3910293Z Updating Container App revision with image esteviaplatformregistry.azurecr.io/${pName}:latest...\n` +
-                                `2026-08-01T17:40:26.1283910Z Revision update complete. Traffic weight set: 100% Active.\n` +
-                                `2026-08-01T17:40:26.3910293Z Target CNAME host: https://${targetHost}\n` +
-                                `2026-08-01T17:40:26.5029384Z ##[section]Finishing: Deploy to Azure Cloud Environment`
+                    log_output: failAtCompile
+                        ? `Task skipped because a previous stage failed.`
+                        : `2026-08-01T17:40:24.6418291Z Task         : Azure Container App Deployer\n` + (failAtDeploy
+                            ? `2026-08-01T17:40:25.3910293Z ##[error]Failed to update Container App revision: Revision limit reached.\n2026-08-01T17:40:25.5029384Z ##[section]Finishing: Deploy to Azure Cloud Environment`
+                            : `2026-08-01T17:40:26.5029384Z ##[section]Finishing: Deploy to Azure Cloud Environment`)
                 }
             );
         }
@@ -1218,11 +1080,11 @@ remote: Counting objects:  46% (6/13)        `;
         deployJobSteps.push(
             {
                 step_name: 'Post-Deployment Health Verification',
-                status: status || 'success',
+                status: (failAtCompile || failAtDeploy) ? 'skipped' : 'success',
                 task_guid: '3611fe7d-0b84-1bcf-4566-3hd90c6cg4eb',
-                log_output: `2026-08-01T17:40:27.5029384Z Task         : Post-Deployment Health Check & Probe Assertion\n2026-08-01T17:40:27.5029384Z Direct Link   : https://dev.azure.com/esteviatech/Estevia-Platform/_build/results?buildId=${bId}&view=logs&j=${jobGuid}&t=3611fe7d-0b84-1bcf-4566-3hd90c6cg4eb\n2026-08-01T17:40:27.6418291Z ##[section]Starting: Post-Deployment Health Verification\n2026-08-01T17:40:27.7912048Z Dispatching HTTP GET health check probe to https://${targetHost}/api/health...\n` + (status === 'failed'
-                    ? `2026-08-01T17:40:28.1283910Z ##[error]Health check failed: HTTP 503 Service Unavailable.\n2026-08-01T17:40:28.3910293Z ##[section]Finishing: Post-Deployment Health Verification`
-                    : `2026-08-01T17:40:28.1283910Z Health check returned HTTP 200 OK. CNAME target verified active in ${targetRg}.\n2026-08-01T17:40:28.3910293Z ##[section]Finishing: Post-Deployment Health Verification`)
+                log_output: (failAtCompile || failAtDeploy)
+                    ? `Task skipped because a previous step failed.`
+                    : `2026-08-01T17:40:27.5029384Z Task         : Post-Deployment Health Check & Probe Assertion\n2026-08-01T17:40:28.3910293Z ##[section]Finishing: Post-Deployment Health Verification`
             }
         );
 
@@ -1230,13 +1092,13 @@ remote: Counting objects:  46% (6/13)        `;
             {
                 id: 'stg-0',
                 name: 'Build & Package',
-                status: status || 'success',
+                status: failAtCompile ? 'failed' : 'success',
                 stage_order: 1,
                 jobs: [
                     {
                         id: 'job-0',
                         name: 'Build_Job',
-                        status: status || 'success',
+                        status: failAtCompile ? 'failed' : 'success',
                         steps: buildJobSteps
                     }
                 ]
@@ -1244,86 +1106,71 @@ remote: Counting objects:  46% (6/13)        `;
             {
                 id: 'stg-1',
                 name: 'Deploy to Target Environment',
-                status: status || 'success',
+                status: failAtCompile ? 'skipped' : (failAtDeploy ? 'failed' : 'success'),
                 stage_order: 2,
                 jobs: [
                     {
                         id: 'job-1',
                         name: 'Deployment_Job',
-                        status: status || 'success',
+                        status: failAtCompile ? 'skipped' : (failAtDeploy ? 'failed' : 'success'),
                         steps: deployJobSteps
                     }
                 ]
             }
         ];
     } else {
+        // GitHub Actions Mock Flow
+        const ghSteps = [
+            {
+                step_name: 'Set up job',
+                status: 'success',
+                log_output: `2026-08-01T17:40:14.1029384Z Operating System: Ubuntu 22.04.4 LTS\n2026-08-01T17:40:15.0509384Z Checking runner telemetry... Done.`
+            },
+            {
+                step_name: 'Set up Node.js',
+                status: 'success',
+                log_output: `2026-08-01T17:40:15.1029384Z Setup Node.js 20.x environment\n2026-08-01T17:40:15.6819203Z ##[endgroup]`
+            },
+            {
+                step_name: 'Checkout code',
+                status: 'success',
+                log_output: checkoutGithubLog
+            },
+            {
+                step_name: 'Install dependencies',
+                status: 'success',
+                log_output: `2026-08-01T17:40:18.1029384Z Running npm ci...\n2026-08-01T17:40:21.1283910Z Restored dependencies cleanly.`
+            },
+            {
+                step_name: 'Compile assets',
+                status: failAtCompile ? 'failed' : 'success',
+                log_output: failAtCompile
+                    ? `2026-08-01T17:40:22.1283910Z ##[error] Failed compilation: cannot find module jsonwebtoken\n2026-08-01T17:40:22.2039384Z ##[error] Process completed with exit code 1.`
+                    : `2026-08-01T17:40:22.3910293Z Vite client build completed successfully.`
+            },
+            {
+                step_name: 'Deploy package',
+                status: failAtCompile ? 'skipped' : (failAtDeploy ? 'failed' : 'success'),
+                log_output: failAtCompile
+                    ? `Step skipped because a previous step failed.`
+                    : (failAtDeploy
+                        ? `2026-08-01T17:40:25.3910293Z ##[error] Deployment failed: Quota Exceeded.\n2026-08-01T17:40:25.5029384Z ##[error] Process completed with exit code 1.`
+                        : `2026-08-01T17:40:26.5029384Z Static website deployment completed successfully.`)
+            }
+        ];
+
         return [
             {
                 id: 'stg-0',
-                name: 'Build',
+                name: 'Build & Deploy',
                 status: status || 'success',
                 stage_order: 1,
                 jobs: [
                     {
                         id: 'job-0',
-                        name: 'build',
+                        name: 'build_and_deploy',
                         status: status || 'success',
-                        steps: [
-                            {
-                                step_name: 'Set up job',
-                                status: 'success',
-                                log_output: `2026-08-01T17:40:14.1029384Z ##[group]Runner Image Provisioner\n2026-08-01T17:40:14.2418291Z Operating System: Ubuntu 22.04.4 LTS (Runner ID: 41209)\n2026-08-01T17:40:14.3912048Z Virtual Environment: ubuntu-latest\n2026-08-01T17:40:14.5129381Z Current runner version: '2.314.1'\n2026-08-01T17:40:14.6819203Z ##[endgroup]\n2026-08-01T17:40:14.8029384Z Prepare workflow directory\n2026-08-01T17:40:14.8912048Z Downloading Action: actions/setup-node@v4\n2026-08-01T17:40:14.9929381Z Downloading Action: actions/upload-artifact@v4\n2026-08-01T17:40:15.0509384Z Checking runner telemetry... Done.`
-                            },
-                            {
-                                step_name: 'Set up Node.js',
-                                status: 'success',
-                                log_output: `2026-08-01T17:40:15.1029384Z ##[group]Run actions/setup-node@v4\n2026-08-01T17:40:15.2418291Z Setup Node.js 20.x environment for GitHub Actions Runner\n2026-08-01T17:40:15.3912048Z Environment: ubuntu-latest (Runner ID: 41209)\n2026-08-01T17:40:15.5129381Z Node.js 20.20.2 active in PATH.\n2026-08-01T17:40:15.6819203Z ##[endgroup]`
-                            },
-                            {
-                                step_name: 'Install dependencies & build',
-                                status: status || 'success',
-                                log_output: `2026-08-01T17:40:16.1029384Z ##[group]Run npm ci && npm run build\n` + (status === 'failed'
-                                    ? `2026-08-01T17:40:16.5129381Z [error] Build failed with TypeScript compiler syntax errors.\n2026-08-01T17:40:16.6819203Z ##[endgroup]`
-                                    : `2026-08-01T17:40:16.5129381Z Vite build completed in 528ms (0 errors).\n2026-08-01T17:40:16.6819203Z ##[endgroup]`)
-                            },
-                            {
-                                step_name: 'Upload artifact',
-                                status: status || 'success',
-                                log_output: `2026-08-01T17:40:17.1029384Z ##[group]Run actions/upload-artifact@v4\n2026-08-01T17:40:17.3910293Z Uploading build artifact build-drop.zip...\n2026-08-01T17:40:17.5029384Z ##[endgroup]`
-                            }
-                        ]
-                    }
-                ]
-            },
-            {
-                id: 'stg-1',
-                name: 'Deploy',
-                status: status || 'success',
-                stage_order: 2,
-                jobs: [
-                    {
-                        id: 'job-1',
-                        name: 'deploy',
-                        status: status || 'success',
-                        steps: [
-                            {
-                                step_name: 'Set up job',
-                                status: 'success',
-                                log_output: `2026-08-01T17:40:17.6029384Z ##[group]Runner Image Provisioner\n2026-08-01T17:40:17.6518291Z Operating System: Ubuntu 22.04.4 LTS (Runner ID: 41209)\n2026-08-01T17:40:17.7012048Z Virtual Environment: ubuntu-latest\n2026-08-01T17:40:17.7529381Z Current runner version: '2.314.1'\n2026-08-01T17:40:17.8019203Z ##[endgroup]\n2026-08-01T17:40:17.8529384Z Prepare workflow directory\n2026-08-01T17:40:17.9012048Z Downloading Action: actions/download-artifact@v4\n2026-08-01T17:40:17.9529381Z Downloading Action: Azure/static-web-apps-deploy@v1\n2026-08-01T17:40:18.0509384Z Checking runner telemetry... Done.`
-                            },
-                            {
-                                step_name: 'Download artifact',
-                                status: 'success',
-                                log_output: `2026-08-01T17:40:18.1029384Z ##[group]Run actions/download-artifact@v4\n2026-08-01T17:40:18.3910293Z Downloaded artifact build-drop.zip cleanly.\n2026-08-01T17:40:18.5029384Z ##[endgroup]`
-                            },
-                            {
-                                step_name: 'Deploy to Azure',
-                                status: status || 'success',
-                                log_output: `2026-08-01T17:40:19.1029384Z ##[group]Run Azure/static-web-apps-deploy@v1\n` + (status === 'failed'
-                                    ? `2026-08-01T17:40:19.5129381Z [error] Deployment failed: Invalid deployment token.\n2026-08-01T17:40:19.6819203Z ##[endgroup]`
-                                    : `2026-08-01T17:40:19.5129381Z Deploying to Azure Static Web Apps / Container Apps (${targetHost})...\n2026-08-01T17:40:19.8910293Z Deployment complete.\n2026-08-01T17:40:20.0192038Z ##[endgroup]`)
-                            }
-                        ]
+                        steps: ghSteps
                     }
                 ]
             }
@@ -1647,6 +1494,136 @@ const getRunDetails = async (req, res) => {
 
             const supportedBranches = getSupportedBranches(pName, reqBranch, (dbBranches && dbBranches.length > 0) ? dbBranches : cachedBranches);
 
+            // ── Dynamic Live Timeline/Jobs Resolution ─────────────────────────────
+            let liveStages = null;
+            if (prov === 'azure_devops') {
+                try {
+                    const devopsSecrets = await credentialController.getDecryptedCredentialsInternal(orgId, 'azure_devops');
+                    if (devopsSecrets && devopsSecrets.pat) {
+                        const cleanDevopsUrl = azureDevOpsOrgUrl.replace(/\/$/, '');
+                        const authHeader = `Basic ${Buffer.from(':' + devopsSecrets.pat).toString('base64')}`;
+                        const timelineUrl = `${cleanDevopsUrl}/${azureDevOpsProject}/_apis/build/builds/${bId}/Timeline?api-version=7.1`;
+                        const timelineRes = await axios.get(timelineUrl, {
+                            headers: { Authorization: authHeader },
+                            timeout: 3000
+                        });
+                        
+                        if (timelineRes.data && Array.isArray(timelineRes.data.records)) {
+                            const records = timelineRes.data.records;
+                            const jobRecords = records.filter(r => r.type === 'Job');
+                            const taskRecords = records.filter(r => r.type === 'Task');
+                            
+                            liveStages = jobRecords.map((job, idx) => {
+                                const jobTasks = taskRecords.filter(t => t.parentId === job.id)
+                                    .sort((a, b) => (a.order || 0) - (b.order || 0));
+                                
+                                return {
+                                    id: `stg-${idx}`,
+                                    name: job.name || 'Build & Deploy',
+                                    status: job.result === 'succeeded' ? 'success' : (job.result === 'failed' ? 'failed' : 'running'),
+                                    stage_order: idx + 1,
+                                    jobs: [
+                                        {
+                                            id: job.id,
+                                            name: job.name || 'Execution_Job',
+                                            status: job.result === 'succeeded' ? 'success' : (job.result === 'failed' ? 'failed' : 'running'),
+                                            steps: jobTasks.map(task => {
+                                                const taskStatus = task.result === 'succeeded' ? 'success' 
+                                                    : task.result === 'failed' ? 'failed' 
+                                                    : task.result === 'skipped' ? 'skipped' 
+                                                    : 'running';
+                                                
+                                                let logOutput = `Starting task: ${task.name}\nStatus: ${taskStatus.toUpperCase()}`;
+                                                
+                                                // Extract warning & error issues from task and append to logs
+                                                if (Array.isArray(task.issues)) {
+                                                    task.issues.forEach(issue => {
+                                                        const prefix = issue.type === 'error' ? '##[error]' : '##[warning]';
+                                                        logOutput += `\n2026-08-01T17:40:20Z ${prefix} ${issue.message || ''}`;
+                                                    });
+                                                }
+                                                
+                                                if (taskStatus === 'failed' && (!task.issues || task.issues.length === 0)) {
+                                                    logOutput += `\n##[error] Task failed. Error code: 1\n##[error] Detailed logs can be viewed in the Azure DevOps portal.`;
+                                                }
+                                                
+                                                return {
+                                                    step_name: task.name,
+                                                    status: taskStatus,
+                                                    task_guid: task.id,
+                                                    log_output: logOutput
+                                                };
+                                            })
+                                        }
+                                    ]
+                                };
+                            });
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`[PipelineController] Failed to fetch live Azure DevOps timeline for build ${bId}:`, e.message);
+                }
+            } else if (prov === 'github_actions') {
+                try {
+                    const gitHubSecrets = await credentialController.getDecryptedCredentialsInternal(orgId, 'github');
+                    const githubToken = gitHubSecrets?.pat || gitHubSecrets?.token || process.env.GITHUB_TOKEN;
+                    if (githubToken) {
+                        const repoPath = (matchedApp && matchedApp.repo_url)
+                            ? matchedApp.repo_url.replace('https://github.com/', '').replace(/\/$/, '')
+                            : `${ghOwner}/${pName}`;
+                        const jobsUrl = `https://api.github.com/repos/${repoPath}/actions/runs/${bId}/jobs`;
+                        const jobsRes = await axios.get(jobsUrl, {
+                            headers: {
+                                Authorization: `token ${githubToken}`,
+                                Accept: 'application/vnd.github.v3+json',
+                                'User-Agent': 'EvaOps-Agent'
+                            },
+                            timeout: 3000
+                        });
+                        
+                        if (jobsRes.data && Array.isArray(jobsRes.data.jobs)) {
+                            liveStages = jobsRes.data.jobs.map((job, idx) => {
+                                const steps = Array.isArray(job.steps) ? job.steps : [];
+                                
+                                return {
+                                    id: `stg-${idx}`,
+                                    name: job.name || 'Build & Package',
+                                    status: job.conclusion === 'success' ? 'success' : (job.conclusion === 'failure' ? 'failed' : 'running'),
+                                    stage_order: idx + 1,
+                                    jobs: [
+                                        {
+                                            id: String(job.id),
+                                            name: job.name || 'build',
+                                            status: job.conclusion === 'success' ? 'success' : (job.conclusion === 'failure' ? 'failed' : 'running'),
+                                            steps: steps.map(step => {
+                                                const taskStatus = step.conclusion === 'success' ? 'success' 
+                                                    : step.conclusion === 'failure' ? 'failed' 
+                                                    : step.conclusion === 'skipped' ? 'skipped' 
+                                                    : 'running';
+                                                
+                                                let logOutput = `Starting step: ${step.name}\nStatus: ${taskStatus.toUpperCase()}`;
+                                                if (taskStatus === 'failed') {
+                                                    logOutput += `\n##[error] Step failed. Conclusion: ${step.conclusion}\n##[error] Detailed logs can be viewed in the GitHub Actions dashboard.`;
+                                                }
+                                                
+                                                return {
+                                                    step_name: step.name,
+                                                    status: taskStatus,
+                                                    task_guid: String(step.number),
+                                                    log_output: logOutput
+                                                };
+                                            })
+                                        }
+                                    ]
+                                };
+                            });
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`[PipelineController] Failed to fetch live GitHub Actions jobs for run ${bId}:`, e.message);
+                }
+            }
+
             return res.json({
                 id: runId,
                 pipeline_name: `${pName} CI/CD Pipeline`,
@@ -1677,7 +1654,7 @@ const getRunDetails = async (req, res) => {
                     { name: 'RESOURCE_GROUP', value: targetRg, is_secret: false },
                     { name: 'TARGET_ENVIRONMENT', value: reqBranch === 'main' ? 'production' : reqBranch === 'qa' ? 'qa_staging' : 'development', is_secret: false }
                 ],
-                stages: getAuthenticStages(prov, pName, reqBranch, run.status || 'success', commitSha, targetHost, targetRg, bId, run.repo_url, run.app_type)
+                stages: liveStages || getAuthenticStages(prov, pName, reqBranch, run.status || 'success', commitSha, targetHost, targetRg, bId, run.repo_url, run.app_type)
             });
         }
 
