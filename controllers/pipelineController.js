@@ -1612,7 +1612,27 @@ const getRunDetails = async (req, res) => {
             const repoPath = resolvedRepoUrl
                 ? resolvedRepoUrl.replace('https://github.com/', '').replace(/\/$/, '')
                 : `${ghOwner}/${pName}`;
-            const ghUrl = `https://github.com/${repoPath}/actions/runs/${bId}`;
+
+            let ghUrl = `https://github.com/${repoPath}/actions`;
+            if (prov === 'github_actions') {
+                let githubRunId = null;
+                if (isScannedRun) {
+                    githubRunId = scannedBuildId;
+                } else {
+                    // Try to find the matching run_number in the live history to resolve the real GitHub run ID
+                    const matchedLive = historicalRuns.find(h => Number(h.run_number) === Number(bId));
+                    if (matchedLive && matchedLive.id && String(matchedLive.id).startsWith('scanned-')) {
+                        const matchPart = String(matchedLive.id).split('-');
+                        if (matchPart.length >= 3 && /^\d+$/.test(matchPart[1])) {
+                            githubRunId = matchPart[1];
+                        }
+                    }
+                }
+                // Only link to the specific run if we resolved a real 11-digit GitHub run ID (length >= 8)
+                if (githubRunId && String(githubRunId).length >= 8) {
+                    ghUrl = `https://github.com/${repoPath}/actions/runs/${githubRunId}`;
+                }
+            }
 
             const dbBranches = Array.from(new Set((rawDbHistory || []).map(hr => hr.branch).filter(Boolean)));
             let cachedBranches = null;
