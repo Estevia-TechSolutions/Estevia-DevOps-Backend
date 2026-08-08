@@ -1537,11 +1537,22 @@ const getRunDetails = async (req, res) => {
                                                 try {
                                                     const logRes = await axios.get(task.log.url, {
                                                         headers: { Authorization: authHeader },
-                                                        timeout: 2500,
-                                                        responseType: 'text'
+                                                        timeout: 2500
                                                     });
                                                     if (logRes.data) {
-                                                        logOutput = logRes.data;
+                                                        let parsedData = logRes.data;
+                                                        if (typeof parsedData === 'string') {
+                                                            try {
+                                                                parsedData = JSON.parse(parsedData);
+                                                            } catch (e) {}
+                                                        }
+                                                        if (parsedData && Array.isArray(parsedData.value)) {
+                                                            logOutput = parsedData.value.join('\n');
+                                                        } else if (typeof parsedData === 'string') {
+                                                            logOutput = parsedData;
+                                                        } else if (parsedData) {
+                                                            logOutput = JSON.stringify(parsedData, null, 2);
+                                                        }
                                                     }
                                                 } catch (logErr) {
                                                     console.warn(`[PipelineController] Failed to fetch log from ${task.log.url}:`, logErr.message);
@@ -1602,11 +1613,22 @@ const getRunDetails = async (req, res) => {
                                             try {
                                                 const logRes = await axios.get(task.log.url, {
                                                     headers: { Authorization: authHeader },
-                                                    timeout: 2500,
-                                                    responseType: 'text'
+                                                    timeout: 2500
                                                 });
                                                 if (logRes.data) {
-                                                    logOutput = logRes.data;
+                                                    let parsedData = logRes.data;
+                                                    if (typeof parsedData === 'string') {
+                                                        try {
+                                                            parsedData = JSON.parse(parsedData);
+                                                        } catch (e) {}
+                                                    }
+                                                    if (parsedData && Array.isArray(parsedData.value)) {
+                                                        logOutput = parsedData.value.join('\n');
+                                                    } else if (typeof parsedData === 'string') {
+                                                        logOutput = parsedData;
+                                                    } else if (parsedData) {
+                                                        logOutput = JSON.stringify(parsedData, null, 2);
+                                                    }
                                                 }
                                             } catch (logErr) {
                                                 console.warn(`[PipelineController] Failed to fetch log from ${task.log.url}:`, logErr.message);
