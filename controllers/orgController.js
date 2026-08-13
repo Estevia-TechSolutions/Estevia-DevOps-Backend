@@ -444,13 +444,15 @@ const orgController = {
                 ? org.golden_access[0] === 1
                 : Number(org.golden_access) === 1;
 
-            // Golden Access: banners still show overdue info but restrictions are bypassed
-            const isBlocked    = !isGolden && (org.is_disabled || maxOverdueDays > blockDays);
-            const isRestricted = !isGolden && maxOverdueDays > restrictionDays && maxOverdueDays <= blockDays;
+            // Calculate base statuses regardless of golden access
+            const isBlocked    = org.is_disabled || maxOverdueDays > blockDays;
+            const isRestricted = maxOverdueDays > restrictionDays && maxOverdueDays <= blockDays;
             const isGrace      = maxOverdueDays > 0 && maxOverdueDays <= restrictionDays;
 
             let enforcementStatus = 'active';
-            if (isBlocked) {
+            if (isGolden) {
+                enforcementStatus = 'golden_override';
+            } else if (isBlocked) {
                 enforcementStatus = 'blocked';
             } else if (isRestricted) {
                 enforcementStatus = 'restricted';
