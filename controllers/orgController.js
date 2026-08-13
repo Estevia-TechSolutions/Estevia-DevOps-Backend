@@ -440,9 +440,14 @@ const orgController = {
             const restrictionDays = 30;
             const blockDays = 45;
 
-            const isBlocked = org.is_disabled || maxOverdueDays > blockDays;
-            const isRestricted = maxOverdueDays > restrictionDays && maxOverdueDays <= blockDays;
-            const isGrace = maxOverdueDays > 0 && maxOverdueDays <= restrictionDays;
+            const isGolden = Buffer.isBuffer(org.golden_access)
+                ? org.golden_access[0] === 1
+                : Number(org.golden_access) === 1;
+
+            // Golden Access: banners still show overdue info but restrictions are bypassed
+            const isBlocked    = !isGolden && (org.is_disabled || maxOverdueDays > blockDays);
+            const isRestricted = !isGolden && maxOverdueDays > restrictionDays && maxOverdueDays <= blockDays;
+            const isGrace      = maxOverdueDays > 0 && maxOverdueDays <= restrictionDays;
 
             let enforcementStatus = 'active';
             if (isBlocked) {
@@ -460,9 +465,10 @@ const orgController = {
                     ...org,
                     is_disabled: isBlocked ? 1 : 0
                 },
-                isOrgDisabled: !!isBlocked,
+                isGoldenAccess:  isGolden,
+                isOrgDisabled:   !!isBlocked,
                 isOrgRestricted: !!isRestricted,
-                isOrgGrace: !!isGrace,
+                isOrgGrace:      !!isGrace,
                 maxOverdueDays,
                 enforcementStatus,
                 credentialGate,

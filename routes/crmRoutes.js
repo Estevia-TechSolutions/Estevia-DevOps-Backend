@@ -26,4 +26,7 @@ router.get('/clients/:id/invoices', protectCrm, crmController.listClientInvoices
 router.post('/clients/:id/invoices', protectCrm, crmController.generateInvoice);
 router.put('/invoices/:invoiceId/status', protectCrm, crmController.updateInvoiceStatus);
 
+// Golden Access toggle — override billing enforcement per org
+router.put('/clients/:id/golden-access', protectCrm, crmController.updateGoldenAccess);
+
 module.exports = router;

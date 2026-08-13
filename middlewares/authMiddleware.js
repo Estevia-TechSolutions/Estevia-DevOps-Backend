@@ -34,8 +34,14 @@ const protect = async (req, res, next) => {
                                 req.originalUrl.endsWith('/org/status');
 
             if (!isBypassUrl) {
-                const [orgs] = await db.query('SELECT is_disabled FROM organizations WHERE id = ?', [decoded.organization_id]);
+                const [orgs] = await db.query('SELECT is_disabled, golden_access FROM organizations WHERE id = ?', [decoded.organization_id]);
                 const isManuallyDisabled = orgs.length > 0 && orgs[0].is_disabled;
+                const isGolden = orgs.length > 0 && (Buffer.isBuffer(orgs[0].golden_access) ? orgs[0].golden_access[0] === 1 : Number(orgs[0].golden_access) === 1);
+
+                // Golden Access: bypass all billing enforcement entirely
+                if (isGolden) {
+                    return next();
+                }
 
                 // Get pending invoices to calculate dynamic overdue status
                 const [invoices] = await db.query(

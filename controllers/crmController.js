@@ -533,6 +533,30 @@ const syncUsers = async (req, res) => {
     }
 };
 
+// Toggle Golden Access for an organization
+const updateGoldenAccess = async (req, res) => {
+    const { id } = req.params;
+    const { golden_access } = req.body;
+    if (golden_access === undefined) {
+        return res.status(400).json({ error: 'golden_access (true/false) is required in request body.' });
+    }
+    try {
+        const value = golden_access ? 1 : 0;
+        const [result] = await db.query(
+            'UPDATE organizations SET golden_access = ? WHERE id = ?',
+            [value, id]
+        );
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: `Organization '${id}' not found.` });
+        }
+        console.log(`[CRM] Golden Access set to ${value} for organization ${id} by ${req.crmUser?.email}`);
+        res.json({ success: true, organization_id: id, golden_access: !!golden_access });
+    } catch (err) {
+        console.error('[CRM] updateGoldenAccess failed:', err.message);
+        res.status(500).json({ error: 'Failed to update Golden Access', details: err.message });
+    }
+};
+
 module.exports = {
     login,
     createCrmUser,
@@ -540,6 +564,7 @@ module.exports = {
     listClients,
     updateLicensing,
     updateStatus,
+    updateGoldenAccess,
     listClientInvoices,
     generateInvoice,
     updateInvoiceStatus,
