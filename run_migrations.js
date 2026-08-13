@@ -414,6 +414,15 @@ async function main() {
             await connection.query("ALTER TABLE organizations ADD COLUMN sub_package_observability TINYINT(1) NOT NULL DEFAULT 0");
         }
 
+        if (!orgColNamesList.includes('golden_access')) {
+            console.log('Adding column golden_access to organizations...');
+            await connection.query("ALTER TABLE organizations ADD COLUMN golden_access TINYINT(1) NOT NULL DEFAULT 0");
+        }
+
+        // Seed Estevia organization with golden access
+        await connection.query("UPDATE organizations SET golden_access = 1 WHERE id = 'estevia'");
+
+
         // Check if suggestion_id in applied_remediations needs modification
         const [remediationCols] = await connection.query(`
             SELECT CHARACTER_MAXIMUM_LENGTH 
