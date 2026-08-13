@@ -1547,7 +1547,7 @@ const getRunDetails = async (req, res) => {
                                                             } catch (e) {}
                                                         }
                                                         if (parsedData && Array.isArray(parsedData.value)) {
-                                                            logOutput = parsedData.value.join('\n');
+                                                            logOutput = parsedData.value.map(l => l.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*/, '')).join('\n');
                                                         } else if (typeof parsedData === 'string') {
                                                             logOutput = parsedData;
                                                         } else if (parsedData) {
@@ -1623,7 +1623,7 @@ const getRunDetails = async (req, res) => {
                                                         } catch (e) {}
                                                     }
                                                     if (parsedData && Array.isArray(parsedData.value)) {
-                                                        logOutput = parsedData.value.join('\n');
+                                                        logOutput = parsedData.value.map(l => l.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*/, '')).join('\n');
                                                     } else if (typeof parsedData === 'string') {
                                                         logOutput = parsedData;
                                                     } else if (parsedData) {
