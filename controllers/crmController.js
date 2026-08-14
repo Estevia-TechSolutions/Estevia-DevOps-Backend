@@ -142,7 +142,7 @@ const updateCrmUser = async (req, res) => {
 const listClients = async (req, res) => {
     try {
         const [clients] = await db.query(
-            `SELECT id, name, plan, license_tier, operator_seats_limit, admin_email, onboarding_complete, is_disabled, created_at 
+            `SELECT id, name, plan, license_tier, operator_seats_limit, admin_email, onboarding_complete, is_disabled, golden_access, created_at 
              FROM organizations ORDER BY created_at DESC`
         );
         const enrichedClients = [];
