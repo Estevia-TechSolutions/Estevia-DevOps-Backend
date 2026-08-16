@@ -8,10 +8,6 @@ const getM365Token = async (organizationId) => {
         if (!credentials || !credentials.tenantId || !credentials.clientId || !credentials.clientSecret) {
             return null;
         }
-        if (credentials.tenantId === 'mock' || credentials.clientId === 'mock') {
-            return 'mock_token';
-        }
-        
         const tokenUrl = `https://login.microsoftonline.com/${credentials.tenantId}/oauth2/v2.0/token`;
         const params = new URLSearchParams();
         params.append('grant_type', 'client_credentials');
@@ -30,23 +26,6 @@ const getM365Token = async (organizationId) => {
     }
 };
 
-// Mock fallback store in-memory for active session
-let mockDb = {
-    subscriptions: [
-        { skuId: 'cb2f8151-16cd-4bc3-929f-050999a3476a', skuPartNumber: 'DEVELOPERPACK_G5', totalSeats: 10, assignedSeats: 9, pricePerSeat: 35.00 },
-        { skuId: '05e01617-6819-47e0-94ab-10255a15a0c1', skuPartNumber: 'ENTERPRISEPACK', totalSeats: 150, assignedSeats: 142, pricePerSeat: 23.00 },
-        { skuId: 'f245c6ab-e05b-4de0-b184-e3fb61a35560', skuPartNumber: 'O365_BUSINESS_PREMIUM', totalSeats: 25, assignedSeats: 18, pricePerSeat: 12.50 }
-    ],
-    users: [
-        { id: 'usr-1', name: 'Govind Menon', email: 'govind@esteviatech.com', skuPartNumber: 'DEVELOPERPACK_G5', lastActiveDays: 0, status: 'active' },
-        { id: 'usr-2', name: 'Jane Smith', email: 'jane.smith@esteviatech.com', skuPartNumber: 'ENTERPRISEPACK', lastActiveDays: 3, status: 'active' },
-        { id: 'usr-3', name: 'Technical Lead', email: 'techlead@esteviatech.com', skuPartNumber: 'ENTERPRISEPACK', lastActiveDays: 1, status: 'active' },
-        { id: 'usr-4', name: 'John Doe (Contractor)', email: 'john.doe@esteviatech.com', skuPartNumber: 'ENTERPRISEPACK', lastActiveDays: 35, status: 'inactive' },
-        { id: 'usr-5', name: 'Jane Doe (Ex-Dev)', email: 'jane.doe@esteviatech.com', skuPartNumber: 'O365_BUSINESS_PREMIUM', lastActiveDays: 90, status: 'inactive' },
-        { id: 'usr-6', name: 'Unassigned Dev', email: 'unassigned@esteviatech.com', skuPartNumber: 'NONE', lastActiveDays: 0, status: 'unassigned' }
-    ]
-};
-
 const m365Controller = {
     /**
      * Get active subscriptions / SKUs inventory
@@ -59,9 +38,8 @@ const m365Controller = {
             }
 
             const token = await getM365Token(organizationId);
-            if (!token || token === 'mock_token') {
-                // Return high-fidelity mock subscriptions
-                return res.json({ success: true, subscriptions: mockDb.subscriptions });
+            if (!token) {
+                return res.status(400).json({ success: false, message: 'Microsoft 365 credentials not configured in secure vault for this organization.' });
             }
 
             // Real API Call
@@ -103,8 +81,8 @@ const m365Controller = {
             }
 
             const token = await getM365Token(organizationId);
-            if (!token || token === 'mock_token') {
-                return res.json({ success: true, users: mockDb.users });
+            if (!token) {
+                return res.status(400).json({ success: false, message: 'Microsoft 365 credentials not configured in secure vault for this organization.' });
             }
 
             // Real API Call
@@ -156,26 +134,8 @@ const m365Controller = {
             }
 
             const token = await getM365Token(organizationId);
-            if (!token || token === 'mock_token') {
-                // Update in memory mock database
-                const user = mockDb.users.find(u => u.id === userId);
-                if (user) {
-                    if (action === 'assign') {
-                        user.skuPartNumber = skuId.includes('developer') ? 'DEVELOPERPACK_G5' : skuId.includes('enterprise') ? 'ENTERPRISEPACK' : 'O365_BUSINESS_PREMIUM';
-                        user.status = 'active';
-                        user.lastActiveDays = 0;
-                    } else {
-                        user.skuPartNumber = 'NONE';
-                        user.status = 'unassigned';
-                    }
-                }
-                
-                // Re-calculate assigned counts
-                mockDb.subscriptions.forEach(sub => {
-                    sub.assignedSeats = mockDb.users.filter(u => u.skuPartNumber === sub.skuPartNumber).length;
-                });
-
-                return res.json({ success: true, message: `License ${action}ed successfully (Mocked).` });
+            if (!token) {
+                return res.status(400).json({ success: false, message: 'Microsoft 365 credentials not configured in secure vault for this organization.' });
             }
 
             // Real Microsoft Graph API call
@@ -206,27 +166,14 @@ const m365Controller = {
                 return res.status(400).json({ message: 'Missing organizationId or domainName.' });
             }
 
-            // Detect GoDaddy credentials
-            const gdCredentials = await credentialController.getDecryptedCredentialsInternal(organizationId, 'godaddy');
             const token = await getM365Token(organizationId);
+            if (!token) {
+                return res.status(400).json({ success: false, message: 'Microsoft 365 credentials not configured in secure vault for this organization.' });
+            }
 
-            if (!token || token === 'mock_token' || !gdCredentials || gdCredentials.apiKey === 'mock') {
-                // Mock execution loop
-                console.log(`[M365 GoDaddy Wizard] Running mock DNS bind for: ${domainName}`);
-                
-                // Save domain name to organization database setting
-                await db.query('UPDATE organizations SET m365_domain = ? WHERE id = ?', [domainName, organizationId]);
-
-                return res.json({
-                    success: true,
-                    message: `Domain ${domainName} successfully registered and configured!`,
-                    dnsRecords: [
-                        { type: 'TXT', name: '@', value: 'MS=ms8829107', status: 'verified' },
-                        { type: 'MX', name: '@', value: `0 ${domainName}.mail.protection.outlook.com.`, status: 'verified' },
-                        { type: 'CNAME', name: 'autodiscover', value: 'autodiscover.outlook.com.', status: 'verified' },
-                        { type: 'TXT', name: '@', value: 'v=spf1 include:spf.protection.outlook.com -all', status: 'verified' }
-                    ]
-                });
+            const gdCredentials = await credentialController.getDecryptedCredentialsInternal(organizationId, 'godaddy');
+            if (!gdCredentials) {
+                return res.status(400).json({ success: false, message: 'GoDaddy API credentials not configured in secure vault for this organization.' });
             }
 
             // Real Integration Flow
