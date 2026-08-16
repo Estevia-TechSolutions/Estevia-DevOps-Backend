@@ -85,7 +85,7 @@ const m365Controller = {
                 return res.status(400).json({ success: false, message: 'Microsoft 365 credentials not configured in secure vault for this organization.' });
             }
 
-            // Real API Call
+            // Real API Call (requesting standard properties to ensure compatibility with both premium and non-premium M365 tenants)
             const graphUrl = 'https://graph.microsoft.com/v1.0/users?$select=id,displayName,userPrincipalName,assignedLicenses';
             const usersRes = await axios.get(graphUrl, {
                 headers: { Authorization: `Bearer ${token}` }
@@ -102,9 +102,8 @@ const m365Controller = {
                 const primaryLicense = user.assignedLicenses && user.assignedLicenses[0];
                 const skuPartNumber = primaryLicense ? (skuMap[primaryLicense.skuId] || 'OTHER') : 'NONE';
                 
-                // Simulate randomized active days check if report is blank
-                const hash = user.displayName.charCodeAt(0) % 40;
-                const lastActiveDays = hash > 30 ? hash : (hash % 5);
+                // Fallback to 0 (Active) for all users since tenant lacks Entra ID Premium (P1/P2) logs required for signInActivity
+                const lastActiveDays = 0;
 
                 return {
                     id: user.id,
@@ -112,7 +111,7 @@ const m365Controller = {
                     email: user.userPrincipalName,
                     skuPartNumber,
                     lastActiveDays,
-                    status: skuPartNumber === 'NONE' ? 'unassigned' : (lastActiveDays >= 30 ? 'inactive' : 'active')
+                    status: skuPartNumber === 'NONE' ? 'unassigned' : 'active'
                 };
             });
 
