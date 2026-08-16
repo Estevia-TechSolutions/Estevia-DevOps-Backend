@@ -381,9 +381,6 @@ const credentialController = {
                 if (!tenantId || !clientId || !clientSecret) {
                     return res.status(400).json({ message: 'Missing M365 tenantId, clientId, or clientSecret.' });
                 }
-                if (tenantId === 'mock' || clientId === 'mock' || clientSecret === 'mock' || clientSecret === '••••••••••••••••••••') {
-                    return res.json({ success: true, message: 'Microsoft Graph Connection Test (Mocked) succeeded. Detected organization: Estevia Tech (Mocked)' });
-                }
                 const axios = require('axios');
                 try {
                     const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
