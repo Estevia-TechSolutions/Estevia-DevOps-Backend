@@ -595,23 +595,40 @@ const credentialController = {
                 return res.status(400).json({ message: 'Missing organizationId parameter.' });
             }
 
-            // Verify organization exists
+            // SaaS model: all three values are per-organization
+            // tenantId   → organizations.tenant_id (auto-stored during SSO registration)
+            // clientId   → existing Azure SP credential for this org (same app registration used for Graph API)
+            // clientSecret → existing Azure SP credential for this org
             const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [organizationId]);
             if (orgs.length === 0) {
                 return res.status(404).json({ message: `Organization "${organizationId}" not found.` });
             }
+            const org = orgs[0];
+            const tenantId = org.tenant_id || '';
 
-            const tenantId = process.env.M365_TENANT_ID || process.env.MICROSOFT_365_TENANT_ID || process.env.AZURE_TENANT_ID || process.env.MICROSOFT_TENANT_ID || "";
-            const clientId = process.env.M365_CLIENT_ID || process.env.MICROSOFT_365_CLIENT_ID || "";
-            const clientSecret = process.env.M365_CLIENT_SECRET || process.env.MICROSOFT_365_CLIENT_SECRET || "";
-
-            if (!tenantId || !clientId || !clientSecret) {
-                const missing = [];
-                if (!tenantId) missing.push('M365_TENANT_ID');
-                if (!clientId) missing.push('M365_CLIENT_ID');
-                if (!clientSecret) missing.push('M365_CLIENT_SECRET');
+            if (!tenantId) {
                 return res.status(400).json({ 
-                    message: `The following Microsoft 365 environment variables are not set on the server: ${missing.join(', ')}. Please configure them in the server .env file.` 
+                    message: 'No Azure AD Tenant ID found for this organization. Please complete SSO/Azure AD onboarding so your tenant is registered.' 
+                });
+            }
+
+            // Pull clientId and clientSecret from existing Azure SP credentials saved for this org
+            let clientId = '';
+            let clientSecret = '';
+            try {
+                const azureSecrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'azure');
+                if (azureSecrets && azureSecrets.clientId && azureSecrets.clientSecret
+                    && azureSecrets.clientId !== 'SYSTEM_MANAGED_IDENTITY') {
+                    clientId = azureSecrets.clientId;
+                    clientSecret = azureSecrets.clientSecret;
+                }
+            } catch (e) {
+                console.warn('[CredentialController] Could not load Azure SP credentials for M365 auto-detect:', e.message);
+            }
+
+            if (!clientId || !clientSecret) {
+                return res.status(400).json({
+                    message: 'No Azure Service Principal credentials (Client ID / Client Secret) found for this organization. Please save your Azure credentials first in the Azure tab — the same app registration is used to access Microsoft Graph.'
                 });
             }
 

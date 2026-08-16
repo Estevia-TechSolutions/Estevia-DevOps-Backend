@@ -252,6 +252,120 @@ const m365Controller = {
             console.error('[M365 Controller] verifyGoDaddy failed:', err.response ? err.response.data : err.message);
             res.status(500).json({ message: 'Failed to configure DNS records on GoDaddy.', error: err.message });
         }
+    },
+    /**
+     * Step 1: Initiate Microsoft 365 Admin Consent OAuth flow
+     * Returns the Microsoft admin consent URL for the client to redirect to.
+     * EvaOps's own multi-tenant Azure AD app (M365_CLIENT_ID) is used.
+     * The customer's tenant_id is captured automatically in the callback.
+     */
+    initiateAdminConsent: async (req, res) => {
+        try {
+            const { organizationId } = req.query;
+            if (!organizationId) {
+                return res.status(400).json({ message: 'Missing organizationId parameter.' });
+            }
+
+            const clientId = process.env.M365_CLIENT_ID || process.env.MICROSOFT_365_CLIENT_ID || '';
+            if (!clientId) {
+                return res.status(500).json({ message: 'EvaOps M365 App (M365_CLIENT_ID) is not configured on the server. Please contact your platform administrator.' });
+            }
+
+            const apiBaseUrl = process.env.API_BASE_URL || process.env.BACKEND_URL || 'https://api-evaops.esteviatech.com';
+            const redirectUri = `${apiBaseUrl}/api/m365/auth/callback`;
+
+            // state encodes the organizationId so callback knows which org to register
+            const state = Buffer.from(JSON.stringify({ organizationId })).toString('base64url');
+
+            const consentUrl =
+                `https://login.microsoftonline.com/common/adminconsent` +
+                `?client_id=${encodeURIComponent(clientId)}` +
+                `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+                `&state=${encodeURIComponent(state)}`;
+
+            console.log(`[M365] Admin consent URL generated for org ${organizationId}: ${consentUrl}`);
+            res.json({ success: true, url: consentUrl });
+        } catch (err) {
+            console.error('[M365] initiateAdminConsent error:', err.message);
+            res.status(500).json({ message: 'Failed to generate admin consent URL.', error: err.message });
+        }
+    },
+
+    /**
+     * Step 2: Handle Microsoft OAuth callback after admin consent
+     * Microsoft redirects here with: ?admin_consent=True&tenant=<tenantId>&state=<encoded_orgId>
+     * We extract the tenant, combine with EvaOps app credentials, and save as m365 credentials.
+     */
+    handleAdminConsentCallback: async (req, res) => {
+        const frontendUrl = process.env.FRONTEND_URL || 'https://evaops.esteviatech.com';
+        try {
+            const { admin_consent, tenant, error, error_description, state } = req.query;
+
+            // Handle user-denied consent
+            if (error) {
+                console.error('[M365] Admin consent denied:', error, error_description);
+                return res.redirect(`${frontendUrl}/?m365_error=${encodeURIComponent(error_description || error)}`);
+            }
+
+            if (!admin_consent || admin_consent !== 'True' || !tenant) {
+                return res.redirect(`${frontendUrl}/?m365_error=${encodeURIComponent('Admin consent was not granted or tenant ID missing.')}`);
+            }
+
+            // Decode organizationId from state
+            let organizationId = null;
+            try {
+                const decoded = JSON.parse(Buffer.from(state, 'base64url').toString());
+                organizationId = decoded.organizationId;
+            } catch (e) {
+                console.error('[M365] Failed to decode state param:', e.message);
+                return res.redirect(`${frontendUrl}/?m365_error=${encodeURIComponent('Invalid state parameter in OAuth callback.')}`);
+            }
+
+            if (!organizationId) {
+                return res.redirect(`${frontendUrl}/?m365_error=${encodeURIComponent('Organization ID missing from OAuth state.')}`);
+            }
+
+            const clientId = process.env.M365_CLIENT_ID || process.env.MICROSOFT_365_CLIENT_ID || '';
+            const clientSecret = process.env.M365_CLIENT_SECRET || process.env.MICROSOFT_365_CLIENT_SECRET || '';
+
+            if (!clientId || !clientSecret) {
+                return res.redirect(`${frontendUrl}/?m365_error=${encodeURIComponent('EvaOps M365 App credentials not configured on server.')}`);
+            }
+
+            // Save credentials: customer tenant_id + EvaOps app client_id/secret
+            const secretsObj = { tenantId: tenant, clientId, clientSecret };
+            const { encrypt } = require('../utils/crypto');
+            const encResult = encrypt(JSON.stringify(secretsObj));
+
+            // Check if org already has m365 credentials
+            const [existing] = await db.query(
+                'SELECT id FROM integration_credentials WHERE organization_id = ? AND provider = ?',
+                [organizationId, 'm365']
+            );
+
+            if (existing.length > 0) {
+                await db.query(
+                    `UPDATE integration_credentials SET credential_name = ?, encrypted_secrets = ?, iv = ?, auth_tag = ? WHERE organization_id = ? AND provider = ?`,
+                    ['Microsoft 365 (OAuth Connected)', encResult.encrypted, encResult.iv, encResult.authTag, organizationId, 'm365']
+                );
+            } else {
+                await db.query(
+                    `INSERT INTO integration_credentials (organization_id, provider, credential_name, encrypted_secrets, iv, auth_tag) VALUES (?, ?, ?, ?, ?, ?)`,
+                    [organizationId, 'm365', 'Microsoft 365 (OAuth Connected)', encResult.encrypted, encResult.iv, encResult.authTag]
+                );
+            }
+
+            // Also persist tenant_id in the organizations table for easy reference
+            await db.query('UPDATE organizations SET tenant_id = ? WHERE id = ?', [tenant, organizationId]);
+
+            console.log(`[M365] Admin consent complete for org ${organizationId}, tenant ${tenant}. Credentials saved.`);
+
+            // Redirect back to frontend with success
+            return res.redirect(`${frontendUrl}/?m365_connected=true&tenant=${encodeURIComponent(tenant)}`);
+        } catch (err) {
+            console.error('[M365] handleAdminConsentCallback error:', err.message);
+            return res.redirect(`${frontendUrl}/?m365_error=${encodeURIComponent('Internal error during Microsoft consent: ' + err.message)}`);
+        }
     }
 };
 
