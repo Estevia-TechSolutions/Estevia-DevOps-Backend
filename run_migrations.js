@@ -149,6 +149,14 @@ async function main() {
             console.log('Adding column sso_mfa_required to organizations...');
             await connection.query('ALTER TABLE organizations ADD COLUMN sso_mfa_required TINYINT(1) DEFAULT 0');
         }
+        if (!orgColNames.includes('m365_domain')) {
+            console.log('Adding column m365_domain to organizations...');
+            await connection.query('ALTER TABLE organizations ADD COLUMN m365_domain VARCHAR(255) DEFAULT NULL');
+        }
+        if (!orgColNames.includes('m365_auto_license_sku')) {
+            console.log('Adding column m365_auto_license_sku to organizations...');
+            await connection.query('ALTER TABLE organizations ADD COLUMN m365_auto_license_sku VARCHAR(100) DEFAULT NULL');
+        }
 
         // Generate unique teams_webhook_token for organizations currently lacking one
         const crypto = require('crypto');

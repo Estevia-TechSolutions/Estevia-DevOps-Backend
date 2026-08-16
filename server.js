@@ -90,6 +90,9 @@ app.use('/api/webhooks', webhookRoutes);
 const emailTemplateRoutes = require('./routes/emailTemplateRoutes');
 app.use('/api/devops/email-templates', emailTemplateRoutes);
 
+const m365Routes = require('./routes/m365Routes');
+app.use('/api/m365', m365Routes);
+
 app.get('/health', (req, res) => {
     res.json({ status: 'HEALTHY', timestamp: new Date() });
 });

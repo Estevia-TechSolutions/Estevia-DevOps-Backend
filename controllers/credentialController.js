@@ -376,6 +376,47 @@ const credentialController = {
                 } catch (err) {
                     return res.status(400).json({ message: `Azure connection test failed: ${err.message}` });
                 }
+            } else if (provider === 'm365') {
+                const { tenantId, clientId, clientSecret } = secrets;
+                if (!tenantId || !clientId || !clientSecret) {
+                    return res.status(400).json({ message: 'Missing M365 tenantId, clientId, or clientSecret.' });
+                }
+                if (tenantId === 'mock' || clientId === 'mock' || clientSecret === 'mock' || clientSecret === '••••••••••••••••••••') {
+                    return res.json({ success: true, message: 'Microsoft Graph Connection Test (Mocked) succeeded. Detected organization: Estevia Tech (Mocked)' });
+                }
+                const axios = require('axios');
+                try {
+                    const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
+                    const params = new URLSearchParams();
+                    params.append('grant_type', 'client_credentials');
+                    params.append('client_id', clientId);
+                    params.append('client_secret', clientSecret);
+                    params.append('scope', 'https://graph.microsoft.com/.default');
+
+                    const tokenRes = await axios.post(tokenUrl, params, {
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                    });
+
+                    const accessToken = tokenRes.data.access_token;
+                    if (!accessToken) {
+                        throw new Error('Access token not found in token response.');
+                    }
+
+                    // Test organization API call to confirm permission scope Organization.Read.All
+                    const orgRes = await axios.get('https://graph.microsoft.com/v1.0/organization', {
+                        headers: { Authorization: `Bearer ${accessToken}` }
+                    });
+                    const orgInfo = orgRes.data.value && orgRes.data.value[0];
+                    const displayName = orgInfo ? orgInfo.displayName : 'Microsoft 365 Tenant';
+
+                    return res.json({ success: true, message: `Microsoft Graph authenticated successfully. Organization: ${displayName}` });
+                } catch (err) {
+                    console.error('[CredentialController] M365 connection error:', err.response ? err.response.data : err.message);
+                    const detail = err.response && err.response.data && err.response.data.error_description 
+                        ? err.response.data.error_description 
+                        : err.message;
+                    return res.status(400).json({ message: `M365 connection test failed: ${detail}` });
+                }
             }
 
             return res.status(400).json({ message: `Provider "${provider}" validation not supported.` });
