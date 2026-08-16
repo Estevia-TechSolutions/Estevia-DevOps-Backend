@@ -1194,6 +1194,20 @@ async function main() {
             await connection.query(`
                 UPDATE applications SET pipeline_id = '18' WHERE LOWER(name) LIKE '%evaops-frontend%';
             `).catch(() => {});
+            // Create and seed M365 license pricing configuration
+            await connection.query(`
+                CREATE TABLE IF NOT EXISTS m365_sku_pricing (
+                    sku_part_number VARCHAR(100) PRIMARY KEY,
+                    price_per_seat DECIMAL(10, 2) NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            `);
+            await connection.query(`
+                INSERT IGNORE INTO m365_sku_pricing (sku_part_number, price_per_seat) VALUES
+                ('DEVELOPERPACK_G5', 35.00),
+                ('ENTERPRISEPACK', 23.00),
+                ('O365_BUSINESS_PREMIUM', 12.50);
+            `);
             // Flush cached details to force a clean fetch and resolve stale contamination
             await connection.query(`
                 UPDATE applications SET azure_resource_details = '{}';

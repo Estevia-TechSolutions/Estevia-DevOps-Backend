@@ -48,18 +48,18 @@ const m365Controller = {
                 headers: { Authorization: `Bearer ${token}` }
             });
 
-            // Map SKU prices dynamically
-            const skuPricing = {
-                'DEVELOPERPACK_G5': 35.00,
-                'ENTERPRISEPACK': 23.00,
-                'O365_BUSINESS_PREMIUM': 12.50
-            };
+            // Query SKU prices dynamically from database to avoid hardcoding
+            const [pricingRows] = await db.query('SELECT sku_part_number, price_per_seat FROM m365_sku_pricing');
+            const skuPricing = {};
+            for (const row of pricingRows) {
+                skuPricing[row.sku_part_number] = parseFloat(row.price_per_seat);
+            }
 
             const subscriptions = skusRes.data.value.map(sku => ({
                 skuId: sku.skuId,
                 skuPartNumber: sku.skuPartNumber,
-                totalSeats: sku.enabled,
-                assignedSeats: sku.consumedUnits,
+                totalSeats: sku.prepaidUnits?.enabled || 0,
+                assignedSeats: sku.consumedUnits || 0,
                 pricePerSeat: skuPricing[sku.skuPartNumber] || 15.00
             }));
 
@@ -139,12 +139,21 @@ const m365Controller = {
                 console.warn('[M365 Controller] Failed to fetch active user detail report:', reportErr.message);
             }
 
-            // Map skus list
-            const skuMap = {
-                'cb2f8151-16cd-4bc3-929f-050999a3476a': 'DEVELOPERPACK_G5',
-                '05e01617-6819-47e0-94ab-10255a15a0c1': 'ENTERPRISEPACK',
-                'f245c6ab-e05b-4de0-b184-e3fb61a35560': 'O365_BUSINESS_PREMIUM'
-            };
+            // Map skus list dynamically by querying tenant's subscribed SKUs to avoid hardcoded IDs
+            let skuMap = {};
+            try {
+                const skusUrl = 'https://graph.microsoft.com/v1.0/subscribedSkus';
+                const skusRes = await axios.get(skusUrl, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                if (skusRes.data && skusRes.data.value) {
+                    for (const sku of skusRes.data.value) {
+                        skuMap[sku.skuId] = sku.skuPartNumber;
+                    }
+                }
+            } catch (skusErr) {
+                console.warn('[M365 Controller] Failed to build dynamic skuMap:', skusErr.message);
+            }
 
             const users = usersRes.data.value.map(user => {
                 const primaryLicense = user.assignedLicenses && user.assignedLicenses[0];
