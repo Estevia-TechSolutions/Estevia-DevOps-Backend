@@ -378,8 +378,11 @@ const credentialController = {
                 }
             } else if (provider === 'm365') {
                 const { tenantId, clientId, clientSecret } = secrets;
-                if (!tenantId || !clientId || !clientSecret) {
-                    return res.status(400).json({ message: 'Missing M365 tenantId, clientId, or clientSecret.' });
+                // Reject stored placeholder/mock values — user must save real credentials first
+                const PLACEHOLDER = '••••••••••••••••••••';
+                const isMockOrEmpty = (v) => !v || v === 'mock' || v === PLACEHOLDER;
+                if (isMockOrEmpty(tenantId) || isMockOrEmpty(clientId) || isMockOrEmpty(clientSecret)) {
+                    return res.status(400).json({ message: 'Stored M365 credentials are incomplete or still contain placeholder values. Please enter and save your real Azure AD Tenant ID, Client ID and Client Secret in the Credentials tab before testing.' });
                 }
                 const axios = require('axios');
                 try {
@@ -602,8 +605,14 @@ const credentialController = {
             const clientId = process.env.M365_CLIENT_ID || process.env.MICROSOFT_365_CLIENT_ID || "";
             const clientSecret = process.env.M365_CLIENT_SECRET || process.env.MICROSOFT_365_CLIENT_SECRET || "";
 
-            if (!tenantId && !clientId && !clientSecret) {
-                return res.status(400).json({ message: 'No Microsoft 365 / Entra ID credentials environment variables discovered in the server environment.' });
+            if (!tenantId || !clientId || !clientSecret) {
+                const missing = [];
+                if (!tenantId) missing.push('M365_TENANT_ID');
+                if (!clientId) missing.push('M365_CLIENT_ID');
+                if (!clientSecret) missing.push('M365_CLIENT_SECRET');
+                return res.status(400).json({ 
+                    message: `The following Microsoft 365 environment variables are not set on the server: ${missing.join(', ')}. Please configure them in the server .env file.` 
+                });
             }
 
             const secretsObj = {
