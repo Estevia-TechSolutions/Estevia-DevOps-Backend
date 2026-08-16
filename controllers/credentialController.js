@@ -585,6 +585,96 @@ const credentialController = {
         }
     },
 
+    discoverM365EnvCredentials: async (req, res) => {
+        try {
+            const { organizationId } = req.query;
+            if (!organizationId) {
+                return res.status(400).json({ message: 'Missing organizationId parameter.' });
+            }
+
+            // Verify organization exists
+            const [orgs] = await db.query('SELECT * FROM organizations WHERE id = ?', [organizationId]);
+            if (orgs.length === 0) {
+                return res.status(404).json({ message: `Organization "${organizationId}" not found.` });
+            }
+
+            const tenantId = process.env.M365_TENANT_ID || process.env.MICROSOFT_365_TENANT_ID || process.env.AZURE_TENANT_ID || process.env.MICROSOFT_TENANT_ID || "";
+            const clientId = process.env.M365_CLIENT_ID || process.env.MICROSOFT_365_CLIENT_ID || "";
+            const clientSecret = process.env.M365_CLIENT_SECRET || process.env.MICROSOFT_365_CLIENT_SECRET || "";
+
+            if (!tenantId && !clientId && !clientSecret) {
+                return res.status(400).json({ message: 'No Microsoft 365 / Entra ID credentials environment variables discovered in the server environment.' });
+            }
+
+            const secretsObj = {
+                clientId,
+                clientSecret,
+                tenantId
+            };
+
+            const secretsString = JSON.stringify(secretsObj);
+            let encrypted, iv, authTag;
+
+            // Encrypt the secrets locally first as a fallback/backup
+            const encResult = encrypt(secretsString);
+            encrypted = encResult.encrypted;
+            iv = encResult.iv;
+            authTag = encResult.authTag;
+
+            const keyVaultUrl = orgs[0]?.azure_key_vault_url;
+            if (keyVaultUrl) {
+                try {
+                    const { SecretClient } = require('@azure/keyvault-secrets');
+                    const { DefaultAzureCredential } = require('@azure/identity');
+                    const credential = new DefaultAzureCredential();
+                    const client = new SecretClient(keyVaultUrl, credential);
+                    const secretName = `${organizationId}-m365`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+                    
+                    console.log(`[CredentialController] Auto-discover M365: Writing secret '${secretName}' to Key Vault: ${keyVaultUrl}`);
+                    await client.setSecret(secretName, secretsString);
+                    
+                    encrypted = 'stored-in-azure-key-vault';
+                    iv = 'kv';
+                    authTag = 'kv';
+                } catch (kvErr) {
+                    console.warn(`[CredentialController] Auto-discover M365: Key Vault storage failed, falling back to local DB encryption:`, kvErr.message);
+                }
+            }
+
+            const [existing] = await db.query(
+                'SELECT id FROM integration_credentials WHERE organization_id = ? AND provider = ?',
+                [organizationId, 'm365']
+            );
+
+            const credentialName = 'Microsoft 365 Graph (Auto-Discovered)';
+
+            if (existing.length > 0) {
+                await db.query(
+                    `UPDATE integration_credentials 
+                     SET credential_name = ?, encrypted_secrets = ?, iv = ?, auth_tag = ?
+                     WHERE organization_id = ? AND provider = ?`,
+                    [credentialName, encrypted, iv, authTag, organizationId, 'm365']
+                );
+            } else {
+                await db.query(
+                    `INSERT INTO integration_credentials 
+                     (organization_id, provider, credential_name, encrypted_secrets, iv, auth_tag) 
+                     VALUES (?, ?, ?, ?, ?, ?)`,
+                    [organizationId, 'm365', credentialName, encrypted, iv, authTag]
+                );
+            }
+
+            res.json({
+                success: true,
+                message: 'Microsoft 365 credentials auto-discovered and registered successfully.',
+                secrets: secretsObj
+            });
+        } catch (error) {
+            console.error('[CredentialController] Error discovering M365 environment credentials:', error);
+            res.status(500).json({ message: 'Internal server error.', error: error.message });
+        }
+    },
+
     /**
      * Programmatically rotate Azure Service Principal secrets via Microsoft Graph API
      */

@@ -14,6 +14,7 @@ router.post('/validate', restrictTo('owner', 'admin'), credentialController.vali
 
 // Auto-discover credentials from environment
 router.get('/discover-env', restrictTo('owner', 'admin'), credentialController.discoverAzureEnvCredentials);
+router.get('/discover-m365-env', restrictTo('owner', 'admin'), credentialController.discoverM365EnvCredentials);
 
 // Programmatically rotate Azure Client Secret
 router.post('/rotate-azure', restrictTo('owner', 'admin'), credentialController.rotateAzureSecret);
