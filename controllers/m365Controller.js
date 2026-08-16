@@ -85,11 +85,59 @@ const m365Controller = {
                 return res.status(400).json({ success: false, message: 'Microsoft 365 credentials not configured in secure vault for this organization.' });
             }
 
-            // Real API Call (requesting standard properties to ensure compatibility with both premium and non-premium M365 tenants)
+            // 1. Fetch user list from Microsoft Graph
             const graphUrl = 'https://graph.microsoft.com/v1.0/users?$select=id,displayName,userPrincipalName,assignedLicenses';
             const usersRes = await axios.get(graphUrl, {
                 headers: { Authorization: `Bearer ${token}` }
             });
+
+            // 2. Fetch M365 Active User Detail report to get last activity date (requires Reports.Read.All permission)
+            // If the administrator has disabled "Display concealed user, group and site names in all reports" in M365 Admin Center,
+            // we will receive unmasked UPNs and can calculate exact idle days.
+            let activityMap = {};
+            try {
+                const reportUrl = "https://graph.microsoft.com/v1.0/reports/getOffice365ActiveUserDetail(period='D30')";
+                const reportRes = await axios.get(reportUrl, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+
+                if (reportRes.data && typeof reportRes.data === 'string') {
+                    const csvLines = reportRes.data.split('\n');
+                    if (csvLines.length > 1) {
+                        const headers = csvLines[0].split(',');
+                        const upnIndex = headers.indexOf('User Principal Name');
+                        const exchIndex = headers.indexOf('Exchange Last Activity Date');
+                        const teamsIndex = headers.indexOf('Teams Last Activity Date');
+                        const odIndex = headers.indexOf('OneDrive Last Activity Date');
+                        const spIndex = headers.indexOf('SharePoint Last Activity Date');
+
+                        if (upnIndex !== -1) {
+                            for (let i = 1; i < csvLines.length; i++) {
+                                const row = csvLines[i].split(',');
+                                if (row.length > upnIndex) {
+                                    const upn = row[upnIndex].trim();
+                                    // If UPN is not masked (contains '@'), map activity timestamp
+                                    if (upn.includes('@')) {
+                                        const dates = [];
+                                        if (exchIndex !== -1 && row[exchIndex]) dates.push(new Date(row[exchIndex]));
+                                        if (teamsIndex !== -1 && row[teamsIndex]) dates.push(new Date(row[teamsIndex]));
+                                        if (odIndex !== -1 && row[odIndex]) dates.push(new Date(row[odIndex]));
+                                        if (spIndex !== -1 && row[spIndex]) dates.push(new Date(row[spIndex]));
+
+                                        const validDates = dates.filter(d => !isNaN(d.getTime()));
+                                        if (validDates.length > 0) {
+                                            const latestDate = new Date(Math.max(...validDates));
+                                            activityMap[upn.toLowerCase()] = latestDate;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (reportErr) {
+                console.warn('[M365 Controller] Failed to fetch active user detail report:', reportErr.message);
+            }
 
             // Map skus list
             const skuMap = {
@@ -101,9 +149,20 @@ const m365Controller = {
             const users = usersRes.data.value.map(user => {
                 const primaryLicense = user.assignedLicenses && user.assignedLicenses[0];
                 const skuPartNumber = primaryLicense ? (skuMap[primaryLicense.skuId] || 'OTHER') : 'NONE';
+                const emailKey = user.userPrincipalName ? user.userPrincipalName.toLowerCase() : '';
                 
-                // Fallback to 0 (Active) for all users since tenant lacks Entra ID Premium (P1/P2) logs required for signInActivity
-                const lastActiveDays = 0;
+                let lastActiveDays = 0;
+                let status = 'active';
+
+                if (activityMap[emailKey]) {
+                    const latestSignIn = activityMap[emailKey];
+                    const diffTime = Math.max(0, new Date().getTime() - latestSignIn.getTime());
+                    lastActiveDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                    status = skuPartNumber === 'NONE' ? 'unassigned' : (lastActiveDays >= 30 ? 'inactive' : 'active');
+                } else {
+                    // Default to active (0) when report is masked or user has no recent activity recorded
+                    status = skuPartNumber === 'NONE' ? 'unassigned' : 'active';
+                }
 
                 return {
                     id: user.id,
@@ -111,7 +170,7 @@ const m365Controller = {
                     email: user.userPrincipalName,
                     skuPartNumber,
                     lastActiveDays,
-                    status: skuPartNumber === 'NONE' ? 'unassigned' : 'active'
+                    status
                 };
             });
 
