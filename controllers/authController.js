@@ -650,6 +650,54 @@ const listUsers = async (req, res) => {
     }
 };
 
+const assignAzureBillingReaderRole = async (organizationId, principalId) => {
+    try {
+        const credentials = await credentialController.getDecryptedCredentialsInternal(organizationId, 'm365');
+        if (!credentials || !credentials.tenantId || !credentials.clientId || !credentials.clientSecret) {
+            console.warn('[Billing Role Sync] M365 credentials not found.');
+            return;
+        }
+
+        const [orgs] = await db.query('SELECT azure_subscription_id FROM organizations WHERE id = ?', [organizationId]);
+        if (orgs.length === 0 || !orgs[0].azure_subscription_id) {
+            console.warn('[Billing Role Sync] Organization subscription ID not configured.');
+            return;
+        }
+        const subscriptionId = orgs[0].azure_subscription_id;
+
+        const tokenUrl = `https://login.microsoftonline.com/${credentials.tenantId}/oauth2/v2.0/token`;
+        const params = new URLSearchParams();
+        params.append('grant_type', 'client_credentials');
+        params.append('client_id', credentials.clientId);
+        params.append('client_secret', credentials.clientSecret);
+        params.append('scope', 'https://management.azure.com/.default');
+
+        const tokenRes = await axios.post(tokenUrl, params, {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        });
+        const token = tokenRes.data.access_token;
+        if (!token) return;
+
+        const roleAssignmentId = crypto.randomUUID();
+        const putUrl = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleAssignments/${roleAssignmentId}?api-version=2022-04-01`;
+
+        await axios.put(putUrl, {
+            properties: {
+                roleDefinitionId: `/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleDefinitions/fa23ad8b-c56e-40d8-ac0c-ce449e1d2c64`,
+                principalId: principalId
+            }
+        }, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        console.log(`[Billing Role Sync] Successfully assigned Billing Reader to user ${principalId} on subscription ${subscriptionId}`);
+    } catch (err) {
+        console.error('[Billing Role Sync] Failed to assign Billing Reader role to user:', err.response?.data || err.message);
+    }
+};
+
 const updateUserRole = async (req, res) => {
     const { userId } = req.params;
     const { role } = req.body;
@@ -706,6 +754,12 @@ const updateUserRole = async (req, res) => {
                 const orgId = req.user?.organization_id || targetUser.organization_id;
                 const adminEmail = req.user?.email || 'system';
                 const roleLabel = role.charAt(0).toUpperCase() + role.slice(1).toLowerCase();
+
+                // Automatically assign Billing Reader role to new Admins / Owners
+                if (role.toLowerCase() === 'admin' || role.toLowerCase() === 'owner') {
+                    await assignAzureBillingReaderRole(orgId, userId);
+                }
+
                 await sendTeamsNotification(orgId, {
                     title: '🔒 User Role Updated — Security Alert',
                     text:  `A user's authorization role was changed in **EvaOps Control Centre (CloudOps Management & Governance)**.`,
