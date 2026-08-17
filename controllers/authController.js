@@ -1504,6 +1504,7 @@ module.exports = {
     listUsers,
     updateUserRole,
     syncUsers,
+    assignAzureBillingReaderRole,
     setupMfa: exports.setupMfa,
     verifyMfa: exports.verifyMfa,
     validateMfa: exports.validateMfa,

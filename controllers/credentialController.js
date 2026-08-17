@@ -118,6 +118,24 @@ const credentialController = {
                      WHERE organization_id = ? AND provider = ?`,
                     [credentialName, encrypted, iv, authTag, expiresAtVal, organizationId, provider]
                 );
+
+                if (provider === 'm365') {
+                    setImmediate(async () => {
+                        try {
+                            const authController = require('./authController');
+                            const [admins] = await db.query(
+                                "SELECT id FROM users WHERE organization_id = ? AND (role = 'admin' OR role = 'owner')",
+                                [organizationId]
+                            );
+                            for (const admin of admins) {
+                                await authController.assignAzureBillingReaderRole(organizationId, admin.id);
+                            }
+                        } catch (syncErr) {
+                            console.error('[Credential Sync] Role assignment sync failed:', syncErr.message);
+                        }
+                    });
+                }
+
                 return res.json({ success: true, message: 'Credentials updated successfully.' });
             } else {
                 // Insert
@@ -128,6 +146,24 @@ const credentialController = {
                         .replace('(?, ?, ?, ?, ?, ?, ?, ?)', '(?, ?, ?, ?, ?, ?, ?)'),
                     [organizationId, provider, credentialName, encrypted, iv, authTag, expiresAtVal]
                 );
+
+                if (provider === 'm365') {
+                    setImmediate(async () => {
+                        try {
+                            const authController = require('./authController');
+                            const [admins] = await db.query(
+                                "SELECT id FROM users WHERE organization_id = ? AND (role = 'admin' OR role = 'owner')",
+                                [organizationId]
+                            );
+                            for (const admin of admins) {
+                                await authController.assignAzureBillingReaderRole(organizationId, admin.id);
+                            }
+                        } catch (syncErr) {
+                            console.error('[Credential Sync] Role assignment sync failed:', syncErr.message);
+                        }
+                    });
+                }
+
                 return res.json({ success: true, message: 'Credentials registered successfully.' });
             }
         } catch (error) {
