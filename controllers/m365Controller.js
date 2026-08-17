@@ -55,13 +55,19 @@ const m365Controller = {
                 skuPricing[row.sku_part_number] = parseFloat(row.price_per_seat);
             }
 
-            const subscriptions = skusRes.data.value.map(sku => ({
-                skuId: sku.skuId,
-                skuPartNumber: sku.skuPartNumber,
-                totalSeats: sku.prepaidUnits?.enabled || 0,
-                assignedSeats: sku.consumedUnits || 0,
-                pricePerSeat: skuPricing[sku.skuPartNumber] || 15.00
-            }));
+            const subscriptions = skusRes.data.value.map(sku => {
+                const skuPart = sku.skuPartNumber || '';
+                const isFreeOrTrial = skuPart.includes('FREE') || skuPart.includes('TRIAL') || skuPart.includes('TEAMS_EXPLORATORY');
+                const price = isFreeOrTrial ? 0.00 : (skuPricing[skuPart] || 15.00);
+
+                return {
+                    skuId: sku.skuId,
+                    skuPartNumber: skuPart,
+                    totalSeats: sku.prepaidUnits?.enabled || 0,
+                    assignedSeats: sku.consumedUnits || 0,
+                    pricePerSeat: price
+                };
+            });
 
             res.json({ success: true, subscriptions });
         } catch (err) {

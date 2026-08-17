@@ -1203,10 +1203,12 @@ async function main() {
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             `);
             await connection.query(`
-                INSERT IGNORE INTO m365_sku_pricing (sku_part_number, price_per_seat) VALUES
+                INSERT INTO m365_sku_pricing (sku_part_number, price_per_seat) VALUES
                 ('DEVELOPERPACK_G5', 35.00),
                 ('ENTERPRISEPACK', 23.00),
-                ('O365_BUSINESS_PREMIUM', 12.50);
+                ('O365_BUSINESS_PREMIUM', 22.00),
+                ('O365_BUSINESS_ESSENTIALS', 6.00)
+                ON DUPLICATE KEY UPDATE price_per_seat = VALUES(price_per_seat);
             `);
             // Flush cached details to force a clean fetch and resolve stale contamination
             await connection.query(`
