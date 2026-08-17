@@ -27,6 +27,30 @@ const getM365Token = async (organizationId) => {
     }
 };
 
+const getAzureManagementToken = async (organizationId) => {
+    try {
+        const credentials = await credentialController.getDecryptedCredentialsInternal(organizationId, 'm365');
+        if (!credentials || !credentials.tenantId || !credentials.clientId || !credentials.clientSecret) {
+            return null;
+        }
+        const tokenUrl = `https://login.microsoftonline.com/${credentials.tenantId}/oauth2/v2.0/token`;
+        const params = new URLSearchParams();
+        params.append('grant_type', 'client_credentials');
+        params.append('client_id', credentials.clientId);
+        params.append('client_secret', credentials.clientSecret);
+        params.append('scope', 'https://management.azure.com/.default');
+
+        const tokenRes = await axios.post(tokenUrl, params, {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        });
+
+        return tokenRes.data.access_token || null;
+    } catch (err) {
+        console.error('[M365 Controller] Azure Management Token acquisition error:', err.message);
+        return null;
+    }
+};
+
 const m365Controller = {
     /**
      * Get active subscriptions / SKUs inventory
@@ -106,6 +130,42 @@ const m365Controller = {
                 return skuPart.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
             };
 
+            // 5. Fetch actual invoices from Azure Billing API
+            let actualInvoices = [];
+            const azureToken = await getAzureManagementToken(organizationId);
+            if (azureToken) {
+                try {
+                    const billingUrl = "https://management.azure.com/providers/Microsoft.Billing/billingAccounts?api-version=2020-05-01";
+                    const accountsRes = await axios.get(billingUrl, {
+                        headers: { Authorization: `Bearer ${azureToken}` }
+                    });
+                    const accounts = accountsRes.data?.value || [];
+                    for (const account of accounts) {
+                        const accId = account.name;
+                        const invoicesUrl = `https://management.azure.com/providers/Microsoft.Billing/billingAccounts/${accId}/invoices?api-version=2020-05-01`;
+                        const invoicesRes = await axios.get(invoicesUrl, {
+                            headers: { Authorization: `Bearer ${azureToken}` }
+                        });
+                        const invs = invoicesRes.data?.value || [];
+                        for (const inv of invs) {
+                            actualInvoices.push({
+                                id: inv.id,
+                                invoiceNumber: inv.properties?.invoiceNumber || inv.name,
+                                amount: parseFloat(inv.properties?.amountDue?.value || inv.properties?.billedAmount?.value || 0),
+                                currency: inv.properties?.amountDue?.currency || inv.properties?.billedAmount?.currency || 'USD',
+                                status: inv.properties?.status || 'Paid',
+                                issueDate: inv.properties?.invoiceDate || null,
+                                dueDate: inv.properties?.dueDate || null,
+                                documentUrl: inv.properties?.documentUrl || null,
+                                billingAccountId: accId
+                            });
+                        }
+                    }
+                } catch (billingErr) {
+                    console.warn('[M365 Controller] Failed to fetch invoices from Azure Billing API:', billingErr.message);
+                }
+            }
+
             const subscriptions = skusRes.data.value.map(sku => {
                 const skuPart = sku.skuPartNumber || '';
                 const isFreeOrTrial = skuPart.includes('FREE') || skuPart.includes('TRIAL') || skuPart.includes('TEAMS_EXPLORATORY') || skuPart.includes('STUDENT') || skuPart.includes('VIRAL');
@@ -121,6 +181,21 @@ const m365Controller = {
                 // Note: Only include total seats from enabled subscription to filter out suspended ones
                 const totalSeats = activeSub ? (activeSub.totalLicenses || sku.prepaidUnits?.enabled || 0) : (sku.prepaidUnits?.enabled || 0);
 
+                // Price mismatch flag checking
+                let priceMismatch = false;
+                let actualInvoiceRate = null;
+                if (actualInvoices.length > 0 && price > 0 && totalSeats > 0) {
+                    const sortedInvoices = [...actualInvoices].sort((a, b) => new Date(b.issueDate).getTime() - new Date(a.issueDate).getTime());
+                    const latestInv = sortedInvoices[0];
+                    if (latestInv.currency === currency) {
+                        const computedRate = parseFloat((latestInv.amount / totalSeats).toFixed(2));
+                        if (Math.abs(computedRate - price) > 0.01) {
+                            priceMismatch = true;
+                            actualInvoiceRate = computedRate;
+                        }
+                    }
+                }
+
                 return {
                     skuId: sku.skuId,
                     skuPartNumber: skuPart,
@@ -129,11 +204,13 @@ const m365Controller = {
                     assignedSeats: sku.consumedUnits || 0,
                     pricePerSeat: price,
                     currency,
-                    nextLifecycleDateTime: nextLifecycle
+                    nextLifecycleDateTime: nextLifecycle,
+                    priceMismatch,
+                    actualInvoiceRate
                 };
             });
 
-            res.json({ success: true, subscriptions, nextBillingDate });
+            res.json({ success: true, subscriptions, invoices: actualInvoices, nextBillingDate });
         } catch (err) {
             console.error('[M365 Controller] getSubscriptions failed:', err.message);
             res.status(500).json({ message: 'Failed to fetch M365 subscriptions.', error: err.message });
