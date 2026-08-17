@@ -1207,12 +1207,16 @@ async function main() {
                 ALTER TABLE m365_sku_pricing ADD COLUMN currency VARCHAR(10) DEFAULT 'USD';
             `).catch(() => {});
             await connection.query(`
-                INSERT INTO m365_sku_pricing (sku_part_number, price_per_seat) VALUES
-                ('DEVELOPERPACK_G5', 35.00),
-                ('ENTERPRISEPACK', 23.00),
-                ('O365_BUSINESS_PREMIUM', 22.00),
-                ('O365_BUSINESS_ESSENTIALS', 6.00)
-                ON DUPLICATE KEY UPDATE price_per_seat = VALUES(price_per_seat);
+                ALTER TABLE m365_sku_pricing ADD COLUMN display_name VARCHAR(150) DEFAULT NULL;
+            `).catch(() => {});
+            await connection.query(`
+                INSERT INTO m365_sku_pricing (sku_part_number, price_per_seat, currency, display_name) VALUES
+                ('DEVELOPERPACK_G5', 35.00, 'USD', 'Microsoft 365 Developer Pack G5'),
+                ('ENTERPRISEPACK', 23.00, 'USD', 'Microsoft 365 Office 365 E3'),
+                ('O365_BUSINESS_PREMIUM', 22.00, 'USD', 'Microsoft 365 Business Premium'),
+                ('O365_BUSINESS_ESSENTIALS', 204.00, 'INR', 'Microsoft 365 Business Basic'),
+                ('FLOW_FREE', 0.00, 'USD', 'Microsoft Power Automate Free')
+                ON DUPLICATE KEY UPDATE price_per_seat = VALUES(price_per_seat), currency = VALUES(currency), display_name = VALUES(display_name);
             `);
             // Flush cached details to force a clean fetch and resolve stale contamination
             await connection.query(`

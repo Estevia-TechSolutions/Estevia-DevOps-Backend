@@ -92,20 +92,25 @@ const m365Controller = {
             });
 
             // 4. Query dynamic SKU prices and currency from database
-            const [pricingRows] = await db.query('SELECT sku_part_number, price_per_seat, currency FROM m365_sku_pricing');
+            const [pricingRows] = await db.query('SELECT sku_part_number, price_per_seat, currency, display_name FROM m365_sku_pricing');
             const skuPricing = {};
             for (const row of pricingRows) {
                 skuPricing[row.sku_part_number] = {
                     price: parseFloat(row.price_per_seat),
-                    currency: row.currency || 'USD'
+                    currency: row.currency || 'USD',
+                    displayName: row.display_name || null
                 };
             }
+
+            const formatSkuPart = (skuPart) => {
+                return skuPart.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+            };
 
             const subscriptions = skusRes.data.value.map(sku => {
                 const skuPart = sku.skuPartNumber || '';
                 const isFreeOrTrial = skuPart.includes('FREE') || skuPart.includes('TRIAL') || skuPart.includes('TEAMS_EXPLORATORY') || skuPart.includes('STUDENT') || skuPart.includes('VIRAL');
                 
-                const pricingInfo = skuPricing[skuPart] || { price: 15.00, currency: 'USD' };
+                const pricingInfo = skuPricing[skuPart] || { price: 15.00, currency: 'USD', displayName: null };
                 const price = isFreeOrTrial ? 0.00 : pricingInfo.price;
                 const currency = isFreeOrTrial ? 'USD' : pricingInfo.currency;
 
@@ -119,6 +124,7 @@ const m365Controller = {
                 return {
                     skuId: sku.skuId,
                     skuPartNumber: skuPart,
+                    displayName: pricingInfo.displayName || formatSkuPart(skuPart),
                     totalSeats,
                     assignedSeats: sku.consumedUnits || 0,
                     pricePerSeat: price,
@@ -200,7 +206,7 @@ const m365Controller = {
                 console.warn('[M365 Controller] Failed to fetch active user detail report:', reportErr.message);
             }
 
-            // 3. Build SKU Map dynamically
+            // 3. Build SKU Map dynamically and query display names
             let skuMap = {};
             try {
                 const skusUrl = 'https://graph.microsoft.com/v1.0/subscribedSkus';
@@ -216,10 +222,28 @@ const m365Controller = {
                 console.warn('[M365 Controller] Failed to build dynamic skuMap:', skusErr.message);
             }
 
+            const [pricingRows] = await db.query('SELECT sku_part_number, display_name FROM m365_sku_pricing');
+            const displayNames = {};
+            for (const row of pricingRows) {
+                if (row.display_name) {
+                    displayNames[row.sku_part_number] = row.display_name;
+                }
+            }
+
+            const formatSkuPart = (skuPart) => {
+                return skuPart.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+            };
+
             const users = usersRes.data.value.map(user => {
                 const assignedLicenses = user.assignedLicenses || [];
                 const assignedSkus = assignedLicenses.map(lic => skuMap[lic.skuId] || 'OTHER').filter(Boolean);
                 const skuPartNumber = assignedSkus.length > 0 ? assignedSkus.join(', ') : 'NONE';
+
+                const friendlyLicenses = assignedSkus.map(skuPart => {
+                    if (skuPart === 'OTHER') return 'Other Product Seat';
+                    return displayNames[skuPart] || formatSkuPart(skuPart);
+                });
+                const skuDisplayName = friendlyLicenses.length > 0 ? friendlyLicenses.join(', ') : 'No seat license';
                 
                 const emailKey = user.userPrincipalName ? user.userPrincipalName.toLowerCase() : '';
                 const md5Exact = user.userPrincipalName ? crypto.createHash('md5').update(user.userPrincipalName).digest('hex').toLowerCase() : '';
@@ -244,6 +268,7 @@ const m365Controller = {
                     name: user.displayName,
                     email: user.userPrincipalName,
                     skuPartNumber,
+                    skuDisplayName,
                     lastActiveDays,
                     lastActiveDate,
                     status
@@ -272,11 +297,26 @@ const m365Controller = {
                 return res.status(400).json({ success: false, message: 'Microsoft 365 credentials not configured in secure vault for this organization.' });
             }
 
+            // Map skuPartNumber to skuId if necessary
+            let targetSkuId = skuId;
+            if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(skuId)) {
+                const skusRes = await axios.get('https://graph.microsoft.com/v1.0/subscribedSkus', {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                const skus = skusRes.data?.value || [];
+                const matchedSku = skus.find(s => s.skuPartNumber?.toUpperCase() === skuId.toUpperCase());
+                if (matchedSku) {
+                    targetSkuId = matchedSku.skuId;
+                } else {
+                    return res.status(400).json({ success: false, message: `Could not resolve SKU Part Number: ${skuId}` });
+                }
+            }
+
             // Real Microsoft Graph API call
             const graphUrl = `https://graph.microsoft.com/v1.0/users/${userId}/assignLicenses`;
             const payload = {
-                addLicenses: action === 'assign' ? [{ skuId }] : [],
-                removeLicenses: action === 'revoke' ? [skuId] : []
+                addLicenses: action === 'assign' ? [{ skuId: targetSkuId }] : [],
+                removeLicenses: action === 'revoke' ? [targetSkuId] : []
             };
 
             await axios.post(graphUrl, payload, {
@@ -534,19 +574,27 @@ const m365Controller = {
      */
     updatePricing: async (req, res) => {
         try {
-            const { organizationId, skuPartNumber, pricePerSeat, currency } = req.body;
+            const { organizationId, skuPartNumber, pricePerSeat, currency, displayName } = req.body;
             if (!organizationId || !skuPartNumber || pricePerSeat === undefined) {
                 return res.status(400).json({ message: 'Missing parameters.' });
             }
 
             await db.query(
-                `INSERT INTO m365_sku_pricing (sku_part_number, price_per_seat, currency) 
-                 VALUES (?, ?, ?) 
-                 ON DUPLICATE KEY UPDATE price_per_seat = ?, currency = ?`,
-                [skuPartNumber, parseFloat(pricePerSeat), currency || 'USD', parseFloat(pricePerSeat), currency || 'USD']
+                `INSERT INTO m365_sku_pricing (sku_part_number, price_per_seat, currency, display_name) 
+                 VALUES (?, ?, ?, ?) 
+                 ON DUPLICATE KEY UPDATE price_per_seat = ?, currency = ?, display_name = ?`,
+                [
+                    skuPartNumber, 
+                    parseFloat(pricePerSeat), 
+                    currency || 'USD', 
+                    displayName || null, 
+                    parseFloat(pricePerSeat), 
+                    currency || 'USD', 
+                    displayName || null
+                ]
             );
 
-            res.json({ success: true, message: 'SKU pricing updated successfully.' });
+            res.json({ success: true, message: 'SKU pricing and display name updated successfully.' });
         } catch (err) {
             console.error('[M365 Controller] updatePricing failed:', err.message);
             res.status(500).json({ message: 'Failed to update pricing.', error: err.message });
