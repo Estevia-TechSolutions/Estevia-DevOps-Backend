@@ -1199,9 +1199,13 @@ async function main() {
                 CREATE TABLE IF NOT EXISTS m365_sku_pricing (
                     sku_part_number VARCHAR(100) PRIMARY KEY,
                     price_per_seat DECIMAL(10, 2) NOT NULL,
+                    currency VARCHAR(10) DEFAULT 'USD',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             `);
+            await connection.query(`
+                ALTER TABLE m365_sku_pricing ADD COLUMN currency VARCHAR(10) DEFAULT 'USD';
+            `).catch(() => {});
             await connection.query(`
                 INSERT INTO m365_sku_pricing (sku_part_number, price_per_seat) VALUES
                 ('DEVELOPERPACK_G5', 35.00),

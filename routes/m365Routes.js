@@ -7,6 +7,7 @@ router.get('/subscriptions', protect, m365Controller.getSubscriptions);
 router.get('/users', protect, m365Controller.getUsers);
 router.post('/assign', protect, m365Controller.assignLicense);
 router.post('/verify-godaddy', protect, m365Controller.verifyGoDaddy);
+router.put('/pricing', protect, m365Controller.updatePricing);
 
 // OAuth Admin Consent flow — protected initiate, public callback (Microsoft redirects here)
 router.get('/auth/initiate', protect, m365Controller.initiateAdminConsent);

@@ -43,34 +43,91 @@ const m365Controller = {
                 return res.status(400).json({ success: false, message: 'Microsoft 365 credentials not configured in secure vault for this organization.' });
             }
 
-            // Real API Call
+            // 1. Self-healing check for missing database domain name
+            try {
+                const [orgs] = await db.query('SELECT m365_domain FROM organizations WHERE id = ?', [organizationId]);
+                if (orgs.length > 0 && !orgs[0].m365_domain) {
+                    const domainsRes = await axios.get('https://graph.microsoft.com/v1.0/domains', {
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+                    if (domainsRes.data && domainsRes.data.value) {
+                        const verifiedCustomDomain = domainsRes.data.value.find(d => !d.id.endsWith('.onmicrosoft.com') && d.isVerified);
+                        if (verifiedCustomDomain) {
+                            console.log(`[M365 Controller] Self-healed missing organization domain for ${organizationId} to: ${verifiedCustomDomain.id}`);
+                            await db.query('UPDATE organizations SET m365_domain = ? WHERE id = ?', [verifiedCustomDomain.id, organizationId]);
+                        }
+                    }
+                }
+            } catch (domErr) {
+                console.warn('[M365 Controller] Failed self-healing domain check:', domErr.message);
+            }
+
+            // 2. Fetch all directory subscriptions (to extract nextLifecycleDateTime and ignore suspended trials)
+            let directorySubs = [];
+            let nextBillingDate = null;
+            try {
+                const dirSubsRes = await axios.get('https://graph.microsoft.com/v1.0/directory/subscriptions', {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                directorySubs = dirSubsRes.data?.value || [];
+            } catch (dirErr) {
+                console.warn('[M365 Controller] Failed to fetch directory subscriptions:', dirErr.message);
+            }
+
+            const activeSubsMap = new Map();
+            for (const sub of directorySubs) {
+                if (sub.status?.toLowerCase() === 'enabled') {
+                    activeSubsMap.set(sub.skuPartNumber || sub.skuId, sub);
+                    // Find the nextLifecycleDateTime of the first active paid subscription
+                    if (!sub.isTrial && sub.nextLifecycleDateTime && !nextBillingDate) {
+                        nextBillingDate = sub.nextLifecycleDateTime;
+                    }
+                }
+            }
+
+            // 3. Fetch consumed seats/units count for the active SKUs
             const graphUrl = 'https://graph.microsoft.com/v1.0/subscribedSkus';
             const skusRes = await axios.get(graphUrl, {
                 headers: { Authorization: `Bearer ${token}` }
             });
 
-            // Query SKU prices dynamically from database to avoid hardcoding
-            const [pricingRows] = await db.query('SELECT sku_part_number, price_per_seat FROM m365_sku_pricing');
+            // 4. Query dynamic SKU prices and currency from database
+            const [pricingRows] = await db.query('SELECT sku_part_number, price_per_seat, currency FROM m365_sku_pricing');
             const skuPricing = {};
             for (const row of pricingRows) {
-                skuPricing[row.sku_part_number] = parseFloat(row.price_per_seat);
+                skuPricing[row.sku_part_number] = {
+                    price: parseFloat(row.price_per_seat),
+                    currency: row.currency || 'USD'
+                };
             }
 
             const subscriptions = skusRes.data.value.map(sku => {
                 const skuPart = sku.skuPartNumber || '';
-                const isFreeOrTrial = skuPart.includes('FREE') || skuPart.includes('TRIAL') || skuPart.includes('TEAMS_EXPLORATORY');
-                const price = isFreeOrTrial ? 0.00 : (skuPricing[skuPart] || 15.00);
+                const isFreeOrTrial = skuPart.includes('FREE') || skuPart.includes('TRIAL') || skuPart.includes('TEAMS_EXPLORATORY') || skuPart.includes('STUDENT') || skuPart.includes('VIRAL');
+                
+                const pricingInfo = skuPricing[skuPart] || { price: 15.00, currency: 'USD' };
+                const price = isFreeOrTrial ? 0.00 : pricingInfo.price;
+                const currency = isFreeOrTrial ? 'USD' : pricingInfo.currency;
+
+                // Bind to active subscription info
+                const activeSub = activeSubsMap.get(skuPart) || activeSubsMap.get(sku.skuId);
+                const nextLifecycle = activeSub ? activeSub.nextLifecycleDateTime : null;
+
+                // Note: Only include total seats from enabled subscription to filter out suspended ones
+                const totalSeats = activeSub ? (activeSub.totalLicenses || sku.prepaidUnits?.enabled || 0) : (sku.prepaidUnits?.enabled || 0);
 
                 return {
                     skuId: sku.skuId,
                     skuPartNumber: skuPart,
-                    totalSeats: sku.prepaidUnits?.enabled || 0,
+                    totalSeats,
                     assignedSeats: sku.consumedUnits || 0,
-                    pricePerSeat: price
+                    pricePerSeat: price,
+                    currency,
+                    nextLifecycleDateTime: nextLifecycle
                 };
             });
 
-            res.json({ success: true, subscriptions });
+            res.json({ success: true, subscriptions, nextBillingDate });
         } catch (err) {
             console.error('[M365 Controller] getSubscriptions failed:', err.message);
             res.status(500).json({ message: 'Failed to fetch M365 subscriptions.', error: err.message });
@@ -98,9 +155,7 @@ const m365Controller = {
                 headers: { Authorization: `Bearer ${token}` }
             });
 
-            // 2. Fetch M365 Active User Detail report to get last activity date (requires Reports.Read.All permission)
-            // If the administrator has disabled "Display concealed user, group and site names in all reports" in M365 Admin Center,
-            // we will receive unmasked UPNs and can calculate exact idle days.
+            // 2. Fetch M365 Active User Detail report to get last activity date
             let activityMap = {};
             try {
                 const reportUrl = "https://graph.microsoft.com/v1.0/reports/getOffice365ActiveUserDetail(period='D30')";
@@ -145,7 +200,7 @@ const m365Controller = {
                 console.warn('[M365 Controller] Failed to fetch active user detail report:', reportErr.message);
             }
 
-            // Map skus list dynamically by querying tenant's subscribed SKUs to avoid hardcoded IDs
+            // 3. Build SKU Map dynamically
             let skuMap = {};
             try {
                 const skusUrl = 'https://graph.microsoft.com/v1.0/subscribedSkus';
@@ -162,8 +217,9 @@ const m365Controller = {
             }
 
             const users = usersRes.data.value.map(user => {
-                const primaryLicense = user.assignedLicenses && user.assignedLicenses[0];
-                const skuPartNumber = primaryLicense ? (skuMap[primaryLicense.skuId] || 'OTHER') : 'NONE';
+                const assignedLicenses = user.assignedLicenses || [];
+                const assignedSkus = assignedLicenses.map(lic => skuMap[lic.skuId] || 'OTHER').filter(Boolean);
+                const skuPartNumber = assignedSkus.length > 0 ? assignedSkus.join(', ') : 'NONE';
                 
                 const emailKey = user.userPrincipalName ? user.userPrincipalName.toLowerCase() : '';
                 const md5Exact = user.userPrincipalName ? crypto.createHash('md5').update(user.userPrincipalName).digest('hex').toLowerCase() : '';
@@ -173,13 +229,13 @@ const m365Controller = {
                 let status = 'active';
 
                 const latestSignIn = activityMap[emailKey] || activityMap[md5Exact] || activityMap[md5Lower];
+                const lastActiveDate = latestSignIn ? latestSignIn.toISOString().split('T')[0] : null;
 
                 if (latestSignIn) {
                     const diffTime = Math.max(0, new Date().getTime() - latestSignIn.getTime());
                     lastActiveDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
                     status = skuPartNumber === 'NONE' ? 'unassigned' : (lastActiveDays >= 30 ? 'inactive' : 'active');
                 } else {
-                    // Default to active (0) when user has no recent activity recorded or report matches are missing
                     status = skuPartNumber === 'NONE' ? 'unassigned' : 'active';
                 }
 
@@ -189,6 +245,7 @@ const m365Controller = {
                     email: user.userPrincipalName,
                     skuPartNumber,
                     lastActiveDays,
+                    lastActiveDate,
                     status
                 };
             });
@@ -469,6 +526,30 @@ const m365Controller = {
         } catch (err) {
             console.error('[M365] handleAdminConsentCallback error:', err.message);
             return res.redirect(`${frontendUrl}/?m365_error=${encodeURIComponent('Internal error during Microsoft consent: ' + err.message)}`);
+        }
+    },
+
+    /**
+     * Update / insert customizable seat pricing for a SKU
+     */
+    updatePricing: async (req, res) => {
+        try {
+            const { organizationId, skuPartNumber, pricePerSeat, currency } = req.body;
+            if (!organizationId || !skuPartNumber || pricePerSeat === undefined) {
+                return res.status(400).json({ message: 'Missing parameters.' });
+            }
+
+            await db.query(
+                `INSERT INTO m365_sku_pricing (sku_part_number, price_per_seat, currency) 
+                 VALUES (?, ?, ?) 
+                 ON DUPLICATE KEY UPDATE price_per_seat = ?, currency = ?`,
+                [skuPartNumber, parseFloat(pricePerSeat), currency || 'USD', parseFloat(pricePerSeat), currency || 'USD']
+            );
+
+            res.json({ success: true, message: 'SKU pricing updated successfully.' });
+        } catch (err) {
+            console.error('[M365 Controller] updatePricing failed:', err.message);
+            res.status(500).json({ message: 'Failed to update pricing.', error: err.message });
         }
     }
 };

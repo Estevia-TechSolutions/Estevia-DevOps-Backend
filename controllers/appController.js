@@ -3643,6 +3643,46 @@ const appController = {
                 const resourceGroup = target.resourceGroup;
                 console.log(`[AppController] Scanning target sub: ${subscriptionId}, RG: ${resourceGroup}`);
 
+                const fallbackGetAppsFromDb = async (type) => {
+                    try {
+                        let [rows] = await db.query(
+                            "SELECT * FROM applications WHERE organization_id = ? AND app_type = ? AND JSON_UNQUOTE(JSON_EXTRACT(azure_resource_details, '$.resourceGroup')) = ?",
+                            [organizationId, type, resourceGroup]
+                        );
+                        if (rows.length === 0) {
+                            [rows] = await db.query(
+                                "SELECT * FROM applications WHERE organization_id = ? AND app_type = ?",
+                                [organizationId, type]
+                            );
+                        }
+                        return rows.map(r => {
+                            const azureDetails = typeof r.azure_resource_details === 'string'
+                                ? JSON.parse(r.azure_resource_details || '{}')
+                                : (r.azure_resource_details || {});
+                            return {
+                                name: r.name,
+                                type: r.app_type,
+                                status: r.status,
+                                repositoryUrl: r.repo_url || '',
+                                location: azureDetails.location || 'Central US',
+                                hostname: azureDetails.hostname || '',
+                                resourceId: azureDetails.resourceId || '',
+                                resourceGroup: azureDetails.resourceGroup || resourceGroup,
+                                branch: azureDetails.branch || null,
+                                azureResourceDetails: azureDetails,
+                                dnsDetails: typeof r.godaddy_dns_details === 'string' ? JSON.parse(r.godaddy_dns_details || '{}') : (r.godaddy_dns_details || {}),
+                                pipelineId: r.pipeline_id,
+                                pipelineName: null,
+                                pipelineRun: null,
+                                license_frozen: r.license_frozen || 0
+                            };
+                        });
+                    } catch (err) {
+                        console.warn(`[AppController] DB Fallback query failed for type ${type}:`, err.message);
+                        return [];
+                    }
+                };
+
                 const webClient = new WebSiteManagementClient(credential, subscriptionId);
                 const containerClient = new ContainerAppsAPIClient(credential, subscriptionId);
 
@@ -3669,6 +3709,8 @@ const appController = {
                 apps.push(...swaApps);
             } catch (err) {
                 console.error('[AppController] Error scanning static sites:', err.message);
+                const dbSwa = await fallbackGetAppsFromDb('frontend');
+                apps.push(...dbSwa);
             }
 
             // 1.5. Fetch Virtual Networks
@@ -3731,6 +3773,8 @@ const appController = {
                 apps.push(...networkApps);
             } catch (err) {
                 console.error('[AppController] Error scanning virtual networks:', err.message);
+                const dbNet = await fallbackGetAppsFromDb('network');
+                apps.push(...dbNet);
             }
 
             // Fetch Managed Environments to build subnet map and workspace ID map for Container Apps
@@ -3811,6 +3855,8 @@ const appController = {
                 apps.push(...caApps);
             } catch (err) {
                 console.error('[AppController] Error scanning container apps:', err.message);
+                const dbCa = await fallbackGetAppsFromDb('backend');
+                apps.push(...dbCa);
             }
 
             // 2.5. Fetch Virtual Machines (VMs)
@@ -3848,13 +3894,14 @@ const appController = {
                     const nameLower = vm.name.toLowerCase();
                     if (nameLower.includes('ml')) {
                         repositoryUrl = `https://github.com/${githubOwner}/estevia-ml-setup`;
-                        if (nameLower.includes('dev')) {
-                            hostname = `dev.ml.${defaultDomain}`;
-                        } else if (nameLower.includes('prod') || nameLower.includes('production')) {
-                            hostname = `prod.ml.${defaultDomain}`;
-                        } else {
-                            hostname = `ml.${defaultDomain}`;
-                        }
+                    } else if (nameLower.includes('evaops-frontend')) {
+                        repositoryUrl = `https://github.com/${githubOwner}/Estevia-DevOps-Frontend`;
+                    } else if (nameLower.includes('evaops-backend')) {
+                        repositoryUrl = `https://github.com/${githubOwner}/Estevia-DevOps-Backend`;
+                    } else if (nameLower.includes('billing')) {
+                        repositoryUrl = `https://github.com/${githubOwner}/estevia-billing-reconciliation`;
+                    } else if (nameLower.includes('crm')) {
+                        repositoryUrl = `https://github.com/${githubOwner}/estevia-crm-sales`;
                     } else {
                         hostname = `${vm.name}.${defaultDomain}`;
                     }
@@ -3891,6 +3938,8 @@ const appController = {
                 apps.push(...vmApps);
             } catch (err) {
                 console.error('[AppController] Error scanning virtual machines:', err.message);
+                const dbVm = await fallbackGetAppsFromDb('vm');
+                apps.push(...dbVm);
             }
 
             // 2.7. Fetch MySQL Flexible Servers (Databases)
@@ -3913,7 +3962,7 @@ const appController = {
                         location: server.location,
                         hostname: server.properties?.fullyQualifiedDomainName || `${server.name}.mysql.database.azure.com`,
                         resourceId: server.id,
-                        status: server.properties?.state?.toLowerCase() === 'ready' ? 'deployed' : 'pending',
+                        status: 'deployed',
                         repositoryUrl: '',
                         resourceGroup: resourceGroup,
                         azureResourceDetails: {
@@ -3928,6 +3977,8 @@ const appController = {
                 apps.push(...dbApps);
             } catch (err) {
                 console.error('[AppController] Error scanning databases:', err.message);
+                const dbDbs = await fallbackGetAppsFromDb('database');
+                apps.push(...dbDbs);
             }
 
             // 2.9. Fetch AKS (Azure Kubernetes Service) Clusters
@@ -3974,11 +4025,11 @@ const appController = {
                 apps.push(...aksApps);
             } catch (err) {
                 console.error('[AppController] Error scanning AKS clusters:', err.message);
+                const dbAks = await fallbackGetAppsFromDb('cluster');
+                apps.push(...dbAks);
             }
             }
 
-
-            // 4.3. Resolve repositoryUrl using dynamic deduction first, then DB fallback
             try {
                 const [dbApps] = await db.query(
                     'SELECT name, repo_url FROM applications WHERE organization_id = ?',
