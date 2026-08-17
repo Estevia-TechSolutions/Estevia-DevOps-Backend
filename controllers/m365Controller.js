@@ -157,18 +157,43 @@ const m365Controller = {
                             headers: { Authorization: `Bearer ${azureToken}` }
                         });
                         const invs = invoicesRes.data?.value || [];
-                        for (const inv of invs) {
-                            actualInvoices.push({
-                                id: inv.id,
-                                invoiceNumber: inv.properties?.invoiceNumber || inv.name,
-                                amount: parseFloat(inv.properties?.amountDue?.value || inv.properties?.billedAmount?.value || 0),
-                                currency: inv.properties?.amountDue?.currency || inv.properties?.billedAmount?.currency || 'USD',
-                                status: inv.properties?.status || 'Paid',
-                                issueDate: inv.properties?.invoiceDate || null,
-                                dueDate: inv.properties?.dueDate || null,
-                                documentUrl: inv.properties?.documentUrl || null,
-                                billingAccountId: accId
-                            });
+                        
+                        const filterPromises = invs.map(async (inv) => {
+                            try {
+                                const txUrl = `https://management.azure.com/providers/Microsoft.Billing/billingAccounts/${accId}/invoices/${inv.name}/transactions?api-version=2020-05-01`;
+                                const txRes = await axios.get(txUrl, {
+                                    headers: { Authorization: `Bearer ${azureToken}` }
+                                });
+                                const txs = txRes.data?.value || [];
+                                const isM365Basic = txs.some(tx => {
+                                    const prodType = (tx.properties?.productType || '').toLowerCase();
+                                    const prodDesc = (tx.properties?.productDescription || '').toLowerCase();
+                                    return prodType.includes('microsoft 365 business basic') || prodDesc.includes('microsoft 365 business basic');
+                                });
+                                if (isM365Basic) {
+                                    return {
+                                        id: inv.id,
+                                        invoiceNumber: inv.properties?.invoiceNumber || inv.name,
+                                        amount: parseFloat(inv.properties?.amountDue?.value || inv.properties?.billedAmount?.value || 0),
+                                        currency: inv.properties?.amountDue?.currency || inv.properties?.billedAmount?.currency || 'USD',
+                                        status: inv.properties?.status || 'Paid',
+                                        issueDate: inv.properties?.invoiceDate || null,
+                                        dueDate: inv.properties?.dueDate || null,
+                                        documentUrl: inv.properties?.documentUrl || null,
+                                        billingAccountId: accId
+                                    };
+                                }
+                            } catch (txErr) {
+                                console.warn(`[M365 Controller] Failed to fetch transactions for invoice ${inv.name}:`, txErr.message);
+                            }
+                            return null;
+                        });
+                        
+                        const filteredInvoices = await Promise.all(filterPromises);
+                        for (const fi of filteredInvoices) {
+                            if (fi) {
+                                actualInvoices.push(fi);
+                            }
                         }
                     }
                 } catch (billingErr) {
