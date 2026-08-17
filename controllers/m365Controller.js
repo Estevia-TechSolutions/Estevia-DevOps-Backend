@@ -146,7 +146,13 @@ const m365Controller = {
                     }
                     for (const account of accounts) {
                         const accId = account.name;
-                        const invoicesUrl = `https://management.azure.com/providers/Microsoft.Billing/billingAccounts/${accId}/invoices?api-version=2020-05-01`;
+                        const today = new Date();
+                        const formattedToday = today.toISOString().split('T')[0];
+                        const startDate = new Date();
+                        startDate.setDate(startDate.getDate() - 730);
+                        const formattedStartDate = startDate.toISOString().split('T')[0];
+
+                        const invoicesUrl = `https://management.azure.com/providers/Microsoft.Billing/billingAccounts/${accId}/invoices?api-version=2020-05-01&periodStartDate=${formattedStartDate}&periodEndDate=${formattedToday}`;
                         const invoicesRes = await axios.get(invoicesUrl, {
                             headers: { Authorization: `Bearer ${azureToken}` }
                         });
