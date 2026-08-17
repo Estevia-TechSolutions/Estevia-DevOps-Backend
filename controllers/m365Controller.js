@@ -132,6 +132,7 @@ const m365Controller = {
 
             // 5. Fetch actual invoices from Azure Billing API
             let actualInvoices = [];
+            let billingSyncStatus = 'Unauthorized';
             const azureToken = await getAzureManagementToken(organizationId);
             if (azureToken) {
                 try {
@@ -140,6 +141,9 @@ const m365Controller = {
                         headers: { Authorization: `Bearer ${azureToken}` }
                     });
                     const accounts = accountsRes.data?.value || [];
+                    if (accountsRes.status === 200) {
+                        billingSyncStatus = 'Authorized';
+                    }
                     for (const account of accounts) {
                         const accId = account.name;
                         const invoicesUrl = `https://management.azure.com/providers/Microsoft.Billing/billingAccounts/${accId}/invoices?api-version=2020-05-01`;
@@ -210,7 +214,7 @@ const m365Controller = {
                 };
             });
 
-            res.json({ success: true, subscriptions, invoices: actualInvoices, nextBillingDate });
+            res.json({ success: true, subscriptions, invoices: actualInvoices, billingSyncStatus, nextBillingDate });
         } catch (err) {
             console.error('[M365 Controller] getSubscriptions failed:', err.message);
             res.status(500).json({ message: 'Failed to fetch M365 subscriptions.', error: err.message });
