@@ -176,7 +176,7 @@ const m365Controller = {
                                         invoiceNumber: inv.properties?.invoiceNumber || inv.name,
                                         amount: parseFloat(inv.properties?.amountDue?.value || inv.properties?.billedAmount?.value || 0),
                                         currency: inv.properties?.amountDue?.currency || inv.properties?.billedAmount?.currency || 'USD',
-                                        status: inv.properties?.status || 'Paid',
+                                        status: inv.properties?.status === 'Unknown' ? 'Locked' : (inv.properties?.status || 'Paid'),
                                         issueDate: inv.properties?.invoiceDate || null,
                                         dueDate: inv.properties?.dueDate || null,
                                         documentUrl: inv.properties?.documentUrl || null,
