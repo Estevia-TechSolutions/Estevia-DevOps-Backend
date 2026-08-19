@@ -776,6 +776,21 @@ async function getAzureCredential(organizationId) {
         if (!azureSecrets && organizationId !== MASTER_ORGANIZATION_ID) {
             azureSecrets = await credentialController.getDecryptedCredentialsInternal(MASTER_ORGANIZATION_ID, 'azure').catch(() => null);
         }
+
+        // Add M365 credentials fallback since they use the same Microsoft Service Principal in this environment
+        let m365Secrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'm365').catch(() => null);
+        if (!m365Secrets && organizationId !== MASTER_ORGANIZATION_ID) {
+            m365Secrets = await credentialController.getDecryptedCredentialsInternal(MASTER_ORGANIZATION_ID, 'm365').catch(() => null);
+        }
+        if (m365Secrets && m365Secrets.clientId && m365Secrets.clientSecret && m365Secrets.tenantId) {
+            console.log(`[AzureAuth] Adding M365 client secret credential fallback for organization: ${organizationId}`);
+            creds.push(new ClientSecretCredential(
+                m365Secrets.tenantId,
+                m365Secrets.clientId,
+                m365Secrets.clientSecret
+            ));
+        }
+
         if (azureSecrets) {
             if (azureSecrets.type === 'managed_identity' || azureSecrets.clientId === 'SYSTEM_MANAGED_IDENTITY') {
                 console.log(`[AzureAuth] Using DefaultAzureCredential (Managed Identity) for organization: ${organizationId}`);
