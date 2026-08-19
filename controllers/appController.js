@@ -9185,13 +9185,48 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const orgSettings = await appController._getOrgSettings(organizationId);
             const subscriptionId = req.query.subscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
 
-            // Query actual Azure Cost Management API
+            let liveInvoices = [];
+            let billingAccountName = '';
+            let billingAccountId = '';
+
+            // Query actual Azure Cost Management API and Billing Invoices API
             try {
                 console.log(`[CostAPI] Querying live Azure Cost Management API for Subscription ID: ${subscriptionId}...`);
                 
                 const credential = await getAzureCredential(organizationId);
                 const tokenRes = await credential.getToken("https://management.azure.com/.default");
                 const token = tokenRes.token;
+
+                // 1. Fetch live Azure invoices to link real invoice numbers
+                try {
+                    const billingUrl = "https://management.azure.com/providers/Microsoft.Billing/billingAccounts?api-version=2020-05-01";
+                    const accountsRes = await axios.get(billingUrl, {
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+                    const accounts = accountsRes.data?.value || [];
+                    if (accounts.length > 0) {
+                        billingAccountName = accounts[0].properties?.displayName || '';
+                        billingAccountId = accounts[0].name || '';
+                        
+                        for (const account of accounts) {
+                            const accId = account.name;
+                            const today = new Date();
+                            const formattedToday = today.toISOString().split('T')[0];
+                            const startDate = new Date();
+                            startDate.setDate(startDate.getDate() - 730);
+                            const formattedStartDate = startDate.toISOString().split('T')[0];
+
+                            const invoicesUrl = `https://management.azure.com/providers/Microsoft.Billing/billingAccounts/${accId}/invoices?api-version=2020-05-01&periodStartDate=${formattedStartDate}&periodEndDate=${formattedToday}`;
+                            const invoicesRes = await axios.get(invoicesUrl, {
+                                headers: { Authorization: `Bearer ${token}` }
+                            });
+                            const invs = invoicesRes.data?.value || [];
+                            liveInvoices.push(...invs);
+                        }
+                    }
+                } catch (billingErr) {
+                    console.warn(`[CostAPI] Failed to fetch live Azure invoices for matching:`, billingErr.message);
+                }
 
                 const url = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.CostManagement/query?api-version=2021-10-01`;
                 const payload = {
@@ -9236,6 +9271,9 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     const currIdx = cols.indexOf('currency');
 
                     const monthlyGroup = {};
+                    const now = new Date();
+                    const currentMonthPeriod = now.toISOString().substring(0, 7); // e.g. "2026-08"
+
                     for (const row of rows) {
                         const cost = Number(row[costIdx] || 0);
                         const resourceTypeRaw = String(row[typeIdx] || '').toLowerCase();
@@ -9253,31 +9291,45 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         }
 
                         if (!monthlyGroup[billingPeriod]) {
-                            const now = new Date();
-                            const currentMonthPeriod = now.toISOString().substring(0, 7); // e.g. "2026-07"
-                            const todayStr = now.toISOString().substring(0, 10); // e.g. "2026-07-24"
-                            
-                            const issueDate = `${billingPeriod}-01`;
-                            const dueDate = `${billingPeriod}-15`;
-                            
+                            // Find matching live Azure invoice
+                            const matchedInv = liveInvoices.find(inv => {
+                                const invStart = inv.properties?.invoicePeriodStartDate || '';
+                                return invStart.startsWith(billingPeriod);
+                            });
+
+                            let invoiceNum = `INV-AZ-${billingPeriod}-LIVE`;
+                            let issueDate = `${billingPeriod}-01`;
+                            let dueDate = `${billingPeriod}-15`;
                             let billStatus = 'Pending';
                             let paymentDateVal = null;
 
-                            if (billingPeriod < currentMonthPeriod) {
-                                billStatus = 'Paid';
-                                paymentDateVal = `${billingPeriod}-10`;
-                            } else if (billingPeriod === currentMonthPeriod) {
-                                billStatus = todayStr > dueDate ? 'Overdue' : 'Pending';
+                            if (billingPeriod === currentMonthPeriod) {
+                                billStatus = 'Running';
                                 paymentDateVal = null;
+                                // Expected invoice generation date is 5th of next month
+                                const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 5);
+                                dueDate = nextMonth.toISOString().split('T')[0];
+                                invoiceNum = 'Draft / MTD';
+                            } else if (matchedInv) {
+                                invoiceNum = matchedInv.name; // Use real Microsoft invoice ID (e.g. G175204367)
+                                issueDate = (matchedInv.properties?.invoiceDate || '').split('T')[0] || issueDate;
+                                dueDate = (matchedInv.properties?.dueDate || '').split('T')[0] || dueDate;
+                                billStatus = matchedInv.properties?.status || 'Paid';
+                                paymentDateVal = billStatus.toLowerCase() === 'paid' ? (dueDate || null) : null;
                             } else {
-                                billStatus = 'Pending';
-                                paymentDateVal = null;
+                                if (billingPeriod < currentMonthPeriod) {
+                                    billStatus = 'Paid';
+                                    paymentDateVal = `${billingPeriod}-10`;
+                                } else {
+                                    billStatus = 'Pending';
+                                    paymentDateVal = null;
+                                }
                             }
 
                             monthlyGroup[billingPeriod] = {
                                 organization_id: organizationId,
                                 azure_subscription_id: subscriptionId,
-                                invoice_number: `INV-AZ-${billingPeriod}-LIVE`,
+                                invoice_number: invoiceNum,
                                 billing_period: billingPeriod,
                                 issue_date: issueDate,
                                 due_date: dueDate,
@@ -9316,12 +9368,17 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     // Background cache save to DB
                     (async () => {
                         for (const bill of parsedBills) {
-                            console.log(`  -> Bill Period: ${bill.billing_period} | Total Amount: ${bill.currency} ${bill.total_amount.toFixed(2)} (ACA: ${bill.aca_compute_amount.toFixed(2)}, DB: ${bill.mysql_db_amount.toFixed(2)}, SWA: ${bill.swa_cdn_amount.toFixed(2)}, VM: ${bill.storage_vm_amount.toFixed(2)})`);
+                            console.log(`  -> Bill Period: ${bill.billing_period} | Total Amount: ${bill.currency} ${bill.total_amount.toFixed(2)}`);
                             await db.query(`
                                 INSERT INTO azure_consumption_bills 
                                 (organization_id, azure_subscription_id, invoice_number, billing_period, issue_date, due_date, payment_date, status, currency, total_amount, aca_compute_amount, mysql_db_amount, swa_cdn_amount, storage_vm_amount, network_egress_amount)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 ON DUPLICATE KEY UPDATE 
+                                    invoice_number = VALUES(invoice_number),
+                                    issue_date = VALUES(issue_date),
+                                    due_date = VALUES(due_date),
+                                    payment_date = VALUES(payment_date),
+                                    status = VALUES(status),
                                     total_amount = VALUES(total_amount),
                                     aca_compute_amount = VALUES(aca_compute_amount),
                                     mysql_db_amount = VALUES(mysql_db_amount),
@@ -9339,7 +9396,12 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
 
                     if (parsedBills.length > 0) {
                         console.log(`[CostAPI] Sending ${parsedBills.length} live Azure bills directly to client.`);
-                        return res.json({ success: true, azureBills: parsedBills });
+                        return res.json({ 
+                            success: true, 
+                            azureBills: parsedBills, 
+                            billingAccountName, 
+                            billingAccountId 
+                        });
                     }
                 } else {
                     console.log('[CostAPI] Azure returned empty properties.rows dataset.');
@@ -9367,7 +9429,12 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             ).catch(() => [[]]);
 
             console.log(`[CostAPI] Query returned ${rows ? rows.length : 0} bills from database. Sending response.`);
-            res.json({ success: true, azureBills: rows || [] });
+            res.json({ 
+                success: true, 
+                azureBills: rows || [], 
+                billingAccountName, 
+                billingAccountId 
+            });
         } catch (error) {
             console.error('[AppController] getAzureCloudBills failed:', error.message);
             res.status(500).json({ success: false, message: 'Failed to fetch Azure Cloud consumption bills.', error: error.message });
