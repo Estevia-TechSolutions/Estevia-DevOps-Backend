@@ -9291,13 +9291,30 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         }
 
                         if (!monthlyGroup[billingPeriod]) {
-                            // Find matching live Azure invoice
-                            const matchedInv = liveInvoices.find(inv => {
-                                const invStart = inv.properties?.invoicePeriodStartDate || '';
-                                return invStart.startsWith(billingPeriod);
-                            });
+                            // Dynamically find the matching Azure infrastructure invoice.
+                            // Logic: among all invoices starting in this billing period month,
+                            // pick only those that span a full billing period (>= 25 days),
+                            // which excludes M365 1-day adjustments and partial invoices.
+                            // Among remaining, prefer the invoice with the latest end date (most complete).
+                            const matchedInv = liveInvoices
+                                .filter(inv => {
+                                    const invStart = inv.properties?.invoicePeriodStartDate || '';
+                                    const invEnd = inv.properties?.invoicePeriodEndDate || '';
+                                    if (!invStart.startsWith(billingPeriod)) return false;
+                                    // Exclude single-day or very short period invoices (M365, adjustments)
+                                    const startMs = new Date(invStart).getTime();
+                                    const endMs = new Date(invEnd).getTime();
+                                    const daySpan = (endMs - startMs) / (1000 * 60 * 60 * 24);
+                                    return daySpan >= 25;
+                                })
+                                .sort((a, b) => {
+                                    // Pick the invoice that ends latest in the month (most complete billing cycle)
+                                    const endA = new Date(a.properties?.invoicePeriodEndDate || 0).getTime();
+                                    const endB = new Date(b.properties?.invoicePeriodEndDate || 0).getTime();
+                                    return endB - endA;
+                                })[0] || null;
 
-                            let invoiceNum = `INV-AZ-${billingPeriod}-LIVE`;
+                            let invoiceNum = null; // null = no confirmed invoice yet (fallback)
                             let issueDate = `${billingPeriod}-01`;
                             let dueDate = `${billingPeriod}-15`;
                             let billStatus = 'Pending';
@@ -9311,12 +9328,14 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                                 dueDate = nextMonth.toISOString().split('T')[0];
                                 invoiceNum = 'Draft / MTD';
                             } else if (matchedInv) {
-                                invoiceNum = matchedInv.name; // Use real Microsoft invoice ID (e.g. G175204367)
+                                invoiceNum = matchedInv.name; // Real Microsoft invoice ID e.g. G175204367
                                 issueDate = (matchedInv.properties?.invoiceDate || '').split('T')[0] || issueDate;
                                 dueDate = (matchedInv.properties?.dueDate || '').split('T')[0] || dueDate;
                                 billStatus = matchedInv.properties?.status || 'Paid';
                                 paymentDateVal = billStatus.toLowerCase() === 'paid' ? (dueDate || null) : null;
                             } else {
+                                // No matched invoice yet – fallback based on period
+                                invoiceNum = null;
                                 if (billingPeriod < currentMonthPeriod) {
                                     billStatus = 'Paid';
                                     paymentDateVal = `${billingPeriod}-10`;

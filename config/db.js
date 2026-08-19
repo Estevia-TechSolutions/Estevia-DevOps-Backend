@@ -364,12 +364,12 @@ async function runAutoMigration() {
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 organization_id VARCHAR(255) NOT NULL,
                 azure_subscription_id VARCHAR(255) NOT NULL,
-                invoice_number VARCHAR(100) NOT NULL,
+                invoice_number VARCHAR(100) DEFAULT NULL,
                 billing_period VARCHAR(50) NOT NULL,
                 issue_date DATE NOT NULL,
                 due_date DATE NOT NULL,
                 payment_date DATE DEFAULT NULL,
-                status ENUM('Paid', 'Pending', 'Overdue') NOT NULL DEFAULT 'Paid',
+                status ENUM('Paid', 'Pending', 'Overdue', 'Running') NOT NULL DEFAULT 'Pending',
                 currency VARCHAR(10) NOT NULL DEFAULT 'USD',
                 total_amount DECIMAL(12,2) NOT NULL,
                 aca_compute_amount DECIMAL(12,2) NOT NULL,
@@ -382,6 +382,10 @@ async function runAutoMigration() {
                 INDEX idx_org_period (organization_id, billing_period)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
+
+        // Ensure 'Running' status and nullable invoice_number are available in existing deployments (migrations)
+        await pool.query(`ALTER TABLE azure_consumption_bills MODIFY COLUMN status ENUM('Paid', 'Pending', 'Overdue', 'Running') NOT NULL DEFAULT 'Pending'`).catch(() => {});
+        await pool.query(`ALTER TABLE azure_consumption_bills MODIFY COLUMN invoice_number VARCHAR(100) DEFAULT NULL`).catch(() => {});
 
         console.log('[DevOps DB] Seeding historical Azure Cloud Infrastructure bills (Empty - No Mocks)...');
         const historicalAzureBills = [];
