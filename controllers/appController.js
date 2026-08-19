@@ -9213,16 +9213,50 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 const token = tokenRes.token;
 
                 // 1. Fetch live Azure invoices to link real invoice numbers
-                try {
+                // NOTE: Managed Identity may lack Microsoft.Billing/billingAccounts/read permission.
+                // We try the primary token first, then fall back to the M365 SP specifically for billing.
+                const fetchBillingAccounts = async (bearerToken) => {
                     const billingUrl = "https://management.azure.com/providers/Microsoft.Billing/billingAccounts?api-version=2020-05-01";
                     const accountsRes = await axios.get(billingUrl, {
-                        headers: { Authorization: `Bearer ${token}` }
+                        headers: { Authorization: `Bearer ${bearerToken}` },
+                        timeout: 10000
                     });
-                    const accounts = accountsRes.data?.value || [];
+                    return accountsRes.data?.value || [];
+                };
+
+                try {
+                    let accounts = [];
+                    let billingToken = token;
+
+                    // Try primary token first
+                    try {
+                        accounts = await fetchBillingAccounts(token);
+                        console.log(`[CostAPI] Billing accounts via primary credential: ${accounts.length}`);
+                    } catch (primaryErr) {
+                        console.warn(`[CostAPI] Primary credential failed for billing accounts (${primaryErr.response?.status || primaryErr.message}), trying M365 SP fallback...`);
+                    }
+
+                    // If primary returned 0 accounts, attempt M365 SP fallback token
+                    if (accounts.length === 0) {
+                        try {
+                            const m365Secrets = await credentialController.getDecryptedCredentialsInternal(organizationId, 'm365').catch(() => null)
+                                || await credentialController.getDecryptedCredentialsInternal(MASTER_ORGANIZATION_ID, 'm365').catch(() => null);
+                            if (m365Secrets && m365Secrets.clientId && m365Secrets.clientSecret && m365Secrets.tenantId) {
+                                const m365Cred = new ClientSecretCredential(m365Secrets.tenantId, m365Secrets.clientId, m365Secrets.clientSecret);
+                                const m365TokenRes = await m365Cred.getToken("https://management.azure.com/.default");
+                                billingToken = m365TokenRes.token;
+                                accounts = await fetchBillingAccounts(billingToken);
+                                console.log(`[CostAPI] Billing accounts via M365 SP fallback: ${accounts.length}`);
+                            }
+                        } catch (m365Err) {
+                            console.warn(`[CostAPI] M365 SP billing fallback also failed:`, m365Err.message);
+                        }
+                    }
+
                     if (accounts.length > 0) {
                         billingAccountName = accounts[0].properties?.displayName || '';
                         billingAccountId = accounts[0].name || '';
-                        
+
                         for (const account of accounts) {
                             const accId = account.name;
                             const today = new Date();
@@ -9233,7 +9267,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
 
                             const invoicesUrl = `https://management.azure.com/providers/Microsoft.Billing/billingAccounts/${accId}/invoices?api-version=2020-05-01&periodStartDate=${formattedStartDate}&periodEndDate=${formattedToday}`;
                             const invoicesRes = await axios.get(invoicesUrl, {
-                                headers: { Authorization: `Bearer ${token}` }
+                                headers: { Authorization: `Bearer ${billingToken}` }
                             });
                             const invs = invoicesRes.data?.value || [];
                             liveInvoices.push(...invs);
