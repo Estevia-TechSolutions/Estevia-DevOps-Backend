@@ -9229,12 +9229,18 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 }
 
                 const url = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.CostManagement/query?api-version=2021-10-01`;
+                // Dynamic 12-month rolling window: from Jan 1st of 12 months ago to end of current month
+                const now = new Date();
+                const windowStart = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+                const windowEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+                const fromDate = windowStart.toISOString().split('T')[0] + 'T00:00:00Z';
+                const toDate = windowEnd.toISOString().split('T')[0] + 'T23:59:59Z';
                 const payload = {
                     type: "Usage",
                     timeframe: "Custom",
                     timePeriod: {
-                        from: "2026-01-01T00:00:00Z",
-                        to: "2026-12-31T23:59:59Z"
+                        from: fromDate,
+                        to: toDate
                     },
                     dataset: {
                         granularity: "Monthly",
@@ -9291,9 +9297,15 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         }
 
                         if (!monthlyGroup[billingPeriod]) {
+                            // Azure date strings have up to 7 decimal places (e.g. 2026-07-31T23:59:59.9999999Z)
+                            // JS Date only handles 3 (milliseconds), so we strip extra decimals before parsing.
+                            const parseAzureDate = (dateStr) => {
+                                if (!dateStr) return NaN;
+                                return new Date(dateStr.replace(/(\.\d{3})\d+Z$/, '$1Z').replace(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?Z$/, '$1Z')).getTime();
+                            };
+
                             // Dynamically find the matching Azure infrastructure invoice.
-                            // Logic: among all invoices starting in this billing period month,
-                            // pick only those that span a full billing period (>= 25 days),
+                            // Pick only invoices that span a full billing period (>= 25 days),
                             // which excludes M365 1-day adjustments and partial invoices.
                             // Among remaining, prefer the invoice with the latest end date (most complete).
                             const matchedInv = liveInvoices
@@ -9302,15 +9314,15 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                                     const invEnd = inv.properties?.invoicePeriodEndDate || '';
                                     if (!invStart.startsWith(billingPeriod)) return false;
                                     // Exclude single-day or very short period invoices (M365, adjustments)
-                                    const startMs = new Date(invStart).getTime();
-                                    const endMs = new Date(invEnd).getTime();
+                                    const startMs = parseAzureDate(invStart);
+                                    const endMs = parseAzureDate(invEnd);
                                     const daySpan = (endMs - startMs) / (1000 * 60 * 60 * 24);
-                                    return daySpan >= 25;
+                                    return !isNaN(daySpan) && daySpan >= 25;
                                 })
                                 .sort((a, b) => {
                                     // Pick the invoice that ends latest in the month (most complete billing cycle)
-                                    const endA = new Date(a.properties?.invoicePeriodEndDate || 0).getTime();
-                                    const endB = new Date(b.properties?.invoicePeriodEndDate || 0).getTime();
+                                    const endA = parseAzureDate(a.properties?.invoicePeriodEndDate || '');
+                                    const endB = parseAzureDate(b.properties?.invoicePeriodEndDate || '');
                                     return endB - endA;
                                 })[0] || null;
 
@@ -9432,8 +9444,11 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             // Purge bad formatted billing periods from legacy bugs
             await db.query("DELETE FROM azure_consumption_bills WHERE billing_period LIKE '%--%'").catch(() => {});
 
-            // Load from DB (which is populated strictly via actual Azure API query)
-            console.log(`[CostAPI] Loading resolved bills from database fallback (billing_period >= '2026-05')...`);
+            // Dynamic look-back: show last 12 months of bills
+            const lookbackDate = new Date();
+            lookbackDate.setMonth(lookbackDate.getMonth() - 11);
+            const lookbackPeriod = `${lookbackDate.getFullYear()}-${String(lookbackDate.getMonth() + 1).padStart(2, '0')}`;
+            console.log(`[CostAPI] Loading resolved bills from database fallback (billing_period >= '${lookbackPeriod}')...`);
             let [rows] = await db.query(
                 `SELECT id, organization_id, azure_subscription_id, invoice_number, billing_period, 
                         DATE_FORMAT(issue_date, "%Y-%m-%d") as issue_date, 
@@ -9442,9 +9457,9 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         status, currency, 
                         total_amount, aca_compute_amount, mysql_db_amount, swa_cdn_amount, storage_vm_amount, network_egress_amount 
                  FROM azure_consumption_bills 
-                 WHERE billing_period >= '2026-05' AND azure_subscription_id = ?
+                 WHERE billing_period >= ? AND azure_subscription_id = ?
                  ORDER BY due_date DESC`,
-                [subscriptionId]
+                [lookbackPeriod, subscriptionId]
             ).catch(() => [[]]);
 
             console.log(`[CostAPI] Query returned ${rows ? rows.length : 0} bills from database. Sending response.`);
