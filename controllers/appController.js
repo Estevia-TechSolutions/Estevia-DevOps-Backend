@@ -9675,14 +9675,18 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             }
 
             // Fallback: Generate simulated points based on database historical average
+            // Exclude the current running/partial month (MTD) to avoid distorting the baseline run-rate.
+            // Query by subscription ID to avoid double-counting across orgs that share the same subscription.
+            const currentMonthPeriod = new Date().toISOString().substring(0, 7); // e.g. "2026-08"
             const [bills] = await db.query(
-                "SELECT total_amount FROM azure_consumption_bills WHERE (organization_id = ? OR organization_id = 'estevia') AND billing_period >= '2026-05' ORDER BY due_date DESC LIMIT 6",
-                [organizationId]
+                "SELECT total_amount FROM azure_consumption_bills WHERE azure_subscription_id = ? AND billing_period < ? AND status != 'Running' ORDER BY billing_period DESC LIMIT 6",
+                [subscriptionId, currentMonthPeriod]
             ).catch(() => [[]]);
 
             const totalSum = (bills && bills.length > 0) ? bills.reduce((sum, b) => sum + Number(b.total_amount || 0), 0) : 0;
             const baselineRunRate = (bills && bills.length > 0) ? (totalSum / bills.length) : 480;
             const monthlySavings = baselineRunRate * 0.22;
+            console.log(`[CostAPI] Fallback forecast baseline from ${bills?.length || 0} complete months: run-rate = ${baselineRunRate.toFixed(2)}`);
 
             const fallbackPoints = [];
             const today = new Date();
