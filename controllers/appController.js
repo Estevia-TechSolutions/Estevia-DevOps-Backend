@@ -9535,6 +9535,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             console.log(`[CostAPI] === Computing Azure Cost Forecast for Organization: ${organizationId} ===`);
             const orgSettings = await appController._getOrgSettings(organizationId);
             const subscriptionId = req.query.subscriptionId || orgSettings.azure_subscription_id || SUBSCRIPTION_ID;
+            const fallbackCurrency = orgSettings.billing_currency || 'INR';
 
             // Attempt to query Azure Cost Management Forecast API
             try {
@@ -9605,10 +9606,13 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     };
 
                     const pointsMap = {};
+                    let detectedCurrency = fallbackCurrency;
+
                     for (const row of rows) {
                         const cost = Number(row[costIdx] || 0);
                         const rawDate = row[dateIdx];
-                        const currency = currIdx !== -1 ? row[currIdx] : 'USD';
+                        const currency = (currIdx !== -1 && row[currIdx]) ? String(row[currIdx]) : fallbackCurrency;
+                        detectedCurrency = currency;
                         const costType = typeIdx !== -1 ? String(row[typeIdx]) : 'Forecast';
 
                         if (costType && costType.toLowerCase() === 'actual') {
@@ -9655,12 +9659,12 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         const f6 = sumBaseline(6);
                         const f12 = sumBaseline(12);
 
-                        console.log(`[CostAPI] Successfully retrieved forecast directly from Azure. Points count: ${points.length}`);
+                        console.log(`[CostAPI] Successfully retrieved forecast directly from Azure. Points count: ${points.length}, Currency: ${detectedCurrency}`);
                         return res.json({
                             success: true,
                             monthlyBaselineRunRate: Number(monthlyBaselineRunRate.toFixed(2)),
                             monthlySavings: Number(monthlySavings.toFixed(2)),
-                            currency: points[0].currency || 'USD',
+                            currency: detectedCurrency,
                             forecast: {
                                 3: { baselineTotal: f3, optimizedTotal: Math.round(f3 * 0.78), periodSavings: Math.round(f3 * 0.22) },
                                 6: { baselineTotal: f6, optimizedTotal: Math.round(f6 * 0.78), periodSavings: Math.round(f6 * 0.22) },
@@ -9674,32 +9678,42 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 console.warn(`[CostAPI] Live Azure query forecast failed: ${azureErr.message}. Falling back to database computation.`);
             }
 
-            // Fallback: Generate simulated points based on database historical average
-            // Exclude the current running/partial month (MTD) to avoid distorting the baseline run-rate.
-            // Query by subscription ID to avoid double-counting across orgs that share the same subscription.
+            // Fallback: Generate realistic points based on actual subscription bills
             const currentMonthPeriod = new Date().toISOString().substring(0, 7); // e.g. "2026-08"
             const [bills] = await db.query(
-                "SELECT total_amount FROM azure_consumption_bills WHERE azure_subscription_id = ? AND billing_period < ? AND status != 'Running' ORDER BY billing_period DESC LIMIT 6",
-                [subscriptionId, currentMonthPeriod]
+                "SELECT total_amount, billing_period, status, currency FROM azure_consumption_bills WHERE azure_subscription_id = ? ORDER BY billing_period DESC LIMIT 6",
+                [subscriptionId]
             ).catch(() => [[]]);
 
-            const totalSum = (bills && bills.length > 0) ? bills.reduce((sum, b) => sum + Number(b.total_amount || 0), 0) : 0;
-            const baselineRunRate = (bills && bills.length > 0) ? (totalSum / bills.length) : 480;
+            const resolvedCurrency = (bills && bills.length > 0 && bills[0].currency) ? bills[0].currency : fallbackCurrency;
+            const runningBill = (bills || []).find(b => b.status === 'Running' || b.billing_period === currentMonthPeriod);
+            const completedBills = (bills || []).filter(b => b.status !== 'Running' && b.billing_period !== currentMonthPeriod);
+
+            let baselineRunRate = 5000;
+            if (runningBill && Number(runningBill.total_amount || 0) > 0) {
+                baselineRunRate = Number(runningBill.total_amount || 0);
+            } else if (completedBills.length > 0) {
+                const totalSum = completedBills.reduce((sum, b) => sum + Number(b.total_amount || 0), 0);
+                baselineRunRate = totalSum / completedBills.length;
+            } else if (bills && bills.length > 0) {
+                const totalSum = bills.reduce((sum, b) => sum + Number(b.total_amount || 0), 0);
+                baselineRunRate = totalSum / bills.length;
+            }
+
             const monthlySavings = baselineRunRate * 0.22;
-            console.log(`[CostAPI] Fallback forecast baseline from ${bills?.length || 0} complete months: run-rate = ${baselineRunRate.toFixed(2)}`);
+            console.log(`[CostAPI] Fallback forecast baseline for sub ${subscriptionId}: run-rate = ${baselineRunRate.toFixed(2)} ${resolvedCurrency}`);
 
             const fallbackPoints = [];
             const today = new Date();
             for (let i = 0; i < 12; i++) {
                 const d = new Date(today.getFullYear(), today.getMonth() + i, 1);
                 const label = d.toLocaleString('en-US', { month: 'short', year: '2-digit' });
-                const fluctuation = 1 + (Math.sin(i) * 0.04); // subtle fluctuation for realism
-                const baseVal = Number((baselineRunRate * fluctuation).toFixed(2));
+                const baseVal = Number(baselineRunRate.toFixed(2));
                 fallbackPoints.push({
                     monthLabel: label,
                     baseline: baseVal,
                     optimized: Number((baseVal * 0.78).toFixed(2)),
-                    currency: 'USD'
+                    currency: resolvedCurrency
                 });
             }
 
@@ -9707,7 +9721,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 success: true,
                 monthlyBaselineRunRate: Number(baselineRunRate.toFixed(2)),
                 monthlySavings: Number(monthlySavings.toFixed(2)),
-                currency: 'USD',
+                currency: resolvedCurrency,
                 forecast: {
                     3: {
                         baselineTotal: Math.round(baselineRunRate * 3),
