@@ -9565,6 +9565,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                             }
                         }
                     },
+                    includeActualCost: true,
                     timeframe: "Custom",
                     timePeriod: {
                         from: fromDate,
@@ -9613,11 +9614,6 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         const rawDate = row[dateIdx];
                         const currency = (currIdx !== -1 && row[currIdx]) ? String(row[currIdx]) : fallbackCurrency;
                         detectedCurrency = currency;
-                        const costType = typeIdx !== -1 ? String(row[typeIdx]) : 'Forecast';
-
-                        if (costType && costType.toLowerCase() === 'actual') {
-                            continue;
-                        }
 
                         const label = getMonthLabel(rawDate);
                         const sortKey = String(rawDate);
@@ -9630,6 +9626,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                                 currency: currency
                             };
                         }
+                        // Accumulate all costs (Actual + Forecast for current month, Forecast for future months)
                         pointsMap[label].baseline += cost;
                     }
 
