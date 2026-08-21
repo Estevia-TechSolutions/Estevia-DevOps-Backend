@@ -9614,6 +9614,7 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         const rawDate = row[dateIdx];
                         const currency = (currIdx !== -1 && row[currIdx]) ? String(row[currIdx]) : fallbackCurrency;
                         detectedCurrency = currency;
+                        const costType = typeIdx !== -1 ? String(row[typeIdx]) : 'Forecast';
 
                         const label = getMonthLabel(rawDate);
                         const sortKey = String(rawDate);
@@ -9623,10 +9624,16 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                                 monthLabel: label,
                                 sortKey: sortKey,
                                 baseline: 0,
+                                actualCost: 0,
+                                forecastCost: 0,
                                 currency: currency
                             };
                         }
-                        // Accumulate all costs (Actual + Forecast for current month, Forecast for future months)
+                        if (costType && costType.toLowerCase() === 'actual') {
+                            pointsMap[label].actualCost += cost;
+                        } else {
+                            pointsMap[label].forecastCost += cost;
+                        }
                         pointsMap[label].baseline += cost;
                     }
 
@@ -9635,6 +9642,8 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     if (points.length > 0) {
                         points.forEach(p => {
                             p.baseline = Number(p.baseline.toFixed(2));
+                            p.actualCost = Number((p.actualCost || 0).toFixed(2));
+                            p.forecastCost = Number((p.forecastCost || 0).toFixed(2));
                             p.optimized = Number((p.baseline * 0.78).toFixed(2));
                         });
 
@@ -9702,13 +9711,21 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
 
             const fallbackPoints = [];
             const today = new Date();
+            const currentRunningAmount = Number(runningBill?.total_amount || 0);
+
             for (let i = 0; i < 12; i++) {
                 const d = new Date(today.getFullYear(), today.getMonth() + i, 1);
                 const label = d.toLocaleString('en-US', { month: 'short', year: '2-digit' });
                 const baseVal = Number(baselineRunRate.toFixed(2));
+                const isCurrentMonth = i === 0;
+                const actualVal = isCurrentMonth ? currentRunningAmount : 0;
+                const forecastVal = isCurrentMonth ? Math.max(0, baseVal - actualVal) : baseVal;
+
                 fallbackPoints.push({
                     monthLabel: label,
-                    baseline: baseVal,
+                    baseline: isCurrentMonth ? Number((actualVal + forecastVal).toFixed(2)) : baseVal,
+                    actualCost: Number(actualVal.toFixed(2)),
+                    forecastCost: Number(forecastVal.toFixed(2)),
                     optimized: Number((baseVal * 0.78).toFixed(2)),
                     currency: resolvedCurrency
                 });
