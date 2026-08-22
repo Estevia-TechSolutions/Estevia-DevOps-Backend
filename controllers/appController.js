@@ -9640,15 +9640,22 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                     const points = Object.values(pointsMap).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
                     if (points.length > 0) {
-                        points.forEach(p => {
-                            p.baseline = Number(p.baseline.toFixed(2));
-                            p.actualCost = Number((p.actualCost || 0).toFixed(2));
-                            p.forecastCost = Number((p.forecastCost || 0).toFixed(2));
+                        const activeMonthBaseline = Number((points[0].actualCost + points[0].forecastCost).toFixed(2));
+                        points.forEach((p, idx) => {
+                            if (idx === 0) {
+                                p.baseline = activeMonthBaseline;
+                                p.actualCost = Number((p.actualCost || 0).toFixed(2));
+                                p.forecastCost = Number((p.forecastCost || 0).toFixed(2));
+                            } else {
+                                // For future months, ensure baseline does not artificially drop below active run-rate
+                                p.baseline = Math.max(Number(p.baseline.toFixed(2)), activeMonthBaseline);
+                                p.actualCost = 0;
+                                p.forecastCost = p.baseline;
+                            }
                             p.optimized = Number((p.baseline * 0.78).toFixed(2));
                         });
 
-                        const basePoints = points.slice(0, 3);
-                        const monthlyBaselineRunRate = basePoints.reduce((sum, p) => sum + p.baseline, 0) / basePoints.length;
+                        const monthlyBaselineRunRate = activeMonthBaseline > 0 ? activeMonthBaseline : points[0].baseline;
                         const monthlySavings = monthlyBaselineRunRate * 0.22;
 
                         const sumBaseline = (months) => {
@@ -9665,12 +9672,24 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                         const f6 = sumBaseline(6);
                         const f12 = sumBaseline(12);
 
+                        const now = new Date();
+                        const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+                        const daysElapsed = Math.min(now.getDate(), daysInMonth);
+
                         console.log(`[CostAPI] Successfully retrieved forecast directly from Azure. Points count: ${points.length}, Currency: ${detectedCurrency}`);
                         return res.json({
                             success: true,
                             monthlyBaselineRunRate: Number(monthlyBaselineRunRate.toFixed(2)),
                             monthlySavings: Number(monthlySavings.toFixed(2)),
                             currency: detectedCurrency,
+                            currentMonthBreakdown: {
+                                monthLabel: points[0]?.monthLabel,
+                                daysElapsed,
+                                totalDays: daysInMonth,
+                                actualIncurred: Number((points[0]?.actualCost || 0).toFixed(2)),
+                                projectedRemaining: Number((points[0]?.forecastCost || 0).toFixed(2)),
+                                totalFullMonthProjection: activeMonthBaseline
+                            },
                             forecast: {
                                 3: { baselineTotal: f3, optimizedTotal: Math.round(f3 * 0.78), periodSavings: Math.round(f3 * 0.22) },
                                 6: { baselineTotal: f6, optimizedTotal: Math.round(f6 * 0.78), periodSavings: Math.round(f6 * 0.22) },
@@ -9695,9 +9714,17 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
             const runningBill = (bills || []).find(b => b.status === 'Running' || b.billing_period === currentMonthPeriod);
             const completedBills = (bills || []).filter(b => b.status !== 'Running' && b.billing_period !== currentMonthPeriod);
 
+            const now = new Date();
+            const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+            const daysElapsed = Math.min(now.getDate(), daysInMonth);
+            const daysRemaining = Math.max(0, daysInMonth - daysElapsed);
+            const currentRunningAmount = Number(runningBill?.total_amount || 0);
+
             let baselineRunRate = 5000;
-            if (runningBill && Number(runningBill.total_amount || 0) > 0) {
-                baselineRunRate = Number(runningBill.total_amount || 0);
+            if (currentRunningAmount > 0) {
+                // Calculate monthly run-rate based on active burn rate
+                const dailyBurnRate = currentRunningAmount / Math.max(1, daysElapsed);
+                baselineRunRate = dailyBurnRate * daysInMonth;
             } else if (completedBills.length > 0) {
                 const totalSum = completedBills.reduce((sum, b) => sum + Number(b.total_amount || 0), 0);
                 baselineRunRate = totalSum / completedBills.length;
@@ -9706,24 +9733,28 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
                 baselineRunRate = totalSum / bills.length;
             }
 
-            const monthlySavings = baselineRunRate * 0.22;
-            console.log(`[CostAPI] Fallback forecast baseline for sub ${subscriptionId}: run-rate = ${baselineRunRate.toFixed(2)} ${resolvedCurrency}`);
+            const dailyBurnRate = currentRunningAmount > 0 ? (currentRunningAmount / Math.max(1, daysElapsed)) : (baselineRunRate / daysInMonth);
+            const projectedRemaining = Number((dailyBurnRate * daysRemaining).toFixed(2));
+            const currentMonthFullRunRate = Number((currentRunningAmount + projectedRemaining).toFixed(2));
+            const monthlyBaselineRunRate = currentMonthFullRunRate > 0 ? currentMonthFullRunRate : Number(baselineRunRate.toFixed(2));
+            const monthlySavings = Number((monthlyBaselineRunRate * 0.22).toFixed(2));
+
+            console.log(`[CostAPI] Fallback forecast baseline for sub ${subscriptionId}: run-rate = ${monthlyBaselineRunRate.toFixed(2)} ${resolvedCurrency}`);
 
             const fallbackPoints = [];
             const today = new Date();
-            const currentRunningAmount = Number(runningBill?.total_amount || 0);
 
             for (let i = 0; i < 12; i++) {
                 const d = new Date(today.getFullYear(), today.getMonth() + i, 1);
                 const label = d.toLocaleString('en-US', { month: 'short', year: '2-digit' });
-                const baseVal = Number(baselineRunRate.toFixed(2));
                 const isCurrentMonth = i === 0;
                 const actualVal = isCurrentMonth ? currentRunningAmount : 0;
-                const forecastVal = isCurrentMonth ? Math.max(0, baseVal - actualVal) : baseVal;
+                const forecastVal = isCurrentMonth ? projectedRemaining : monthlyBaselineRunRate;
+                const baseVal = isCurrentMonth ? currentMonthFullRunRate : monthlyBaselineRunRate;
 
                 fallbackPoints.push({
                     monthLabel: label,
-                    baseline: isCurrentMonth ? Number((actualVal + forecastVal).toFixed(2)) : baseVal,
+                    baseline: baseVal,
                     actualCost: Number(actualVal.toFixed(2)),
                     forecastCost: Number(forecastVal.toFixed(2)),
                     optimized: Number((baseVal * 0.78).toFixed(2)),
@@ -9733,23 +9764,31 @@ Provide a helpful, highly professional, and extremely crisp answer (maximum 3-4 
 
             res.json({
                 success: true,
-                monthlyBaselineRunRate: Number(baselineRunRate.toFixed(2)),
-                monthlySavings: Number(monthlySavings.toFixed(2)),
+                monthlyBaselineRunRate: monthlyBaselineRunRate,
+                monthlySavings: monthlySavings,
                 currency: resolvedCurrency,
+                currentMonthBreakdown: {
+                    monthLabel: fallbackPoints[0]?.monthLabel,
+                    daysElapsed,
+                    totalDays: daysInMonth,
+                    actualIncurred: currentRunningAmount,
+                    projectedRemaining,
+                    totalFullMonthProjection: currentMonthFullRunRate
+                },
                 forecast: {
                     3: {
-                        baselineTotal: Math.round(baselineRunRate * 3),
-                        optimizedTotal: Math.round((baselineRunRate - monthlySavings) * 3),
+                        baselineTotal: Math.round(monthlyBaselineRunRate * 3),
+                        optimizedTotal: Math.round((monthlyBaselineRunRate - monthlySavings) * 3),
                         periodSavings: Math.round(monthlySavings * 3)
                     },
                     6: {
-                        baselineTotal: Math.round(baselineRunRate * 6),
-                        optimizedTotal: Math.round((baselineRunRate - monthlySavings) * 6),
+                        baselineTotal: Math.round(monthlyBaselineRunRate * 6),
+                        optimizedTotal: Math.round((monthlyBaselineRunRate - monthlySavings) * 6),
                         periodSavings: Math.round(monthlySavings * 6)
                     },
                     12: {
-                        baselineTotal: Math.round(baselineRunRate * 12),
-                        optimizedTotal: Math.round((baselineRunRate - monthlySavings) * 12),
+                        baselineTotal: Math.round(monthlyBaselineRunRate * 12),
+                        optimizedTotal: Math.round((monthlyBaselineRunRate - monthlySavings) * 12),
                         periodSavings: Math.round(monthlySavings * 12)
                     }
                 },
